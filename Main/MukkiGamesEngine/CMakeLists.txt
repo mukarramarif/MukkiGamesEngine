@@ -1,12 +1,11 @@
 ﻿# CMakeList.txt : CMake project for MukkiGamesEngine, include source and define
 # project specific logic here.
 #
-
+find_package(Vulkan REQUIRED)
 # Add source to this project's executable.
-add_executable (MukkiGamesEngine "MukkiGamesEngine.cpp" "MukkiGamesEngine.h")
+add_executable (MukkiGamesEngine "MukkiGamesEngine.cpp" "MukkiGamesEngine.h" "vulkan/Renderer.cpp" "vulkan/Renderer.h" "vulkan/Window.cpp" "vulkan/Window.h")
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD 20)
 endif()
-
 # TODO: Add tests and install targets if needed.

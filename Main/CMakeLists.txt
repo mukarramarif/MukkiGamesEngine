@@ -10,6 +10,7 @@ if (POLICY CMP0141)
 endif()
 
 project ("Main")
+find_package(Vulkan REQUIRED)
 
 # Include sub-projects.
 add_subdirectory ("MukkiGamesEngine")
