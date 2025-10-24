@@ -2,11 +2,15 @@
 //
 
 #include "MukkiGamesEngine.h"
-
+#include "Vulkan/Window.h"
 using namespace std;
 
 int main()
 {
-	cout << "Hello CMake." << endl;
+	Window window;
+	while (true) {
+		window.init(800, 600, "Mukki Games Engine");
+	}
+	
 	return 0;
 }
