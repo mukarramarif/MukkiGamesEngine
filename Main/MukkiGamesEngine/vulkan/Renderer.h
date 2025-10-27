@@ -39,6 +39,9 @@ private:
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
     std::vector<VkFence> inFlightFences;
+    std::set<uint32_t> uniqueQueueFamilies;
+    uint32_t graphicsQueueFamilyIndex;
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
 public:
     // Initialization
     void init(Window* window);
@@ -64,7 +67,7 @@ public:
     // Rendering
     void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
     void drawFrame();
-
+    VkSurfaceKHR getSurface();
     // Cleanup
     void cleanup();
 

@@ -13,7 +13,7 @@ file(GLOB ENGINE_SOURCES
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/*.h"
 )
 
-add_executable(MukkiGamesEngine ${ENGINE_SOURCES} "MukkiGamesEngine/vulkan/HelperFunction.h")
+add_executable(MukkiGamesEngine ${ENGINE_SOURCES} "MukkiGamesEngine/vulkan/HelperFunction.h" "MukkiGamesEngine/vulkan/Device.cpp" "MukkiGamesEngine/vulkan/Device.h")
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD 20)
