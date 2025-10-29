@@ -10,10 +10,12 @@ file(GLOB ENGINE_SOURCES
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/*.cpp"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/*.h"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/*.cpp"
-    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/*.h"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/*.h",
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Core/*.cpp",
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Core/*.h"
 )
 
-add_executable(MukkiGamesEngine ${ENGINE_SOURCES} "MukkiGamesEngine/vulkan/HelperFunction.h" "MukkiGamesEngine/vulkan/Device.cpp" "MukkiGamesEngine/vulkan/Device.h" "MukkiGamesEngine/vulkan/SwapChain.cpp" "MukkiGamesEngine/vulkan/SwapChain.h")
+add_executable(MukkiGamesEngine ${ENGINE_SOURCES} "MukkiGamesEngine/vulkan/HelperFunction.h" "MukkiGamesEngine/vulkan/Core/Device.cpp" "MukkiGamesEngine/vulkan/Core/Device.h" "MukkiGamesEngine/vulkan/SwapChain.cpp" "MukkiGamesEngine/vulkan/SwapChain.h" "MukkiGamesEngine/vulkan/Core/Instance.cpp" "MukkiGamesEngine/vulkan/Core/Instance.h")
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD 20)
