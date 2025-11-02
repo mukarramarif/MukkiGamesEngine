@@ -3,7 +3,7 @@
 #
 find_package(Vulkan REQUIRED)
 # Add source to this project's executable.
-add_executable (MukkiGamesEngine "MukkiGamesEngine.cpp" "MukkiGamesEngine.h" "vulkan/Renderer.cpp" "vulkan/Renderer.h" "vulkan/Window.cpp" "vulkan/Window.h")
+add_executable (MukkiGamesEngine "*.cpp", "*.h")
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD 20)
