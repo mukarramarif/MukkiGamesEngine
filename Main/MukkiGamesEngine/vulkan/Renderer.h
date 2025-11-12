@@ -5,12 +5,16 @@
 #include "Core/EngineWindow.h"
 #include <vector>
 #include <set>
+#include <iostream>
+class VkInstance;
+class Device;
+
 class VulkanRenderer {
 private:
     // Core Vulkan objects
-    VkInstance instance;
-    VkPhysicalDevice physicalDevice;
-    VkDevice device;
+    Instance instance;
+	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+    Device device = Device(physicalDevice,surface);
     VkQueue graphicsQueue;
     VkQueue presentQueue;
 
@@ -34,10 +38,7 @@ private:
     VkSampler textureSampler;
 
     // Swapchain (for presentation)
-    VkSwapchainKHR swapChain;
-    std::vector<VkImage> swapChainImages;
-    std::vector<VkImageView> swapChainImageViews;
-    std::vector<VkFramebuffer> swapChainFramebuffers;
+	VulkanSwap swapChain;
 
     // Synchronization
     std::vector<VkSemaphore> imageAvailableSemaphores;

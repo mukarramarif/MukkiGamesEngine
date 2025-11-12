@@ -10,6 +10,10 @@ int main()
 	Window window;
 	while (true) {
 		window.init(800, 600, "Mukki Games Engine");
+
+		if (glfwWindowShouldClose(window.getGLFWwindow())) {
+			break;
+		}
 	}
 	
 	return 0;
