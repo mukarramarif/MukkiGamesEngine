@@ -1,24 +1,24 @@
-﻿cmake_minimum_required(VERSION 3.16) # Add this at the top to fix the warning
+﻿cmake_minimum_required(VERSION 3.16)
 
-project(MukkiGamesEngine LANGUAGES CXX) # Specify language to fix FindThreads error
+project(MukkiGamesEngine LANGUAGES CXX)
 
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
-find_package(imgui CONFIG REQUIRED) # Add ImGui if using vcpkg
+find_package(imgui CONFIG REQUIRED)
 
 file(GLOB ENGINE_SOURCES
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/*.cpp"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/*.h"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/*.cpp"
-    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/*.h",
-    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Core/*.cpp",
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/*.h"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Core/*.cpp"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Core/*.h"
 )
 
-add_executable(MukkiGamesEngine ${ENGINE_SOURCES} "MukkiGamesEngine/vulkan/HelperFunction.h" "MukkiGamesEngine/vulkan/Core/Device.cpp" "MukkiGamesEngine/vulkan/Core/Device.h" "MukkiGamesEngine/vulkan/SwapChain.cpp" "MukkiGamesEngine/vulkan/SwapChain.h" "MukkiGamesEngine/vulkan/Core/Instance.cpp" "MukkiGamesEngine/vulkan/Core/Instance.h")
+add_executable(MukkiGamesEngine ${ENGINE_SOURCES})
 
-if (CMAKE_VERSION VERSION_GREATER 3.12)
-  set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD 20)
-endif()
+set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD 20)
+set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD_REQUIRED ON)
 
 target_link_libraries(MukkiGamesEngine PRIVATE Vulkan::Vulkan glfw imgui::imgui)
+

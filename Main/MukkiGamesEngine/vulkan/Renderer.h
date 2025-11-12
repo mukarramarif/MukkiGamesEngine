@@ -1,6 +1,10 @@
-#include <vulkan/vulkan.h>
-#include "Window.h"
+#pragma once
+#include "Core/VkInstance.h"  // Changed from Instance.h
+#include "Core/VkDevice.h"
+#include "Core/SwapChain.h"
+#include "Core/EngineWindow.h"
 #include <vector>
+#include <set>
 class VulkanRenderer {
 private:
     // Core Vulkan objects
