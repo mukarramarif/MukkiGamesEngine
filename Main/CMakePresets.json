@@ -27,6 +27,7 @@
             },
             "cacheVariables": {
               "CMAKE_BUILD_TYPE": "Debug",
+              "CMAKE_PREFIX_PATH": "C:/Users/mukar/vcpkg/installed/x64-windows",
               "CMAKE_TOOLCHAIN_FILE": "C:/Users/mukar/vcpkg/scripts/buildsystems/vcpkg.cmake"
             }
         },
