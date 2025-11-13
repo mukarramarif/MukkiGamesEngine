@@ -15,7 +15,7 @@ file(GLOB ENGINE_SOURCES
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Core/*.h"
 )
 
-add_executable(MukkiGamesEngine ${ENGINE_SOURCES})
+add_executable(MukkiGamesEngine ${ENGINE_SOURCES} "MukkiGamesEngine/vulkan/Descriptors/VkDescriptor.cpp" "MukkiGamesEngine/vulkan/Descriptors/VkDescriptor.h")
 
 set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD 20)
 set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD_REQUIRED ON)
