@@ -69,6 +69,7 @@ public:
     void createTextureImageView();
     void createTextureSampler();
 
+    void createDescriptorSetLayout();
     // Rendering
     void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
     void drawFrame();

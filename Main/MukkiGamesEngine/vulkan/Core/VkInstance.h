@@ -1,4 +1,5 @@
 #pragma once
+#include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan.h>
 #include <vector>
 #include <string>

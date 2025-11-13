@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 #include "Core/VkInstance.h"
+#include <array>
 void VulkanRenderer::init(Window* window)
 {
 	/*createInstance();
@@ -135,12 +136,12 @@ void VulkanRenderer::init(Window* window)
 void VulkanRenderer::createCommandPool()
 {
 	// Implementation for creating command pool
-	QueueFamilyIndices queueFamilyIndices = device->findQueueFamilies(physicalDevice, getSurface());
+	QueueFamilyIndices queueFamilyIndices = device.findQueueFamilies(physicalDevice);
 	VkCommandPoolCreateInfo poolInfo{};
 	poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 	poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 	poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
-	if (vkCreateCommandPool(device->getDevice(), &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+	if (vkCreateCommandPool(device.getDevice(), &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
 		throw std::runtime_error("failed to create command pool!");
 	}
 }
@@ -153,7 +154,7 @@ void VulkanRenderer::createCommandBuffers()
 	allocInfo.commandPool = commandPool;
 	allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 	allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
-	if (vkAllocateCommandBuffers(device->getDevice(), &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
+	if (vkAllocateCommandBuffers(device.getDevice(), &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
 		throw std::runtime_error("failed to allocate command buffers!");
 	}
 }
@@ -161,7 +162,7 @@ void VulkanRenderer::createRenderPass()
 {
 	// Implementation for creating render pass
 	VkAttachmentDescription colorAttachment{};
-	colorAttachment.format = swapChain->getSwapChainFormat();
+	colorAttachment.format = swapChain.getSwapChainImageFormat();
 	colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
 	colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 	colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -212,12 +213,12 @@ void VulkanRenderer::createRenderPass()
 	renderPassInfo.dependencyCount = 1;
 	renderPassInfo.pDependencies = &dependency;
 
-	if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
+	if (vkCreateRenderPass(device.getDevice(), &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
 		throw std::runtime_error("failed to create render pass!");
 	}
 }
 
-void createDescriptorSetLayout() {
+void VulkanRenderer::createDescriptorSetLayout() {
 	// UBO binding (binding = 0)
 	VkDescriptorSetLayoutBinding uboLayoutBinding{};
 	uboLayoutBinding.binding = 0;
@@ -250,11 +251,11 @@ void createDescriptorSetLayout() {
 	layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
 	layoutInfo.pBindings = bindings.data();
 
-	if (vkCreateDescriptorSetLayout(device->getPhysicalDevice(), &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+	if (vkCreateDescriptorSetLayout(device.getDevice(), &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
 		throw std::runtime_error("failed to create descriptor set layout!");
 	}
 
-	if (device->enableValidationLayers) {
+	if (instance.enableValiationLayers) {
 		// Logging the descriptor set layout details
 		std::cout << "Descriptor Set Layout created successfully!" << std::endl;
 		for (const auto& binding : bindings) {

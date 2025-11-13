@@ -18,6 +18,8 @@ void Window::init(int w, int h, const char* t)
 	glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
 	window = glfwCreateWindow(width, height, title, nullptr, nullptr);
+	glfwSetWindowUserPointer(window, this);
+	glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
 }
 GLFWwindow* Window::getGLFWwindow()
 {
@@ -30,4 +32,8 @@ const int Window::getWidth()
 const int Window::getHeight()
 {
 	return height;
+}
+static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
+	auto app = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
+	app->framebufferResized = true;
 }

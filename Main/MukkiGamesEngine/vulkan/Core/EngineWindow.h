@@ -13,4 +13,5 @@ public:
 	const int getWidth();
 	const int getHeight();
 
+    bool framebufferResized = false;
 };
