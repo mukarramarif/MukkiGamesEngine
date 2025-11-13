@@ -58,6 +58,9 @@ public:
     void createCommandPool();
     void createCommandBuffers();
 
+    VkFormat findDepthFormat();
+    VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
+
     // Pipeline setup
     void createRenderPass();
     VkShaderModule createShaderModule(const std::vector<char>& code);

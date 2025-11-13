@@ -10,6 +10,21 @@ VkDescriptorBoss::VkDescriptorBoss(const Device* device, uint32_t maxSets)
 void VkDescriptorBoss::createDescriptorPool(uint32_t maxSets)
 
 {
+	std::array<VkDescriptorPoolSize, 3> poolSizes{};
+	poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+	poolSizes[0].descriptorCount = maxSets;
+	poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	poolSizes[1].descriptorCount = maxSets;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+	poolInfo.Stype = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+	poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+	poolInfo.pPoolSizes = poolSizes.data();
+	poolInfo.maxSets = maxSets;
+    if (vkCreateDescriptorPool(device->getDevice(), &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create descriptor pool!");
+	}
+
 
 }
 
@@ -75,8 +90,13 @@ void VkDescriptorBoss::createDescriptorSets(VkDescriptorSetLayout descriptorSetL
 
 void VkDescriptorBoss::destroyDescriptorPool()
 {
+	if(VkDescriptorBoss::descriptorPool != VK_NULL_HANDLE){
+        vkDestroyDescriptorPool(device->getDevice(), descriptorPool, nullptr);
+        descriptorPool = VK_NULL_HANDLE;
+	}
 }
 
 VkDescriptorBoss::~VkDescriptorBoss()
 {
+	destroyDescriptorPool();
 }

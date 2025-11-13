@@ -148,7 +148,7 @@ void VulkanRenderer::createCommandPool()
 void VulkanRenderer::createCommandBuffers()
 {
 	// Implementation for creating command buffers
-	commandBuffers.resize(swapChainFramebuffers.size());
+	commandBuffers.resize(swapChain.getSwapChainImages().size());
 	VkCommandBufferAllocateInfo allocInfo{};
 	allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 	allocInfo.commandPool = commandPool;
@@ -157,6 +157,14 @@ void VulkanRenderer::createCommandBuffers()
 	if (vkAllocateCommandBuffers(device.getDevice(), &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
 		throw std::runtime_error("failed to allocate command buffers!");
 	}
+}
+VkFormat VulkanRenderer::findDepthFormat()
+{
+	return VkFormat();
+}
+VkFormat VulkanRenderer::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features)
+{
+	return VkFormat();
 }
 void VulkanRenderer::createRenderPass()
 {
