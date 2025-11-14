@@ -3,11 +3,13 @@
 #include "Core/VkDevice.h"
 #include "Core/SwapChain.h"
 #include "Core/EngineWindow.h"
+#include "Descriptors/VkDescriptor.h"
 #include <vector>
 #include <set>
 #include <iostream>
 class VkInstance;
 class Device;
+class VkDescriptorBoss;
 
 class VulkanRenderer {
 private:
@@ -40,6 +42,9 @@ private:
     // Swapchain (for presentation)
 	VulkanSwap swapChain;
 
+	// Descriptor Sets
+	VkDescriptorBoss* descriptorBoss;
+    VkDescriptorSetLayout descriptorSetLayout;
     // Synchronization
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
