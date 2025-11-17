@@ -13,9 +13,11 @@ file(GLOB ENGINE_SOURCES
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/*.h"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Core/*.cpp"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Core/*.h"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/SceneLoader/*.cpp"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/SceneLoader/*.h"
 )
 
-add_executable(MukkiGamesEngine ${ENGINE_SOURCES} "MukkiGamesEngine/vulkan/Descriptors/VkDescriptor.cpp" "MukkiGamesEngine/vulkan/Descriptors/VkDescriptor.h")
+add_executable(MukkiGamesEngine ${ENGINE_SOURCES})
 
 set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD 20)
 set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD_REQUIRED ON)
