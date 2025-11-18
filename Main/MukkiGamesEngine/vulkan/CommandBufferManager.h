@@ -13,6 +13,17 @@ public:
 	void cleanup();
 
 	VkCommandPool getCommandPool() const { return commandPool };
+	VkCommandBuffer getCommandBuffer(uint32_t index) const { return commandBuffers[index]; }
+	VkCommandBuffer beginSingleTimeCommands();
+	void endSingleTimeCommands(VkCommandBuffer commmandBuffer);
+	void resetCommandBuffer(uint32_t frameIndex);
+	void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
+		VkRenderPass renderPass, VkFramebuffer framebuffer,
+		VkExtent2D extent, VkPipeline graphicsPipeline,
+		VkPipelineLayout pipelineLayout, VkBuffer vertexBuffer,
+		VkBuffer indexBuffer, const std::vector<VkDescriptorSet>& descriptorSets,
+		uint32_t currentFrame, uint32_t indexCount);
+
 private:
 	const Device* device;
 	VkCommandPool commandPool;
