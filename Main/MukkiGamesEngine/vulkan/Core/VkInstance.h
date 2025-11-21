@@ -18,7 +18,7 @@ public:
 	bool isValidEnabled() const { return validEnabled; }
 	const std::vector<std::string>& getEnabledExtensions() { return enabledExtensions; }
 	static Instance* getInstancePtr() { return instancePtr; }
-	bool enableValiationLayers = true;
+	bool enableValidationLayers = true;
 	bool checkValidationLayersSupport();
 	void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo);
 	const std::vector<const char*> getValidationLayers();

@@ -4,9 +4,12 @@
 #include "Core/SwapChain.h"
 #include "Core/EngineWindow.h"
 #include "Descriptors/VkDescriptor.h"
+#include "RenderPass.h"
 #include <vector>
 #include <set>
 #include <iostream>
+
+const int MAX_FRAMES_IN_FLIGHT = 2;
 class VkInstance;
 class Device;
 class VkDescriptorBoss;
@@ -25,10 +28,9 @@ private:
     std::vector<VkCommandBuffer> commandBuffers;
 
     // Renderpass & Pipeline
-    VkRenderPass renderPass;
-    VkPipelineLayout pipelineLayout;
-    VkPipeline graphicsPipeline;
-
+	VulkanPipeline *graphicsPipeline;
+	VkRenderPass renderPass;
+	VulkanRenderPass* renderPassObj;
     // Shaders
     VkShaderModule vertShaderModule;
     VkShaderModule fragShaderModule;
@@ -49,6 +51,8 @@ private:
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
     std::vector<VkFence> inFlightFences;
+    uint32_t currentFrame = 0;
+
     std::set<uint32_t> uniqueQueueFamilies;
     uint32_t graphicsQueueFamilyIndex;
     VkSurfaceKHR surface = VK_NULL_HANDLE;
@@ -69,7 +73,6 @@ public:
     // Pipeline setup
     void createRenderPass();
     VkShaderModule createShaderModule(const std::vector<char>& code);
-    void createGraphicsPipeline();
 
     // Resource management
     void createTexture(const char* filename);
@@ -78,6 +81,8 @@ public:
     void createTextureSampler();
 
     void createDescriptorSetLayout();
+
+    void createSyncObjects();
     // Rendering
     void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
     void drawFrame();
