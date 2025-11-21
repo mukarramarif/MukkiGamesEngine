@@ -24,8 +24,8 @@ class Device{
 	void cleanup();
 	Device(const Device&) = delete;
 	Device& operator=(const Device&) = delete;
-	VkDevice& getDevice();
-	VkPhysicalDevice& getPhysicalDevice();
+	const VkDevice& getDevice();
+	const VkPhysicalDevice& getPhysicalDevice();
 	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
 	SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
 	uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);

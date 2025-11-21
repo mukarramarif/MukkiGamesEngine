@@ -20,7 +20,7 @@ public:
 
 private:
 	VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
-	Device* device = nullptr;
+	const Device* device = nullptr;
 
 
 };
