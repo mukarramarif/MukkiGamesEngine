@@ -49,7 +49,7 @@ void VulkanRenderer::init(Window* window)
 	createCommandPool();
 	createCommandBuffers();
 	createRenderPass();
-	graphicsPipeline->createGrraphicsPipeline(swapChain.getSwapChain(),"shaders/vert.spv","shaders/frag.spv");
+	
 
 
 	// ADD THIS:

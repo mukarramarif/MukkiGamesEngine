@@ -4,6 +4,16 @@
 #include <fstream> // Add this include for std::ifstream and std::ios
 #include <iostream>
 #include "objects/vertex.h"
+VulkanPipeline::VulkanPipeline(Device* device, VkRenderPass renderPass, const std::string& vertShaderPath, const std::string& fragShaderPath, Window* window, Instance* instance)
+{
+	this->device = device;
+	this->vkSwap = nullptr;
+	this->Window = window;  // Changed from uppercase Window to match member variable
+	this->instance = instance;
+	createDescriptorSetLayout();
+	createGraphicsPipeline({ 800, 600 }, vertShaderPath, fragShaderPath);
+	this->renderPass = renderPass;
+}
 void VulkanPipeline::recreate(const VulkanSwap& swapChain)
 {
 	int width=0, height =0;
@@ -199,7 +209,7 @@ void VulkanPipeline::createRenderPass(VkFormat swapChainImageFormat) {
 	dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
 	dependency.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 	dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-	dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+	dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_ATTACHMENT_WRITE_BIT;
 
 	std::array<VkAttachmentDescription, 2> attachments = { colorAttachment, depthAttachment };
 	VkRenderPassCreateInfo renderPassInfo{};

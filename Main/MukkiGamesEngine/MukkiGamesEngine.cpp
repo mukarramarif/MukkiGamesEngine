@@ -2,14 +2,13 @@
 //
 
 #include "MukkiGamesEngine.h"
-#include "Vulkan/Core/EngineWindow.h"
+#include "Vulkan/Core/VkApplication.h"
 using namespace std;
 
 int main()
 {
-	Window window;
-	window.init(800, 600, "Mukki Games Engine");
-	
+	VulkanApplication app;
+	app.run();
 	
 	return 0;
 }
