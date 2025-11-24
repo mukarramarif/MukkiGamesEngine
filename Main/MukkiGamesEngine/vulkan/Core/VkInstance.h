@@ -7,6 +7,7 @@
 class Instance {
 public:
 	Instance();
+	~Instance();
 	
 	Instance(const VkInstance& instance);
 	Instance& operator=(const VkInstance& instance);
@@ -24,7 +25,6 @@ public:
 	const std::vector<const char*> getValidationLayers();
 private:
 	VkInstance instance;
-	~Instance();
 	VkDebugMarkerMarkerInfoEXT debugMessenger;
 	bool validEnabled;
 	std::vector<std::string> enabledExtensions;

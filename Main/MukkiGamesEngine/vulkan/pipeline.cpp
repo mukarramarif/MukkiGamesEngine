@@ -4,22 +4,45 @@
 #include <fstream> // Add this include for std::ifstream and std::ios
 #include <iostream>
 #include "objects/vertex.h"
-VulkanPipeline::VulkanPipeline(Device* device, VkRenderPass renderPass, const std::string& vertShaderPath, const std::string& fragShaderPath, Window* window, Instance* instance)
+
+std::vector<char> readFile(const std::string& filename) {
+	std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+	if (!file.is_open()) {
+		throw std::runtime_error("failed to open file!");
+	}
+
+	size_t fileSize = (size_t)file.tellg();
+	std::vector<char> buffer(fileSize);
+	file.seekg(0);
+	file.read(buffer.data(), fileSize);
+	file.close();
+
+	return buffer;
+}
+
+VulkanPipeline::VulkanPipeline(Device* device, VkRenderPass renderPass, const std::string& vertShaderPath, const std::string& fragShaderPath, EngineWindow* window, Instance* instance)
 {
 	this->device = device;
 	this->vkSwap = nullptr;
-	this->Window = window;  // Changed from uppercase Window to match member variable
+	this->window = window;  // Changed from uppercase Window to match member variable
 	this->instance = instance;
 	createDescriptorSetLayout();
 	createGraphicsPipeline({ 800, 600 }, vertShaderPath, fragShaderPath);
 	this->renderPass = renderPass;
 }
+VulkanPipeline::~VulkanPipeline()
+{
+	vkDestroyPipeline(device->getDevice(), graphicsPipeline, nullptr);
+	vkDestroyPipelineLayout(device->getDevice(), pipelineLayout, nullptr);
+	vkDestroyDescriptorSetLayout(device->getDevice(), descriptorSetLayout, nullptr);
+}
 void VulkanPipeline::recreate(const VulkanSwap& swapChain)
 {
 	int width=0, height =0;
-	glfwGetFramebufferSize(Window->getGLFWwindow(), &width, &height);
+	glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
 	while(width==0 || height==0){
-		glfwGetFramebufferSize(Window->getGLFWwindow(), &width, &height);
+		glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
 		glfwWaitEvents();
 	}
 	vkDeviceWaitIdle(device->getDevice());
@@ -207,10 +230,9 @@ void VulkanPipeline::createRenderPass(VkFormat swapChainImageFormat) {
 	dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
 	dependency.dstSubpass = 0;
 	dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-	dependency.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+	dependency.srcAccessMask = 0;  // Change from VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
 	dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-	dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_ATTACHMENT_WRITE_BIT;
-
+	dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 	std::array<VkAttachmentDescription, 2> attachments = { colorAttachment, depthAttachment };
 	VkRenderPassCreateInfo renderPassInfo{};
 	renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -278,21 +300,6 @@ void VulkanPipeline::createDescriptorSetLayout() {
 		}
 		std::cout << "Descriptor Set Layout: " << descriptorSetLayout << std::endl;
 	}
-}
-std::vector<char> readFile(const std::string& filename) {
-	std::ifstream file(filename, std::ios::ate | std::ios::binary);
-
-	if (!file.is_open()) {
-		throw std::runtime_error("failed to open file!");
-	}
-
-	size_t fileSize = (size_t)file.tellg();
-	std::vector<char> buffer(fileSize);
-	file.seekg(0);
-	file.read(buffer.data(), fileSize);
-	file.close();
-
-	return buffer;
 }
 VkShaderModule VulkanPipeline::createShaderModule(const std::vector<char>& code) {
 	VkShaderModuleCreateInfo createInfo{};

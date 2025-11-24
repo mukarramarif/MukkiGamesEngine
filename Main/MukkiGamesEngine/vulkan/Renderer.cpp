@@ -1,11 +1,12 @@
 #include "Renderer.h"
-
+#include <vulkan/vulkan.h>
+#include "Core/EngineWindow.h"
 #include <stdexcept>
 #include "Core/VkInstance.h"
 #include <array>
 #include "pipeline.h"
 
-void VulkanRenderer::init(Window* window)
+void VulkanRenderer::init(EngineWindow* window)
 {
 	/*createInstance();
 	pickPhysicalDevice();
@@ -17,11 +18,11 @@ void VulkanRenderer::init(Window* window)
 	createTexture("texture.jpg");*/
 	instance.createInstance();
 
-	swapChain.initSwap(device, getSurface(), window->getGLFWwindow());
+	swapChain.initSwap(*device, getSurface(), window->getGLFWwindow());
 	swapChain.createImageViews();
 	
 	// Create render pass using the wrapper class
-	renderPassObj = new VulkanRenderPass(&device, swapChain.getSwapChainImageFormat());
+	renderPassObj = new VulkanRenderPass(device, swapChain.getSwapChainImageFormat());
 	renderPass = renderPassObj->getRenderPass();  // Store the VkRenderPass handle
 	
 	// Create framebuffers (now that render pass exists)
@@ -30,7 +31,7 @@ void VulkanRenderer::init(Window* window)
 	// Continue with other initialization	 	swapChain.createImageViews();
 	
 	// Create render pass using the wrapper class
-	renderPassObj = new VulkanRenderPass(&device, swapChain.getSwapChainImageFormat());
+	renderPassObj = new VulkanRenderPass(device, swapChain.getSwapChainImageFormat());
 	renderPass = renderPassObj->getRenderPass();  // Store the VkRenderPass handle
 	
 	// Create framebuffers (now that render pass exists)
@@ -39,7 +40,7 @@ void VulkanRenderer::init(Window* window)
 	// Continue with other initialization	swapChain.createImageViews();
 	
 	// Create render pass using the wrapper class
-	renderPassObj = new VulkanRenderPass(&device, swapChain.getSwapChainImageFormat());
+	renderPassObj = new VulkanRenderPass(device, swapChain.getSwapChainImageFormat());
 	renderPass = renderPassObj->getRenderPass();  // Store the VkRenderPass handle
 	
 	// Create framebuffers (now that render pass exists)
@@ -61,12 +62,12 @@ void VulkanRenderer::init(Window* window)
 void VulkanRenderer::createCommandPool()
 {
 	// Implementation for creating command pool
-	QueueFamilyIndices queueFamilyIndices = device.findQueueFamilies(physicalDevice);
+	QueueFamilyIndices queueFamilyIndices = device->findQueueFamilies(physicalDevice);
 	VkCommandPoolCreateInfo poolInfo{};
 	poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 	poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 	poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
-	if (vkCreateCommandPool(device.getDevice(), &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+	if (vkCreateCommandPool(device->getDevice(), &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
 		throw std::runtime_error("failed to create command pool!");
 	}
 }
@@ -79,7 +80,7 @@ void VulkanRenderer::createCommandBuffers()
 	allocInfo.commandPool = commandPool;
 	allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 	allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
-	if (vkAllocateCommandBuffers(device.getDevice(), &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
+	if (vkAllocateCommandBuffers(device->getDevice(), &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
 		throw std::runtime_error("failed to allocate command buffers!");
 	}
 }
@@ -146,7 +147,7 @@ void VulkanRenderer::createRenderPass()
 	renderPassInfo.dependencyCount = 1;
 	renderPassInfo.pDependencies = &dependency;
 
-	if (vkCreateRenderPass(device.getDevice(), &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
+	if (vkCreateRenderPass(device->getDevice(), &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
 		throw std::runtime_error("failed to create render pass!");
 	}
 }
@@ -176,9 +177,9 @@ void VulkanRenderer::createSyncObjects()
 	fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		if (vkCreateSemaphore(device.getDevice(), &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
-			vkCreateSemaphore(device.getDevice(), &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
-			vkCreateFence(device.getDevice(), &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
+		if (vkCreateSemaphore(device->getDevice(), &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+			vkCreateSemaphore(device->getDevice(), &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
+			vkCreateFence(device->getDevice(), &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create synchronization objects for a frame!");
 		}
 	}
@@ -203,12 +204,12 @@ void VulkanRenderer::createTextureSampler()
 void VulkanRenderer::drawFrame()
 {
 	// 1. Wait for the previous frame to finish
-	vkWaitForFences(device.getDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+	vkWaitForFences(device->getDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
 	// 2. Acquire an image from the swap chain
 	uint32_t imageIndex;
 	VkResult result = vkAcquireNextImageKHR(
-		device.getDevice(),
+		device->getDevice(),
 		swapChain.getSwapChain(),
 		UINT64_MAX,
 		imageAvailableSemaphores[currentFrame],
@@ -226,7 +227,7 @@ void VulkanRenderer::drawFrame()
 	}
 
 	// 3. Only reset the fence if we are submitting work
-	vkResetFences(device.getDevice(), 1, &inFlightFences[currentFrame]);
+	vkResetFences(device->getDevice(), 1, &inFlightFences[currentFrame]);
 
 	// 4. Record the command buffer
 	vkResetCommandBuffer(commandBuffers[currentFrame], 0);

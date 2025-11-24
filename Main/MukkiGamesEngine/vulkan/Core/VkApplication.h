@@ -14,21 +14,24 @@ const int MAX_FRAMES_IN_FLIGHT = 2;
 
 class VulkanApplication {
 public:
+	// Explicit constructor and destructor
+	VulkanApplication();
+	~VulkanApplication();
 	void run();
 private:
 	// Core components
 	Instance instance;
-	Window* window;
-	Device* device;
-	VulkanSwap* swapChain;
+	EngineWindow* window = nullptr;
+	Device* device = nullptr;
+	VulkanSwap* swapChain = nullptr;
 	
 	// Rendering components
-	VulkanRenderPass* renderPassObj;
-	VkRenderPass renderPass;
-	VulkanPipeline* graphicsPipeline;
+	VulkanRenderPass* renderPassObj = nullptr;
+	VkRenderPass renderPass = VK_NULL_HANDLE;
+	VulkanPipeline* graphicsPipeline = nullptr;
 	
 	// Command buffers
-	CommandBufferManager* commandBufferManager;
+	CommandBufferManager* commandBufferManager = nullptr;
 	
 	// Synchronization objects
 	std::vector<VkSemaphore> imageAvailableSemaphores;
@@ -36,16 +39,16 @@ private:
 	std::vector<VkFence> inFlightFences;
 	uint32_t currentFrame = 0;
 	
-	// Vertex/Index buffers (you'll need these)
-	VkBuffer vertexBuffer;
-	VkDeviceMemory vertexBufferMemory;
-	VkBuffer indexBuffer;
-	VkDeviceMemory indexBufferMemory;
-	uint32_t indexCount;
+	// Vertex/Index buffers 
+	VkBuffer vertexBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
+	VkBuffer indexBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
+	uint32_t indexCount = 0;
 	
 	// Descriptors
-	VkDescriptorBoss* descriptorBoss;
-	
+	VkDescriptorBoss* descriptorBoss = nullptr;
+	std::vector<VkDescriptorSet> descriptorSets;
 	// Methods
 	void initVulkan();
 	void mainLoop();

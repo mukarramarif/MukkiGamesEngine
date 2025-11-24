@@ -1,17 +1,26 @@
-#include <GlFW/glfw3.h>
-class Window {
+#pragma once
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+#include <vulkan/vulkan.h>
+
+class EngineWindow {
 private:
 	GLFWwindow* window;
 	int width;
 	int height;
 	const char* title;
+	VkSurfaceKHR surface = VK_NULL_HANDLE;
 public:
-	~Window();
+	~EngineWindow();
 
 	void init(int w, int h, const char* t);
 	GLFWwindow* getGLFWwindow();
 	const int getWidth();
 	const int getHeight();
+
+	VkSurfaceKHR createSurface(VkInstance instance);
+	VkSurfaceKHR getSurface() const { return surface; }
+	void cleanup();
 
     bool framebufferResized = false;
 };

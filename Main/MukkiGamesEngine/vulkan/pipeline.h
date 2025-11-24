@@ -9,7 +9,7 @@ class Device;
 
 class VulkanPipeline {
 public:
-	VulkanPipeline(Device* device, VkRenderPass renderPass, const std::string& vertShaderPath, const std::string& fragShaderPath,  Window* window, Instance* instance);
+	VulkanPipeline(Device* device, VkRenderPass renderPass, const std::string& vertShaderPath, const std::string& fragShaderPath,  EngineWindow* window, Instance* instance);
 	~VulkanPipeline();
 	void recreate(const VulkanSwap& swapChain);
 	VkRenderPass getRenderPass() const { return renderPass; }
@@ -19,7 +19,7 @@ public:
 private:
 	Device* device;
 	VulkanSwap* vkSwap;
-	Window* Window;
+	EngineWindow* window;
 	Instance* instance;
 	VkDescriptorSetLayout descriptorSetLayout;
 	VkPipeline graphicsPipeline;

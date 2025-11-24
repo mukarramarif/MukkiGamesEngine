@@ -18,17 +18,28 @@ struct SwapChainSupportDetails {
 };
 class Device{
 	public:
-	Device();
-	Device(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface);
+
+	Device(Instance& instance, VkSurfaceKHR surface);
 	~Device();
 	void cleanup();
 	Device(const Device&) = delete;
 	Device& operator=(const Device&) = delete;
-	const VkDevice& getDevice();
-	const VkPhysicalDevice& getPhysicalDevice();
+	const VkDevice& getDevice() const;
+	const VkPhysicalDevice& getPhysicalDevice() const;
 	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
 	SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
 	uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+	VkQueue getGraphicsQueue() const { return graphicsQueue; }
+	VkQueue getPresentQueue() const { return presentQueue; }
+
+	void createBuffer(
+		VkDeviceSize size,
+		VkBufferUsageFlags usage,
+		VkMemoryPropertyFlags properties,
+		VkBuffer& buffer,
+		VkDeviceMemory& bufferMemory);
+	
+	void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
 
 private:
 	VkDevice device;

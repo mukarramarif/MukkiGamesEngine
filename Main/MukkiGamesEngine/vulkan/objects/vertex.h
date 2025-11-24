@@ -1,7 +1,7 @@
 #pragma once
 #include <vulkan/vulkan.h>
 #include <array>
-#include <glm>
+#include <glm/glm.hpp>
 
 struct Vertex{
 	glm::vec3 pos;

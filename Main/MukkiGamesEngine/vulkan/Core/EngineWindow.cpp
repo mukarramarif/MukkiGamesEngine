@@ -1,12 +1,18 @@
 #include "EngineWindow.h"
 
-Window::~Window()
-{
-	glfwDestroyWindow(window);
-	glfwTerminate();
+#include <vulkan/vulkan.h>
+#include <stdexcept>
 
+static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
+	auto app = reinterpret_cast<EngineWindow*>(glfwGetWindowUserPointer(window));
+	app->framebufferResized = true;
 }
-void Window::init(int w, int h, const char* t)
+
+EngineWindow::~EngineWindow()
+{
+	cleanup();
+}
+void EngineWindow::init(int w, int h, const char* t)
 {
 	width = w;
 	height = h;
@@ -21,19 +27,32 @@ void Window::init(int w, int h, const char* t)
 	glfwSetWindowUserPointer(window, this);
 	glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
 }
-GLFWwindow* Window::getGLFWwindow()
+GLFWwindow* EngineWindow::getGLFWwindow()
 {
 	return window;
 }
-const int Window::getWidth()
+const int EngineWindow::getWidth()
 {
 	return width;
 }	
-const int Window::getHeight()
+const int EngineWindow::getHeight()
 {
 	return height;
 }
-static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
-	auto app = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
-	app->framebufferResized = true;
+
+VkSurfaceKHR EngineWindow::createSurface(VkInstance instance)
+{
+    if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create window surface!");
+    }
+    return surface;
+}
+
+void EngineWindow::cleanup()
+{
+    if (window) {
+        glfwDestroyWindow(window);
+        window = nullptr;
+    }
+    glfwTerminate();
 }

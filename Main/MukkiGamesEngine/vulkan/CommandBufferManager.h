@@ -9,10 +9,10 @@ public:
 	CommandBufferManager();
 	~CommandBufferManager();
 
-	void init(const Device& device, uint32_t maxFramesInFlight);
+	void init( Device* device, uint32_t maxFramesInFlight);
 	void cleanup();
 
-	VkCommandPool getCommandPool() const { return commandPool };
+	VkCommandPool getCommandPool() const { return commandPool; };
 	VkCommandBuffer getCommandBuffer(uint32_t index) const { return commandBuffers[index]; }
 	VkCommandBuffer beginSingleTimeCommands();
 	void endSingleTimeCommands(VkCommandBuffer commmandBuffer);
@@ -25,10 +25,10 @@ public:
 		uint32_t currentFrame, uint32_t indexCount);
 
 private:
-	const Device* device;
+	Device* device;
 	VkCommandPool commandPool;
 	std::vector<VkCommandBuffer> commandBuffers;
-
+	
 	void createCommandPool();
 	void createCommandBuffers(uint32_t maxFramesInFlight);
 };

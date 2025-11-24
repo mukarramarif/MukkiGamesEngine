@@ -18,7 +18,7 @@ Instance::Instance(const VkInstance& instance) : instance(instance) {
 
 }
 void Instance::createInstance() {
-	if(enableValiationLayers && !checkValidationLayersSupport()) {
+	if(enableValidationLayers && !checkValidationLayersSupport()) {
 		throw std::runtime_error("validation layers requested, but not available!");
 	}
 	VkApplicationInfo appInfo{};
@@ -34,7 +34,7 @@ void Instance::createInstance() {
 	createInfo.pApplicationInfo = &appInfo;
 
 	VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
-	if (enableValiationLayers) {
+	if (enableValidationLayers) {
 		createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
 		createInfo.ppEnabledLayerNames = validationLayers.data();
 		populateDebugMessengerCreateInfo(debugCreateInfo);

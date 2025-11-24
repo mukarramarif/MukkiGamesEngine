@@ -5,21 +5,19 @@
 #include "Core/EngineWindow.h"
 #include "Descriptors/VkDescriptor.h"
 #include "RenderPass.h"
+#include "pipeline.h"
 #include <vector>
 #include <set>
 #include <iostream>
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
-class VkInstance;
-class Device;
-class VkDescriptorBoss;
 
 class VulkanRenderer {
 private:
     // Core Vulkan objects
     Instance instance;
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
-    Device device = Device(physicalDevice,surface);
+    Device* device = nullptr;
     VkQueue graphicsQueue;
     VkQueue presentQueue;
 
@@ -28,9 +26,9 @@ private:
     std::vector<VkCommandBuffer> commandBuffers;
 
     // Renderpass & Pipeline
-	VulkanPipeline *graphicsPipeline;
+	VulkanPipeline *graphicsPipeline = nullptr;
 	VkRenderPass renderPass;
-	VulkanRenderPass* renderPassObj;
+	VulkanRenderPass* renderPassObj = nullptr;
     // Shaders
     VkShaderModule vertShaderModule;
     VkShaderModule fragShaderModule;
@@ -45,8 +43,8 @@ private:
 	VulkanSwap swapChain;
 
 	// Descriptor Sets
-	VkDescriptorBoss* descriptorBoss;
-    VkDescriptorSetLayout descriptorSetLayout;
+	VkDescriptorBoss* descriptorBoss = nullptr;
+  VkDescriptorSetLayout descriptorSetLayout;
     // Synchronization
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
@@ -58,7 +56,7 @@ private:
     VkSurfaceKHR surface = VK_NULL_HANDLE;
 public:
     // Initialization
-    void init(Window* window);
+    void init(EngineWindow* window);
     void createInstance();
     void pickPhysicalDevice();
     void createLogicalDevice();
