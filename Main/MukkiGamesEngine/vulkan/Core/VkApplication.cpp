@@ -3,6 +3,8 @@
 #include "../objects/vertex.h"
 #include <stdexcept>	
 #include <array>
+#include "ShaderCompiler.h"
+
 
 // Example vertices (triangle)
 const std::vector<Vertex> vertices = {
@@ -47,12 +49,15 @@ void VulkanApplication::run()
 
 void VulkanApplication::initVulkan()
 {
-	// 1. Create instance (Vulkan context)
-	instance.createInstance();
-	
-	// 2. Create window
+	// 0. Ensure shaders are compiled to SPIR-V (will skip if up-to-date)
+	ShaderCompiler::compileShadersIfNeeded();
+	// 1. Create window
 	window = new EngineWindow();
 	window->init(800, 600, "Mukki Games Engine");
+
+	// 2. Create instance (Vulkan context)
+	instance.createInstance();
+	
 	
 	// 3. Create surface (connection between Vulkan and window)
 	VkSurfaceKHR surface = window->createSurface(instance.getInstance());

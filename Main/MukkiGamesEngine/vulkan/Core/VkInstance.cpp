@@ -1,5 +1,6 @@
 #include "VkInstance.h"
 #include <iostream>
+#include <GLFW/glfw3.h>
 Instance* Instance::instancePtr = nullptr;
 Instance::Instance() : instance(VK_NULL_HANDLE), validEnabled(false) {
 
@@ -29,10 +30,21 @@ void Instance::createInstance() {
 	appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
 	appInfo.apiVersion = VK_API_VERSION_1_0;
 
+	auto extensions = getRequiredExtensions();
+	const bool enablePortability = (std::getenv("ENABLE_PORTABILITY_ENUM") != nullptr);
+	if (enablePortability) {
+		extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+	}
+
 	VkInstanceCreateInfo createInfo{};
 	createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 	createInfo.pApplicationInfo = &appInfo;
-
+	//createInfo.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+	createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+	createInfo.ppEnabledExtensionNames = extensions.data();
+	if (enablePortability) {
+		createInfo.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+	}
 	VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
 	if (enableValidationLayers) {
 		createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
@@ -44,10 +56,7 @@ void Instance::createInstance() {
 		createInfo.enabledLayerCount = 0;
 		createInfo.pNext = nullptr;
 	}
-	auto extensions = getRequiredExtensions();
-	createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
-	createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
-	createInfo.ppEnabledExtensionNames = extensions.data();
+	
 
 	VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
 	if (result != VK_SUCCESS) {
@@ -105,5 +114,15 @@ const std::vector<const char*> Instance::getValidationLayers()
 
 std::vector<const char*> Instance::getRequiredExtensions()
 {
-	return std::vector<const char*>();
+	uint32_t glfwExtensionCount = 0;
+	const char** glfwExtensions;
+	glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+	std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+
+	if (enableValidationLayers) {
+		extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+	}
+
+	return extensions;
 }
