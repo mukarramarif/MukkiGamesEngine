@@ -16,8 +16,8 @@ file(GLOB ENGINE_SOURCES
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Core/*.h"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Descriptors/*.cpp"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Descriptors/*.h"
-    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/SceneLoader/*.cpp"
-    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/SceneLoader/*.h"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Resources/*.cpp"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Resources/*.h"
 )
 
 add_executable(MukkiGamesEngine ${ENGINE_SOURCES})
