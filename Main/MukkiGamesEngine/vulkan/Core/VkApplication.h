@@ -8,6 +8,8 @@
 #include "../RenderPass.h"
 #include "../CommandBufferManager.h"
 #include "../Descriptors/VkDescriptor.h"
+#include "../Resources/TextureManager.h"
+#include "../Resources/BufferManager.h"
 #include <vector>
 #include "ShaderCompiler.h"
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -49,6 +51,16 @@ private:
 	// Descriptors
 	VkDescriptorBoss* descriptorBoss = nullptr;
 	std::vector<VkDescriptorSet> descriptorSets;
+
+
+
+	//Texture Handler and Buffer Manager
+	TextureManager* textureManager;
+	BufferManager* bufferManager;
+
+	VkImage depthImage;
+	VkDeviceMemory depthImageMemory;
+	VkImageView depthImageView;
 	// Methods
 	void initVulkan();
 	void mainLoop();
@@ -58,4 +70,5 @@ private:
 	void createIndexBuffer();
 	void drawFrame();
 	void recreateSwapChain();
+
 };

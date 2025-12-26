@@ -114,7 +114,7 @@ QueueFamilyIndices Device::findQueueFamilies(VkPhysicalDevice device)
 }
 
 // Fix 2: Implement findMemoryType properly
-uint32_t Device::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
+uint32_t Device::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
 {
     VkPhysicalDeviceMemoryProperties memProperties;
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);

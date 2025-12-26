@@ -200,6 +200,7 @@ void VulkanRenderer::createTextureSampler()
 {
 	// Implementation for creating texture sampler
 }
+
 //     // Rendering loop
 void VulkanRenderer::drawFrame()
 {
@@ -220,6 +221,7 @@ void VulkanRenderer::drawFrame()
 	// Handle swap chain recreation if needed
 	if (result == VK_ERROR_OUT_OF_DATE_KHR) {
 		// Recreate swap chain
+		//recreateSwapChain();
 		return;
 	}
 	else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {

@@ -28,7 +28,7 @@ class Device{
 	const VkPhysicalDevice& getPhysicalDevice() const;
 	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
 	SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
-	uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+	uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
 	VkQueue getGraphicsQueue() const { return graphicsQueue; }
 	VkQueue getPresentQueue() const { return presentQueue; }
 

@@ -59,8 +59,8 @@ static fs::path locateCompiledShaders()
     // 4) Project build tree (common CMake output directory)
     try {
         // ${CMAKE_BINARY_DIR}/shaders is a standard build output location; attempt common relative paths
-        candidates.push_back(fs::current_path() / "build" / "shaders");
-        candidates.push_back(getExecutableDir().parent_path() / "shaders");
+        candidates.push_back(fs::current_path() );
+        candidates.push_back(getExecutableDir().parent_path());
     } catch (...) {}
 
     // Try each candidate and return the first that exists

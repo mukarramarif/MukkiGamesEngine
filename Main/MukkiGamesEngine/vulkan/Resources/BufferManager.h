@@ -1,6 +1,6 @@
 #pragma once
 
-#include "<vulkan/vulkan.h>"
+#include "vulkan/vulkan.h"
 #include <vector>
 #include "../Core/VkDevice.h"
 #include "../CommandBufferManager.h"
@@ -10,7 +10,7 @@ class BufferManager {
 public:
 	BufferManager();
 	~BufferManager();
-	void init(const VkDevice& device, const CommandBufferManager& commandBufferManager);
+	void init( Device& device, CommandBufferManager& commandBufferManager);
 	void cleanup();
 	void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
 		VkBuffer& buffer, VkDeviceMemory& bufferMemory);
@@ -20,6 +20,6 @@ public:
 	void createUniformBuffer(VkDeviceSize size, VkBuffer& uniformBuffer, VkDeviceMemory& uniformBufferMemory);
 	void destroyBuffer(VkBuffer buffer, VkDeviceMemory bufferMemory);
 private:
-	const VkDevice* device;
-	const CommandBufferManager* commandBufferManager;
+	Device* device;
+	CommandBufferManager* commandBufferManager;
 };

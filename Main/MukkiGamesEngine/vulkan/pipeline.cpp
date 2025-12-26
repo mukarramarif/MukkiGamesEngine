@@ -25,8 +25,10 @@ VulkanPipeline::VulkanPipeline(Device* device, VkRenderPass renderPass, const st
 {
 	this->device = device;
 	this->vkSwap = nullptr;
-	this->window = window;  // Changed from uppercase Window to match member variable
+	this->window = window;  
 	this->instance = instance;
+	this->renderPass = renderPass;  
+	
 	createDescriptorSetLayout();
 	createGraphicsPipeline({ 800, 600 }, vertShaderPath, fragShaderPath);
 	this->renderPass = renderPass;
@@ -143,9 +145,9 @@ void VulkanPipeline::createGraphicsPipeline(VkExtent2D swapChainExtent, const st
 	dynamicState.pDynamicStates = dynamicStates.data();
 
 	// Define push constant range
-	VkPushConstantRange pushConstantRange{};
+	/*VkPushConstantRange pushConstantRange{};
 	pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-	pushConstantRange.offset = 0;
+	pushConstantRange.offset = 0;*/
 	//pushConstantRange.size = sizeof(PushConstants);
 
 	// Create pipeline layout with both descriptor set layout and push constants
@@ -153,8 +155,8 @@ void VulkanPipeline::createGraphicsPipeline(VkExtent2D swapChainExtent, const st
 	pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 	pipelineLayoutInfo.setLayoutCount = 1;
 	pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
-	pipelineLayoutInfo.pushConstantRangeCount = 1;
-	pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+	pipelineLayoutInfo.pushConstantRangeCount = 0;
+	pipelineLayoutInfo.pPushConstantRanges = nullptr;
 
 	if (vkCreatePipelineLayout(device->getDevice(), &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
 		throw std::runtime_error("failed to create pipeline layout!");
@@ -163,7 +165,7 @@ void VulkanPipeline::createGraphicsPipeline(VkExtent2D swapChainExtent, const st
 		// Logging the pipeline layout details
 		std::cout << "Pipeline Layout created successfully!" << std::endl;
 		std::cout << "Descriptor Set Layout Count: " << pipelineLayoutInfo.setLayoutCount << std::endl;
-		std::cout << "Push Constant Range Size: " << pushConstantRange.size << std::endl;
+		/*std::cout << "Push Constant Range Size: " << pushConstantRange.size << std::endl;*/
 	}
 	VkGraphicsPipelineCreateInfo pipelineInfo{};
 	pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;

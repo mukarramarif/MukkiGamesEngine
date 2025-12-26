@@ -29,25 +29,6 @@ void CommandBufferManager::init(Device* device, uint32_t maxFramesInFlight)
 	createCommandBuffers(maxFramesInFlight);
 }
 
-VkCommandBuffer CommandBufferManager::beginSingleTimeCommands()
-{
-	VkCommandBufferAllocateInfo allocInfo{};
-	allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-	allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-	allocInfo.commandPool = commandPool;
-	allocInfo.commandBufferCount = 1;
-
-	VkCommandBuffer commandBuffer;
-	vkAllocateCommandBuffers(device->getDevice(), &allocInfo, &commandBuffer);
-
-	VkCommandBufferBeginInfo beginInfo{};
-	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-	vkBeginCommandBuffer(commandBuffer, &beginInfo);
-
-	return commandBuffer;
-}
 
 void CommandBufferManager::endSingleTimeCommands(VkCommandBuffer commandBuffer)
 {
@@ -105,7 +86,7 @@ void CommandBufferManager::recordCommandBuffer(
 	clearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };  // Black background
 	clearValues[1].depthStencil = { 1.0f, 0 };
 
-	// FIX: Don't try to set renderPassInfo members that don't exist
+	
 	renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
 	renderPassInfo.pClearValues = clearValues.data();
 
@@ -198,19 +179,7 @@ VkCommandBuffer CommandBufferManager::beginSingleTimeCommands() {
 	return commandBuffer;
 }
 
-void CommandBufferManager::endSingleTimeCommands(VkCommandBuffer commandBuffer) {
-	vkEndCommandBuffer(commandBuffer);
 
-	VkSubmitInfo submitInfo{};
-	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-	submitInfo.commandBufferCount = 1;
-	submitInfo.pCommandBuffers = &commandBuffer;
-
-	vkQueueSubmit(device->getGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
-	vkQueueWaitIdle(device->getGraphicsQueue());
-
-	vkFreeCommandBuffers(device->getDevice(), commandPool, 1, &commandBuffer);
-}
 void CommandBufferManager::createCommandPool()
 {
 	QueueFamilyIndices queueFamilyIndices = device->findQueueFamilies(device->getPhysicalDevice());

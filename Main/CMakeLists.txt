@@ -59,5 +59,5 @@ function(add_shaders TARGET_NAME)
 endfunction()
 
 # Example: compile Shaders/shader.vert -> vert.spv and Shaders/shader.frag -> frag.spv
-add_shaders(MukkiGamesEngine Shaders/shader.vert Shaders/shader.frag)
+add_shaders(MukkiGamesEngine ../Main/MukkiGamesEngine/Shaders/shader.vert ../Main/MukkiGamesEngine/Shaders/shader.frag)
 

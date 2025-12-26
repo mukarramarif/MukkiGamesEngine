@@ -33,6 +33,11 @@ VulkanApplication::VulkanApplication()
 	, indexBufferMemory(VK_NULL_HANDLE)
 	, indexCount(0)
 	, descriptorBoss(nullptr)
+	, textureManager(nullptr)
+	, bufferManager(nullptr)
+	, depthImage(VK_NULL_HANDLE)
+	, depthImageMemory(VK_NULL_HANDLE)
+	, depthImageView(VK_NULL_HANDLE)
 {
 }
 
@@ -51,55 +56,72 @@ void VulkanApplication::initVulkan()
 {
 	// 0. Ensure shaders are compiled to SPIR-V (will skip if up-to-date)
 	ShaderCompiler::compileShadersIfNeeded();
+
 	// 1. Create window
 	window = new EngineWindow();
 	window->init(800, 600, "Mukki Games Engine");
 
 	// 2. Create instance (Vulkan context)
 	instance.createInstance();
-	
-	
+
 	// 3. Create surface (connection between Vulkan and window)
 	VkSurfaceKHR surface = window->createSurface(instance.getInstance());
-	
+
 	// 4. Create device (select GPU and create logical device)
 	device = new Device(instance, surface);
-	
+
 	// 5. Create swap chain (manages images for presentation)
 	swapChain = new VulkanSwap();
 	swapChain->initSwap(*device, surface, window->getGLFWwindow());
 	swapChain->createImageViews();
-	
+
 	// 6. Create render pass (defines how rendering operations are performed)
 	renderPassObj = new VulkanRenderPass(device, swapChain->getSwapChainImageFormat());
 	renderPass = renderPassObj->getRenderPass();
-	
-	// 7. Create framebuffers (attachments for render pass)
-	swapChain->createFramebuffers(renderPass);
-	
-	// 8. Create graphics pipeline (shaders and rendering configuration)
-	graphicsPipeline = new VulkanPipeline(
-		device, 
-		renderPass, 
-		"shaders/vert.spv", 
-		"shaders/frag.spv", 
-		window, 
-		&instance
-	);
-	
-	// 9. Create command buffers (record drawing commands)
+
+	// 7. Create command buffers FIRST (required by BufferManager and TextureManager)
 	commandBufferManager = new CommandBufferManager();
 	commandBufferManager->init(device, MAX_FRAMES_IN_FLIGHT);
-	
-	// 10. Create vertex and index buffers
+
+	// 8. Initialize BufferManager and TextureManager (they depend on CommandBufferManager)
+	bufferManager = new BufferManager();
+	bufferManager->init(*device, *commandBufferManager);
+
+	textureManager = new TextureManager();
+	textureManager->init(*device, *commandBufferManager, *bufferManager);
+
+	// 9. Create depth resources using TextureManager
+	VkExtent2D extent = swapChain->getSwapChainExtent();
+	textureManager->createdepthResources(depthImage, depthImageMemory, depthImageView,
+		extent.width, extent.height);
+
+	// 10. Create framebuffers (attachments for render pass) - NOW WITH DEPTH!
+	swapChain->createFramebuffers(renderPass, depthImageView);
+
+	// 11. Create graphics pipeline (shaders and rendering configuration)
+	graphicsPipeline = new VulkanPipeline(
+		device,
+		renderPass,
+		"vert.spv",
+		"frag.spv",
+		window,
+		&instance
+	);
+
+	// 12. Create vertex and index buffers
 	createVertexBuffer();
 	createIndexBuffer();
-	
-	// 11. Create descriptor sets (for uniforms, textures, etc.)
+
+	// 13. Create descriptor sets (for uniforms, textures, etc.)
 	descriptorBoss = new VkDescriptorBoss(device, MAX_FRAMES_IN_FLIGHT);
 	descriptorBoss->createDescriptorPool(MAX_FRAMES_IN_FLIGHT);
-	
-	// 12. Create synchronization objects (semaphores and fences)
+	descriptorBoss->createDescriptorSets(
+		graphicsPipeline->getDescriptorSetLayout(),
+		MAX_FRAMES_IN_FLIGHT,
+		descriptorSets
+	);
+
+	// 14. Create synchronization objects (semaphores and fences)
 	createSyncObjects();
 }
 
@@ -228,12 +250,7 @@ void VulkanApplication::drawFrame()
 	// 3. Reset fence
 	vkResetFences(device->getDevice(), 1, &inFlightFences[currentFrame]);
 	
-	// 4. Record command buffer
-	descriptorBoss->createDescriptorSets(
-		graphicsPipeline->getDescriptorSetLayout(),
-		MAX_FRAMES_IN_FLIGHT,
-		descriptorSets
-	);
+	
 	commandBufferManager->resetCommandBuffer(currentFrame);
 	VkCommandBuffer commandBuffer = commandBufferManager->getCommandBuffer(currentFrame);
 	commandBufferManager->recordCommandBuffer(
@@ -295,22 +312,36 @@ void VulkanApplication::drawFrame()
 
 void VulkanApplication::recreateSwapChain()
 {
-	int width = 0, height = 0;
-	glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
-	while (width == 0 || height == 0) {
-		glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
-		glfwWaitEvents();
+    int width = 0, height = 0;
+    glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
+    while (width == 0 || height == 0) {
+        glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
+        glfwWaitEvents();
+    }
+    
+    vkDeviceWaitIdle(device->getDevice());
+	// Cleanup old depth resources using TextureManager
+	if (depthImageView != VK_NULL_HANDLE) {
+		textureManager->destroyImageView(depthImageView);
+		depthImageView = VK_NULL_HANDLE;
 	}
-	
-	vkDeviceWaitIdle(device->getDevice());
-	
-	// Cleanup old swap chain
-	swapChain->cleanup();
-	
-	// Recreate swap chain and dependent objects
-	swapChain->initSwap(*device, window->getSurface(), window->getGLFWwindow());
-	swapChain->createImageViews();
-	swapChain->createFramebuffers(renderPass);
+	if (depthImage != VK_NULL_HANDLE) {
+		textureManager->destroyImage(depthImage, depthImageMemory);
+		depthImage = VK_NULL_HANDLE;
+		depthImageMemory = VK_NULL_HANDLE;
+	}
+    // Cleanup old swap chain
+    swapChain->cleanup();
+    
+    // Recreate swap chain and dependent objects
+    swapChain->initSwap(*device, window->getSurface(), window->getGLFWwindow());
+    swapChain->createImageViews();
+	VkExtent2D swapExtent = swapChain->getSwapChainExtent();
+	textureManager->createdepthResources(depthImage, depthImageMemory, depthImageView, swapExtent.width, swapExtent.height);
+    swapChain->createFramebuffers(renderPass,depthImageView);
+    
+    // IMPORTANT: Recreate the graphics pipeline
+    graphicsPipeline->recreate(*swapChain);
 }
 
 void VulkanApplication::mainLoop()
@@ -332,7 +363,14 @@ void VulkanApplication::cleanup()
 		vkDestroyFence(device->getDevice(), inFlightFences[i], nullptr);
 	}
 	
-	
+	if (textureManager) {
+		if (depthImageView != VK_NULL_HANDLE) {
+			textureManager->destroyImageView(depthImageView);
+		}
+		if (depthImage != VK_NULL_HANDLE) {
+			textureManager->destroyImage(depthImage, depthImageMemory);
+		}
+	}
 	vkDestroyBuffer(device->getDevice(), indexBuffer, nullptr);
 	vkFreeMemory(device->getDevice(), indexBufferMemory, nullptr);
 	vkDestroyBuffer(device->getDevice(), vertexBuffer, nullptr);
