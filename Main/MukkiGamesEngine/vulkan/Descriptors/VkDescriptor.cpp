@@ -47,6 +47,28 @@ void VkDescriptorBoss::createDescriptorSets(VkDescriptorSetLayout descriptorSetL
 	// For now, we just allocate the sets
 }
 
+void VkDescriptorBoss::updateDescriptorSets(const std::vector<VkDescriptorSet>& descriptorSets, VkImageView textureImageView, VkSampler textureSampler)
+{
+	for (size_t i = 0; i < descriptorSets.size(); i++) {
+		// Update texture sampler (binding = 1)
+		VkDescriptorImageInfo imageInfo{};
+		imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		imageInfo.imageView = textureImageView;
+		imageInfo.sampler = textureSampler;
+
+		VkWriteDescriptorSet descriptorWrite{};
+		descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descriptorWrite.dstSet = descriptorSets[i];
+		descriptorWrite.dstBinding = 1; // Texture sampler binding
+		descriptorWrite.dstArrayElement = 0;
+		descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		descriptorWrite.descriptorCount = 1;
+		descriptorWrite.pImageInfo = &imageInfo;
+
+		vkUpdateDescriptorSets(device->getDevice(), 1, &descriptorWrite, 0, nullptr);
+	}
+}
+
 void VkDescriptorBoss::destroyDescriptorPool()
 {
 	if (descriptorPool != VK_NULL_HANDLE) {

@@ -20,7 +20,8 @@ public:
 		VkImageLayout oldLayout, VkImageLayout newLayout);
 	void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
 	void createTextureImage(const std::string& filePath, VkImage& textureImage, VkDeviceMemory& textureImageMemory);
-	VkSampler createTextureSampler();
+	void createTextureSampler(VkSampler& sampler);
+	void createDebugTextureImage(VkImage& textureImage, VkDeviceMemory& textureImageMemory, VkImageView& imageView);
 	void createdepthResources(VkImage& depthImage, VkDeviceMemory& depthImageMemory, VkImageView& depthImageView, uint32_t width, uint32_t height);
 	void destroyImage(VkImage image, VkDeviceMemory imageMemory);
 	void destroySampler(VkSampler sampler);

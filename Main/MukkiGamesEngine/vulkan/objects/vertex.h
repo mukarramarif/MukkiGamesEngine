@@ -2,7 +2,7 @@
 #include <vulkan/vulkan.h>
 #include <array>
 #include <glm/glm.hpp>
-
+#include <iostream>
 struct Vertex{
 	glm::vec3 pos;
 	glm::vec3 color;
@@ -29,6 +29,17 @@ struct Vertex{
 		attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
 		attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
 		return attributeDescriptions;
+	}
+	static void printLayout() {
+		std::cout << "\n=== Vertex Structure Layout ===" << std::endl;
+		std::cout << "Total size: " << sizeof(Vertex) << " bytes" << std::endl;
+		std::cout << "pos offset: " << offsetof(Vertex, pos) << " bytes" << std::endl;
+		std::cout << "color offset: " << offsetof(Vertex, color) << " bytes" << std::endl;
+		std::cout << "texCoord offset: " << offsetof(Vertex, texCoord) << " bytes" << std::endl;
+		std::cout << "Expected layout:" << std::endl;
+		std::cout << "  pos: 0-11 (12 bytes)" << std::endl;
+		std::cout << "  color: 12-23 (12 bytes)" << std::endl;
+		std::cout << "  texCoord: 24-31 (8 bytes)" << std::endl;
 	}
 	bool operator==(const Vertex& other) const {
 		return pos == other.pos && color == other.color && texCoord == other.texCoord;

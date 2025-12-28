@@ -2,6 +2,7 @@
 #include <stdexcept>
 #include <array>
 #include <vector>
+#include <iostream> // For diagnostics
 
 CommandBufferManager::CommandBufferManager()
 	: device(nullptr), commandPool(VK_NULL_HANDLE)
@@ -64,16 +65,24 @@ void CommandBufferManager::recordCommandBuffer(
 	uint32_t currentFrame,
 	uint32_t indexCount)
 {
-	// Begin command buffer
+	static bool firstCall = true;
+	if (firstCall) {
+		std::cout << "\n=== COMMAND BUFFER RECORDING DIAGNOSTICS ===" << std::endl;
+		std::cout << "Extent: " << extent.width << "x" << extent.height << std::endl;
+		std::cout << "Index Count: " << indexCount << std::endl;
+		std::cout << "Vertex Buffer: " << vertexBuffer << std::endl;
+		std::cout << "Index Buffer: " << indexBuffer << std::endl;
+		std::cout << "Pipeline: " << graphicsPipeline << std::endl;
+		firstCall = false;
+	}
+
 	VkCommandBufferBeginInfo beginInfo{};
 	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-	beginInfo.flags = 0;
 
 	if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
 		throw std::runtime_error("failed to begin recording command buffer!");
 	}
 
-	// Setup render pass
 	VkRenderPassBeginInfo renderPassInfo{};
 	renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 	renderPassInfo.renderPass = renderPass;
@@ -81,44 +90,17 @@ void CommandBufferManager::recordCommandBuffer(
 	renderPassInfo.renderArea.offset = { 0, 0 };
 	renderPassInfo.renderArea.extent = extent;
 
-	// Setup clear values
 	std::array<VkClearValue, 2> clearValues{};
-	clearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };  // Black background
+	clearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
 	clearValues[1].depthStencil = { 1.0f, 0 };
 
-	
 	renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
 	renderPassInfo.pClearValues = clearValues.data();
 
-	// Begin render pass
 	vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-	// Bind pipeline
 	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-	// Bind vertex buffer
-	VkBuffer vertexBuffers[] = { vertexBuffer };
-	VkDeviceSize offsets[] = { 0 };
-	vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-
-	// FIX: Use correct index type - uint16_t uses VK_INDEX_TYPE_UINT16
-	vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-
-	// Bind descriptor sets (if any)
-	if (!descriptorSets.empty()) {
-		vkCmdBindDescriptorSets(
-			commandBuffer,
-			VK_PIPELINE_BIND_POINT_GRAPHICS,
-			pipelineLayout,
-			0,
-			1,  // Bind only one descriptor set per frame
-			&descriptorSets[currentFrame],
-			0,
-			nullptr
-		);
-	}
-
-	// Set dynamic viewport
+	// CRITICAL: Set viewport BEFORE scissor
 	VkViewport viewport{};
 	viewport.x = 0.0f;
 	viewport.y = 0.0f;
@@ -127,20 +109,43 @@ void CommandBufferManager::recordCommandBuffer(
 	viewport.minDepth = 0.0f;
 	viewport.maxDepth = 1.0f;
 	vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+	
+	/*std::cout << "Viewport set: " << viewport.width << "x" << viewport.height << std::endl;*/
 
-	// Set dynamic scissor
+	// Set scissor
 	VkRect2D scissor{};
 	scissor.offset = { 0, 0 };
 	scissor.extent = extent;
 	vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-	// Draw indexed
+	// Bind vertex buffer
+	VkBuffer vertexBuffers[] = { vertexBuffer };
+	VkDeviceSize offsets[] = { 0 };
+	vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+	// Bind index buffer
+	vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
+	// Bind descriptor sets
+	/*if (!descriptorSets.empty()) {
+		vkCmdBindDescriptorSets(
+			commandBuffer,
+			VK_PIPELINE_BIND_POINT_GRAPHICS,
+			pipelineLayout,
+			0,
+			1,
+			&descriptorSets[currentFrame],
+			0,
+			nullptr
+		);
+	}*/
+
+	// DRAW
+	/*std::cout << "Drawing " << indexCount << " indices" << std::endl;*/
 	vkCmdDrawIndexed(commandBuffer, indexCount, 1, 0, 0, 0);
 
-	// End render pass
 	vkCmdEndRenderPass(commandBuffer);
 
-	// End command buffer
 	if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 		throw std::runtime_error("failed to record command buffer!");
 	}

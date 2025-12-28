@@ -1,7 +1,7 @@
 #include "pipeline.h"
 #include <array>
 #include <vector>
-#include <fstream> // Add this include for std::ifstream and std::ios
+#include <fstream> 
 #include <iostream>
 #include "objects/vertex.h"
 
@@ -97,7 +97,7 @@ void VulkanPipeline::createGraphicsPipeline(VkExtent2D swapChainExtent, const st
 	rasterizer.rasterizerDiscardEnable = VK_FALSE;
 	rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
 	rasterizer.lineWidth = 1.0f;
-	rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+	rasterizer.cullMode = VK_CULL_MODE_NONE;
 	rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	rasterizer.depthBiasEnable = VK_FALSE;
 
@@ -108,15 +108,15 @@ void VulkanPipeline::createGraphicsPipeline(VkExtent2D swapChainExtent, const st
 
 	VkPipelineDepthStencilStateCreateInfo depthStencil{};
 	depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-	depthStencil.depthTestEnable = VK_TRUE;
-	depthStencil.depthWriteEnable = VK_TRUE;
-	depthStencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+	depthStencil.depthTestEnable = VK_FALSE;
+	depthStencil.depthWriteEnable = VK_FALSE;
+	depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
 	depthStencil.depthBoundsTestEnable = VK_FALSE;
 	depthStencil.stencilTestEnable = VK_FALSE;
 
 	VkPipelineColorBlendAttachmentState colorBlendAttachment{};
 	colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-	colorBlendAttachment.blendEnable = VK_TRUE;
+	colorBlendAttachment.blendEnable = VK_FALSE;
 	colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
 	colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 	colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
@@ -153,7 +153,7 @@ void VulkanPipeline::createGraphicsPipeline(VkExtent2D swapChainExtent, const st
 	// Create pipeline layout with both descriptor set layout and push constants
 	VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 	pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-	pipelineLayoutInfo.setLayoutCount = 1;
+	pipelineLayoutInfo.setLayoutCount =1;
 	pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
 	pipelineLayoutInfo.pushConstantRangeCount = 0;
 	pipelineLayoutInfo.pPushConstantRanges = nullptr;
@@ -256,36 +256,36 @@ void VulkanPipeline::createRenderPass(VkFormat swapChainImageFormat) {
 }
 void VulkanPipeline::createDescriptorSetLayout() {
 	// UBO binding (binding = 0)
-	VkDescriptorSetLayoutBinding uboLayoutBinding{};
-	uboLayoutBinding.binding = 0;
-	uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-	uboLayoutBinding.descriptorCount = 1;
-	uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+	//VkDescriptorSetLayoutBinding uboLayoutBinding{};
+	//uboLayoutBinding.binding = 0;
+	//uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+	//uboLayoutBinding.descriptorCount = 1;
+	//uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
 	// Sampler binding (binding = 1)
-	VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+	/*VkDescriptorSetLayoutBinding samplerLayoutBinding{};
 	samplerLayoutBinding.binding = 1;
 	samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	samplerLayoutBinding.descriptorCount = 1;
-	samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;  // Changed to fragment shader
+	samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT; */ // Changed to fragment shader
 
 	// SSBO binding (binding = 2)
-	VkDescriptorSetLayoutBinding ssboLayoutBinding{};
-	ssboLayoutBinding.binding = 2;  // Changed to binding 2
-	ssboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-	ssboLayoutBinding.descriptorCount = 1;
-	ssboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+	//VkDescriptorSetLayoutBinding ssboLayoutBinding{};
+	//ssboLayoutBinding.binding = 2;  // Changed to binding 2
+	//ssboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	//ssboLayoutBinding.descriptorCount = 1;
+	//ssboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
-	std::array<VkDescriptorSetLayoutBinding, 3> bindings = {
-		uboLayoutBinding,
-		samplerLayoutBinding,
-		ssboLayoutBinding
-	};
+	//std::array<VkDescriptorSetLayoutBinding, 3> bindings = {
+	//	uboLayoutBinding,
+	//	samplerLayoutBinding,
+	//	ssboLayoutBinding
+	//};
 
 	VkDescriptorSetLayoutCreateInfo layoutInfo{};
 	layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-	layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-	layoutInfo.pBindings = bindings.data();
+	layoutInfo.bindingCount =/* static_cast<uint32_t>(bindings.size())commented out for now*/ 0;
+	layoutInfo.pBindings =/* bindings.data()*/ nullptr;
 
 	if (vkCreateDescriptorSetLayout(device->getDevice(), &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
 		throw std::runtime_error("failed to create descriptor set layout!");
@@ -294,12 +294,12 @@ void VulkanPipeline::createDescriptorSetLayout() {
 	if (instance->enableValidationLayers) {
 		// Logging the descriptor set layout details
 		std::cout << "Descriptor Set Layout created successfully!" << std::endl;
-		for (const auto& binding : bindings) {
+		/*for (const auto& binding : bindings) {
 			std::cout << "Binding: " << binding.binding
 				<< ", Type: " << binding.descriptorType
 				<< ", Count: " << binding.descriptorCount
 				<< ", Stage Flags: " << binding.stageFlags << std::endl;
-		}
+		}*/
 		std::cout << "Descriptor Set Layout: " << descriptorSetLayout << std::endl;
 	}
 }

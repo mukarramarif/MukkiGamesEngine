@@ -16,6 +16,7 @@ public:
 	void createDescriptorPool(uint32_t maxSets);
 	VkDescriptorPool getDescriptorPool() const { return descriptorPool; }
 	void createDescriptorSets(VkDescriptorSetLayout descriptorSetLayout, uint32_t count, std::vector<VkDescriptorSet>& descriptorSets);
+	void updateDescriptorSets(const std::vector<VkDescriptorSet>& descriptorSets, VkImageView textureImageView, VkSampler textureSampler);
 	void destroyDescriptorPool();
 	~VkDescriptorBoss();
 	void cleanup();

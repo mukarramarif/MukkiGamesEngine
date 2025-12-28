@@ -4,7 +4,7 @@
 #include <stdexcept>	
 #include <array>
 #include "ShaderCompiler.h"
-
+#include <iostream>
 
 // Example vertices (triangle)
 const std::vector<Vertex> vertices = {
@@ -38,6 +38,10 @@ VulkanApplication::VulkanApplication()
 	, depthImage(VK_NULL_HANDLE)
 	, depthImageMemory(VK_NULL_HANDLE)
 	, depthImageView(VK_NULL_HANDLE)
+	, textureImage(VK_NULL_HANDLE)
+	, textureImageMemory(VK_NULL_HANDLE)
+	, textureImageView(VK_NULL_HANDLE)
+	, textureSampler(VK_NULL_HANDLE)
 {
 }
 
@@ -54,6 +58,19 @@ void VulkanApplication::run()
 
 void VulkanApplication::initVulkan()
 {
+	std::cout << "\n=== VERTEX LAYOUT DIAGNOSTICS ===" << std::endl;
+	Vertex::printLayout();
+	std::cout << "glm::vec3 size: " << sizeof(glm::vec3) << " bytes" << std::endl;
+	std::cout << "glm::vec2 size: " << sizeof(glm::vec2) << " bytes" << std::endl;
+
+	// Sample vertex to verify actual memory layout
+	Vertex testVertex = { {1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}, {7.0f, 8.0f} };
+	std::cout << "Test vertex data:" << std::endl;
+	float* data = reinterpret_cast<float*>(&testVertex);
+	for (int i = 0; i < sizeof(Vertex) / sizeof(float); i++) {
+		std::cout << "  [" << i << "] = " << data[i] << std::endl;
+	}
+	std::cout << "================================\n" << std::endl;
 	// 0. Ensure shaders are compiled to SPIR-V (will skip if up-to-date)
 	ShaderCompiler::compileShadersIfNeeded();
 
@@ -111,15 +128,21 @@ void VulkanApplication::initVulkan()
 	// 12. Create vertex and index buffers
 	createVertexBuffer();
 	createIndexBuffer();
+	createTextureResources();
 
 	// 13. Create descriptor sets (for uniforms, textures, etc.)
-	descriptorBoss = new VkDescriptorBoss(device, MAX_FRAMES_IN_FLIGHT);
-	descriptorBoss->createDescriptorPool(MAX_FRAMES_IN_FLIGHT);
-	descriptorBoss->createDescriptorSets(
-		graphicsPipeline->getDescriptorSetLayout(),
-		MAX_FRAMES_IN_FLIGHT,
-		descriptorSets
-	);
+	//descriptorBoss = new VkDescriptorBoss(device, MAX_FRAMES_IN_FLIGHT);
+	//descriptorBoss->createDescriptorPool(MAX_FRAMES_IN_FLIGHT);
+	//descriptorBoss->createDescriptorSets(
+	//	graphicsPipeline->getDescriptorSetLayout(),
+	//	MAX_FRAMES_IN_FLIGHT,
+	//	descriptorSets
+	//);
+	/*descriptorBoss->updateDescriptorSets(
+		descriptorSets,
+		textureImageView,
+		textureSampler
+	);*/
 
 	// 14. Create synchronization objects (semaphores and fences)
 	createSyncObjects();
@@ -127,9 +150,16 @@ void VulkanApplication::initVulkan()
 
 void VulkanApplication::createSyncObjects()
 {
+	// Get the number of swapchain images
+	size_t imageCount = swapChain->getSwapChainImages().size();
+	
+	// Per-frame semaphores and fences
 	imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-	renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
 	inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+	
+	// Per-swapchain-image semaphores
+	renderFinishedSemaphores.resize(imageCount);
+	imagesInFlight.resize(imageCount, VK_NULL_HANDLE);
 	
 	VkSemaphoreCreateInfo semaphoreInfo{};
 	semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -138,11 +168,18 @@ void VulkanApplication::createSyncObjects()
 	fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 	fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 	
+	// Create per-frame synchronization objects
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		if (vkCreateSemaphore(device->getDevice(), &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
-			vkCreateSemaphore(device->getDevice(), &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
 			vkCreateFence(device->getDevice(), &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create synchronization objects!");
+			throw std::runtime_error("failed to create per-frame synchronization objects!");
+		}
+	}
+	
+	// Create per-swapchain-image semaphores
+	for (size_t i = 0; i < imageCount; i++) {
+		if (vkCreateSemaphore(device->getDevice(), &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create per-image synchronization objects!");
 		}
 	}
 }
@@ -150,7 +187,22 @@ void VulkanApplication::createSyncObjects()
 void VulkanApplication::createVertexBuffer()
 {
 	VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
-	
+	std::cout << "\n=== VERTEX BUFFER CREATION ===" << std::endl;
+	std::cout << "Vertex size: " << sizeof(Vertex) << " bytes" << std::endl;
+	std::cout << "Vertex count: " << vertices.size() << std::endl;
+	std::cout << "Total buffer size: " << bufferSize << " bytes" << std::endl;
+
+	// Print actual vertex data being uploaded
+	std::cout << "Vertex data:" << std::endl;
+	for (size_t i = 0; i < vertices.size(); i++) {
+		std::cout << "  Vertex[" << i << "]: pos("
+			<< vertices[i].pos.x << ", "
+			<< vertices[i].pos.y << ", "
+			<< vertices[i].pos.z << "), color("
+			<< vertices[i].color.r << ", "
+			<< vertices[i].color.g << ", "
+			<< vertices[i].color.b << ")" << std::endl;
+	}
 	// Create staging buffer (CPU accessible)
 	VkBuffer stagingBuffer;
 	VkDeviceMemory stagingBufferMemory;
@@ -224,9 +276,15 @@ void VulkanApplication::createIndexBuffer()
 	vkFreeMemory(device->getDevice(), stagingBufferMemory, nullptr);
 }
 
+void VulkanApplication::createTextureResources()
+{
+	textureManager->createDebugTextureImage(textureImage, textureImageMemory, textureImageView);
+	textureManager->createTextureSampler(textureSampler);
+}
+
 void VulkanApplication::drawFrame()
 {
-	// 1. Wait for previous frame to finish
+	// 1. Wait for the current frame's fence
 	vkWaitForFences(device->getDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 	
 	// 2. Acquire image from swap chain
@@ -247,10 +305,17 @@ void VulkanApplication::drawFrame()
 		throw std::runtime_error("failed to acquire swap chain image!");
 	}
 	
-	// 3. Reset fence
+	// 3. Check if a previous frame is using this image (wait for it)
+	if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+		vkWaitForFences(device->getDevice(), 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+	}
+	// Mark the image as being in use by this frame
+	imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+	
+	// 4. Reset fence only after we're sure we'll submit work
 	vkResetFences(device->getDevice(), 1, &inFlightFences[currentFrame]);
 	
-	
+	// 5. Record command buffer
 	commandBufferManager->resetCommandBuffer(currentFrame);
 	VkCommandBuffer commandBuffer = commandBufferManager->getCommandBuffer(currentFrame);
 	commandBufferManager->recordCommandBuffer(
@@ -268,7 +333,7 @@ void VulkanApplication::drawFrame()
 		indexCount
 	);
 	
-	// 5. Submit command buffer
+	// 6. Submit command buffer
 	VkSubmitInfo submitInfo{};
 	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 	
@@ -280,7 +345,8 @@ void VulkanApplication::drawFrame()
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &commandBuffer;
 	
-	VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
+	// Use the per-image semaphore for signaling
+	VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[imageIndex]};
 	submitInfo.signalSemaphoreCount = 1;
 	submitInfo.pSignalSemaphores = signalSemaphores;
 	
@@ -288,7 +354,7 @@ void VulkanApplication::drawFrame()
 		throw std::runtime_error("failed to submit draw command buffer!");
 	}
 	
-	// 6. Present result
+	// 7. Present result
 	VkPresentInfoKHR presentInfo{};
 	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 	presentInfo.waitSemaphoreCount = 1;
@@ -312,14 +378,15 @@ void VulkanApplication::drawFrame()
 
 void VulkanApplication::recreateSwapChain()
 {
-    int width = 0, height = 0;
-    glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
-    while (width == 0 || height == 0) {
-        glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
-        glfwWaitEvents();
-    }
-    
-    vkDeviceWaitIdle(device->getDevice());
+	int width = 0, height = 0;
+	glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
+	while (width == 0 || height == 0) {
+		glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
+		glfwWaitEvents();
+	}
+	
+	vkDeviceWaitIdle(device->getDevice());
+	
 	// Cleanup old depth resources using TextureManager
 	if (depthImageView != VK_NULL_HANDLE) {
 		textureManager->destroyImageView(depthImageView);
@@ -330,18 +397,39 @@ void VulkanApplication::recreateSwapChain()
 		depthImage = VK_NULL_HANDLE;
 		depthImageMemory = VK_NULL_HANDLE;
 	}
-    // Cleanup old swap chain
-    swapChain->cleanup();
-    
-    // Recreate swap chain and dependent objects
-    swapChain->initSwap(*device, window->getSurface(), window->getGLFWwindow());
-    swapChain->createImageViews();
+	
+	// Cleanup old per-image semaphores
+	for (size_t i = 0; i < renderFinishedSemaphores.size(); i++) {
+		vkDestroySemaphore(device->getDevice(), renderFinishedSemaphores[i], nullptr);
+	}
+	
+	// Cleanup old swap chain
+	swapChain->cleanup();
+	
+	// Recreate swap chain and dependent objects
+	swapChain->initSwap(*device, window->getSurface(), window->getGLFWwindow());
+	swapChain->createImageViews();
+	
 	VkExtent2D swapExtent = swapChain->getSwapChainExtent();
 	textureManager->createdepthResources(depthImage, depthImageMemory, depthImageView, swapExtent.width, swapExtent.height);
-    swapChain->createFramebuffers(renderPass,depthImageView);
-    
-    // IMPORTANT: Recreate the graphics pipeline
-    graphicsPipeline->recreate(*swapChain);
+	swapChain->createFramebuffers(renderPass, depthImageView);
+	
+	// Recreate per-image semaphores for new swapchain
+	size_t imageCount = swapChain->getSwapChainImages().size();
+	renderFinishedSemaphores.resize(imageCount);
+	imagesInFlight.resize(imageCount, VK_NULL_HANDLE);
+	
+	VkSemaphoreCreateInfo semaphoreInfo{};
+	semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+	
+	for (size_t i = 0; i < imageCount; i++) {
+		if (vkCreateSemaphore(device->getDevice(), &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
+			throw std::runtime_error("failed to recreate per-image semaphores!");
+		}
+	}
+	
+	// Recreate the graphics pipeline
+	graphicsPipeline->recreate(*swapChain);
 }
 
 void VulkanApplication::mainLoop()
@@ -357,12 +445,30 @@ void VulkanApplication::mainLoop()
 void VulkanApplication::cleanup()
 {
 	// Cleanup in reverse order of creation
+	
+	// Cleanup per-frame synchronization objects
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		vkDestroySemaphore(device->getDevice(), renderFinishedSemaphores[i], nullptr);
 		vkDestroySemaphore(device->getDevice(), imageAvailableSemaphores[i], nullptr);
 		vkDestroyFence(device->getDevice(), inFlightFences[i], nullptr);
 	}
 	
+	// Cleanup per-image synchronization objects
+	for (size_t i = 0; i < renderFinishedSemaphores.size(); i++) {
+		vkDestroySemaphore(device->getDevice(), renderFinishedSemaphores[i], nullptr);
+	}
+	
+	// Cleanup texture resources
+	if (textureSampler != VK_NULL_HANDLE) {
+		textureManager->destroySampler(textureSampler);
+	}
+	if (textureImageView != VK_NULL_HANDLE) {
+		textureManager->destroyImageView(textureImageView);
+	}
+	if (textureImage != VK_NULL_HANDLE) {
+		textureManager->destroyImage(textureImage, textureImageMemory);
+	}
+	
+	// Cleanup depth resources
 	if (textureManager) {
 		if (depthImageView != VK_NULL_HANDLE) {
 			textureManager->destroyImageView(depthImageView);
@@ -371,6 +477,7 @@ void VulkanApplication::cleanup()
 			textureManager->destroyImage(depthImage, depthImageMemory);
 		}
 	}
+	
 	vkDestroyBuffer(device->getDevice(), indexBuffer, nullptr);
 	vkFreeMemory(device->getDevice(), indexBufferMemory, nullptr);
 	vkDestroyBuffer(device->getDevice(), vertexBuffer, nullptr);
@@ -397,6 +504,14 @@ void VulkanApplication::cleanup()
 	
 	if (renderPassObj) {
 		delete renderPassObj;
+	}
+	
+	if (textureManager) {
+		delete textureManager;
+	}
+	
+	if (bufferManager) {
+		delete bufferManager;
 	}
 	
 	if (device) {

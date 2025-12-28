@@ -39,6 +39,7 @@ private:
 	std::vector<VkSemaphore> imageAvailableSemaphores;
 	std::vector<VkSemaphore> renderFinishedSemaphores;
 	std::vector<VkFence> inFlightFences;
+	std::vector<VkFence> imagesInFlight;
 	uint32_t currentFrame = 0;
 	
 	// Vertex/Index buffers 
@@ -57,10 +58,16 @@ private:
 	//Texture Handler and Buffer Manager
 	TextureManager* textureManager;
 	BufferManager* bufferManager;
-
+	//depth resources
 	VkImage depthImage;
 	VkDeviceMemory depthImageMemory;
 	VkImageView depthImageView;
+	//Texture resources
+	VkImage textureImage;
+	VkDeviceMemory textureImageMemory;
+	VkImageView textureImageView;
+	VkSampler textureSampler;
+
 	// Methods
 	void initVulkan();
 	void mainLoop();
@@ -68,6 +75,7 @@ private:
 	void createSyncObjects();
 	void createVertexBuffer();
 	void createIndexBuffer();
+	void createTextureResources();
 	void drawFrame();
 	void recreateSwapChain();
 
