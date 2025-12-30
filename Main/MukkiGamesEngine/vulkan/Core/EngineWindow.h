@@ -5,9 +5,12 @@
 
 class EngineWindow {
 private:
-	GLFWwindow* window;
-	int width;
-	int height;
+	struct renderData {
+		GLFWwindow* window;
+		int width;
+		int height;
+	};
+	renderData renderData{};
 	const char* title;
 	VkSurfaceKHR surface = VK_NULL_HANDLE;
 public:

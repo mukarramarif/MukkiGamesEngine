@@ -1,0 +1,182 @@
+#include "uiManager.h"
+#include <stdexcept>
+
+UIManager::UIManager()
+	: device(VK_NULL_HANDLE)
+	, imguiPool(VK_NULL_HANDLE)
+	, initialized(false)
+{
+}
+
+UIManager::~UIManager()
+{
+	if (initialized) {
+		cleanup();
+	}
+}
+
+void UIManager::checkVkResult(VkResult err)
+{
+	if (err != VK_SUCCESS) {
+		throw std::runtime_error("ImGui Vulkan error: " + std::to_string(err));
+	}
+}
+
+void UIManager::createDescriptorPool(const UIRenderData& renderData)
+{
+	// Create descriptor pool for ImGui
+	VkDescriptorPoolSize poolSizes[] = {
+		{ VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
+		{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
+		{ VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
+		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
+		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+		{ VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
+	};
+
+	VkDescriptorPoolCreateInfo poolInfo{};
+	poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+	poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+	poolInfo.maxSets = 1000 * IM_ARRAYSIZE(poolSizes);
+	poolInfo.poolSizeCount = (uint32_t)IM_ARRAYSIZE(poolSizes);
+	poolInfo.pPoolSizes = poolSizes;
+
+	if (vkCreateDescriptorPool(renderData.device, &poolInfo, nullptr, &imguiPool) != VK_SUCCESS) {
+		throw std::runtime_error("Failed to create ImGui descriptor pool!");
+	}
+}
+
+void UIManager::init(const UIRenderData& renderData, EngineWindow* window)
+{
+	if (initialized) {
+		return;
+	}
+
+	device = renderData.device;
+
+	// Create descriptor pool for ImGui
+	createDescriptorPool(renderData);
+
+	// Setup Dear ImGui context
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO();
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+	
+	// Setup Dear ImGui style
+	ImGui::StyleColorsDark();
+	// Or: ImGui::StyleColorsLight();
+
+	// Setup Platform/Renderer backends
+	ImGui_ImplGlfw_InitForVulkan(window->getGLFWwindow(), true);
+	
+	ImGui_ImplVulkan_InitInfo initInfo{};
+	initInfo.Instance = renderData.instance;
+	initInfo.PhysicalDevice = renderData.physicalDevice;
+	initInfo.Device = renderData.device;
+	initInfo.QueueFamily = renderData.queueFamily;
+	initInfo.Queue = renderData.queue;
+	initInfo.PipelineCache = VK_NULL_HANDLE;
+	initInfo.DescriptorPool = imguiPool;
+	initInfo.Subpass = 0;
+	initInfo.MinImageCount = renderData.minImageCount;
+	initInfo.ImageCount = renderData.imageCount;
+	initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+	initInfo.Allocator = nullptr;
+	initInfo.RenderPass = renderData.renderPass;
+	initInfo.CheckVkResultFn = [](VkResult err) {
+		if (err != VK_SUCCESS) {
+			throw std::runtime_error("ImGui Vulkan error: " + std::to_string(err));
+		}
+	};
+
+	ImGui_ImplVulkan_Init(&initInfo);
+
+	// Upload Fonts
+	VkCommandBuffer commandBuffer;
+	VkCommandBufferAllocateInfo allocInfo{};
+	allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+	allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	allocInfo.commandPool = renderData.commandPool;
+	allocInfo.commandBufferCount = 1;
+
+	vkAllocateCommandBuffers(renderData.device, &allocInfo, &commandBuffer);
+
+	VkCommandBufferBeginInfo beginInfo{};
+	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+	vkBeginCommandBuffer(commandBuffer, &beginInfo);
+	ImGui_ImplVulkan_CreateFontsTexture();
+	vkEndCommandBuffer(commandBuffer);
+
+	VkSubmitInfo submitInfo{};
+	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &commandBuffer;
+
+	vkQueueSubmit(renderData.queue, 1, &submitInfo, VK_NULL_HANDLE);
+	vkQueueWaitIdle(renderData.queue);
+
+	vkFreeCommandBuffers(renderData.device, renderData.commandPool, 1, &commandBuffer);
+	
+
+	initialized = true;
+}
+
+void UIManager::newFrame()
+{
+	if (!initialized) return;
+
+	ImGui_ImplVulkan_NewFrame();
+	ImGui_ImplGlfw_NewFrame();
+	ImGui::NewFrame();
+}
+
+void UIManager::render(VkCommandBuffer commandBuffer)
+{
+	if (!initialized) return;
+
+	ImGui::Render();
+	ImDrawData* drawData = ImGui::GetDrawData();
+	ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer);
+}
+
+void UIManager::cleanup()
+{
+	if (!initialized) return;
+
+	ImGui_ImplVulkan_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
+	ImGui::DestroyContext();
+
+	if (imguiPool != VK_NULL_HANDLE) {
+		vkDestroyDescriptorPool(device, imguiPool, nullptr);
+		imguiPool = VK_NULL_HANDLE;
+	}
+
+	initialized = false;
+}
+
+void UIManager::renderDebugWindow(float fps, float deltaTime)
+{
+	ImGui::Begin("Debug Info");
+	ImGui::Text("FPS: %.1f", fps);
+	ImGui::Text("Frame Time: %.3f ms", deltaTime * 1000.0f);
+	ImGui::Separator();
+	ImGui::Text("Press ESC to exit");
+	ImGui::End();
+}
+
+void UIManager::renderCameraInfo(const glm::vec3& position, const glm::vec3& front)
+{
+	ImGui::Begin("Camera Info");
+	ImGui::Text("Position: (%.2f, %.2f, %.2f)", position.x, position.y, position.z);
+	ImGui::Text("Front: (%.2f, %.2f, %.2f)", front.x, front.y, front.z);
+	ImGui::End();
+}

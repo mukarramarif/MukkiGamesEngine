@@ -83,11 +83,10 @@ void BufferManager::indexBuffer(const std::vector<uint32_t>& indices, VkBuffer& 
 
 }
 // @TODO: Implement createUniformBuffer
-//void BufferManager::createUniformBuffer(VkDeviceSize size, VkBuffer& uniformBuffer, VkDeviceMemory& uniformBufferMemory) {
-//	// Implementation of uniform buffer creation
-//	VkDeviceSize bufferSize = size;
-//	uniformBuffer.size = sizeof(vertices[0]) * vertices.size();
-//}
+void BufferManager::createUniformBuffer(VkDeviceSize size, VkBuffer& uniformBuffer, VkDeviceMemory& uniformBufferMemory) {
+	// Implementation of uniform buffer creation
+	VkDeviceSize bufferSize = size;
+}
 void BufferManager::destroyBuffer(VkBuffer buffer, VkDeviceMemory bufferMemory) {
 	vkDestroyBuffer(device->getDevice(), buffer, nullptr);
 	vkFreeMemory(device->getDevice(), bufferMemory, nullptr);

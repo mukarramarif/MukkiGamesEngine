@@ -63,7 +63,8 @@ void CommandBufferManager::recordCommandBuffer(
 	VkBuffer indexBuffer,
 	const std::vector<VkDescriptorSet>& descriptorSets,
 	uint32_t currentFrame,
-	uint32_t indexCount)
+	uint32_t indexCount,
+	UIManager& uiManager)
 {
 	static bool firstCall = true;
 	if (firstCall) {
@@ -143,7 +144,7 @@ void CommandBufferManager::recordCommandBuffer(
 	// DRAW
 	/*std::cout << "Drawing " << indexCount << " indices" << std::endl;*/
 	vkCmdDrawIndexed(commandBuffer, indexCount, 1, 0, 0, 0);
-
+	uiManager.render(commandBuffer);
 	vkCmdEndRenderPass(commandBuffer);
 
 	if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {

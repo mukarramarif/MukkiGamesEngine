@@ -77,7 +77,7 @@ void VulkanApplication::initVulkan()
 	// 1. Create window
 	window = new EngineWindow();
 	window->init(800, 600, "Mukki Games Engine");
-
+	glfwSetWindowUserPointer(window->getGLFWwindow(), this);
 	// 2. Create instance (Vulkan context)
 	instance.createInstance();
 
@@ -131,13 +131,13 @@ void VulkanApplication::initVulkan()
 	createTextureResources();
 
 	// 13. Create descriptor sets (for uniforms, textures, etc.)
-	//descriptorBoss = new VkDescriptorBoss(device, MAX_FRAMES_IN_FLIGHT);
-	//descriptorBoss->createDescriptorPool(MAX_FRAMES_IN_FLIGHT);
-	//descriptorBoss->createDescriptorSets(
-	//	graphicsPipeline->getDescriptorSetLayout(),
-	//	MAX_FRAMES_IN_FLIGHT,
-	//	descriptorSets
-	//);
+	descriptorBoss = new VkDescriptorBoss(device, MAX_FRAMES_IN_FLIGHT);
+	descriptorBoss->createDescriptorPool(MAX_FRAMES_IN_FLIGHT);
+	descriptorBoss->createDescriptorSets(
+		graphicsPipeline->getDescriptorSetLayout(),
+		MAX_FRAMES_IN_FLIGHT,
+		descriptorSets
+	);
 	/*descriptorBoss->updateDescriptorSets(
 		descriptorSets,
 		textureImageView,
@@ -146,6 +146,14 @@ void VulkanApplication::initVulkan()
 
 	// 14. Create synchronization objects (semaphores and fences)
 	createSyncObjects();
+	
+	// Initialize camera
+	camera = new Camera(glm::vec3(0.0f, 0.0f, 3.0f));
+	
+	// Setup mouse callback
+	glfwSetInputMode(window->getGLFWwindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+	glfwSetCursorPosCallback(window->getGLFWwindow(), mouseCallback);
+	SetupUIManager();
 }
 
 void VulkanApplication::createSyncObjects()
@@ -330,7 +338,8 @@ void VulkanApplication::drawFrame()
 		indexBuffer,
 		descriptorSets,
 		currentFrame,
-		indexCount
+		indexCount,
+		*uiManager
 	);
 	
 	// 6. Submit command buffer
@@ -432,10 +441,37 @@ void VulkanApplication::recreateSwapChain()
 	graphicsPipeline->recreate(*swapChain);
 }
 
+void VulkanApplication::SetupUIManager()
+{
+	uiManager = new UIManager();
+	UIRenderData renderData{};
+	renderData.instance = instance.getInstance();
+	renderData.physicalDevice = device->getPhysicalDevice();
+	renderData.device = device->getDevice();
+	renderData.queueFamily = device->findQueueFamilies(device->getPhysicalDevice()).graphicsFamily.value();
+	renderData.queue = device->getGraphicsQueue();
+	renderData.renderPass = renderPass;
+	renderData.commandPool = commandBufferManager->getCommandPool();
+	renderData.descriptorPool = descriptorBoss->getDescriptorPool();
+	renderData.imageCount = static_cast<uint32_t>(swapChain->getSwapChainImages().size());
+	renderData.minImageCount = 2; // Typical minimum
+	uiManager->init(renderData, window);
+}
+
 void VulkanApplication::mainLoop()
 {
 	while (!glfwWindowShouldClose(window->getGLFWwindow())) {
+		float currentFrame = static_cast<float>(glfwGetTime());
+		deltaTime = currentFrame - lastFrame;
+		lastFrame = currentFrame;
+		
 		glfwPollEvents();
+		processInput();
+
+		uiManager->newFrame();
+		float fps = 1.0f / deltaTime;
+		uiManager->renderDebugWindow(fps, deltaTime);
+		uiManager->renderCameraInfo(camera->position, camera->front);
 		drawFrame();
 	}
 	
@@ -513,7 +549,13 @@ void VulkanApplication::cleanup()
 	if (bufferManager) {
 		delete bufferManager;
 	}
-	
+	if(uiManager) {
+		uiManager->cleanup();
+		delete uiManager;
+	}
+	if(camera) {
+		delete camera;
+	}
 	if (device) {
 		device->cleanup();
 		delete device;
@@ -525,5 +567,43 @@ void VulkanApplication::cleanup()
 	}
 	
 	instance.cleanup();
+}
+
+void VulkanApplication::processInput() {
+	GLFWwindow* win = window->getGLFWwindow();
+	
+	if (glfwGetKey(win, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		glfwSetWindowShouldClose(win, true);
+	
+	if (glfwGetKey(win, GLFW_KEY_W) == GLFW_PRESS)
+		camera->processKeyboardInput(FORWARD, deltaTime);
+	if (glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS)
+		camera->processKeyboardInput(BACKWARD, deltaTime);
+	if (glfwGetKey(win, GLFW_KEY_A) == GLFW_PRESS)
+		camera->processKeyboardInput(LEFT, deltaTime);
+	if (glfwGetKey(win, GLFW_KEY_D) == GLFW_PRESS)
+		camera->processKeyboardInput(RIGHT, deltaTime);
+	if (glfwGetKey(win, GLFW_KEY_SPACE) == GLFW_PRESS)
+		camera->processKeyboardInput(UP, deltaTime);
+	if (glfwGetKey(win, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
+		camera->processKeyboardInput(DOWN, deltaTime);
+}
+
+void VulkanApplication::mouseCallback(GLFWwindow* window, double xpos, double ypos) {
+	auto app = reinterpret_cast<VulkanApplication*>(glfwGetWindowUserPointer(window));
+	
+	if (app->firstMouse) {
+		app->lastX = static_cast<float>(xpos);
+		app->lastY = static_cast<float>(ypos);
+		app->firstMouse = false;
+	}
+	
+	float xoffset = static_cast<float>(xpos) - app->lastX;
+	float yoffset = app->lastY - static_cast<float>(ypos); // Reversed: y-coordinates go from bottom to top
+	
+	app->lastX = static_cast<float>(xpos);
+	app->lastY = static_cast<float>(ypos);
+	
+	app->camera->processMouseMovement(xoffset, yoffset);
 }
 

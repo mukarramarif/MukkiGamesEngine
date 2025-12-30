@@ -3,7 +3,7 @@
 #include <vulkan/vulkan.h>
 #include <vector>
 #include "Core/VkDevice.h"
-
+#include "uiManager/uiManager.h"
 class CommandBufferManager {
 public:
 	CommandBufferManager();
@@ -22,7 +22,7 @@ public:
 		VkExtent2D extent, VkPipeline graphicsPipeline,
 		VkPipelineLayout pipelineLayout, VkBuffer vertexBuffer,
 		VkBuffer indexBuffer, const std::vector<VkDescriptorSet>& descriptorSets,
-		uint32_t currentFrame, uint32_t indexCount);
+		uint32_t currentFrame, uint32_t indexCount, UIManager& uiManager);
 
 private:
 	Device* device;

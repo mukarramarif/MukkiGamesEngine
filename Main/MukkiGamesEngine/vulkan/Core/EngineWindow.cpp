@@ -15,8 +15,8 @@ EngineWindow::~EngineWindow()
 
 void EngineWindow::init(int w, int h, const char* t)
 {
-    width = w;
-    height = h;
+    renderData.width = w;
+    renderData.height = h;
     title = t;
 
     if (!glfwInit()) {
@@ -24,40 +24,40 @@ void EngineWindow::init(int w, int h, const char* t)
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
-    window = glfwCreateWindow(width, height, title, nullptr, nullptr);
-    if (!window) {
+    renderData.window = glfwCreateWindow(renderData.width, renderData.height, title, nullptr, nullptr);
+    if (!renderData.window) {
         glfwTerminate();
         throw std::runtime_error("Failed to create GLFW window");
     }
 
-    glfwSetWindowUserPointer(window, this);
-    glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+    glfwSetWindowUserPointer(renderData.window, this);
+    glfwSetFramebufferSizeCallback(renderData.window, framebufferResizeCallback);
 }
 
 GLFWwindow* EngineWindow::getGLFWwindow()
 {
-    return window;
+    return renderData.window;
 }
 
 const int EngineWindow::getWidth()
 {
-    return width;
+    return renderData.width;
 }
 
 const int EngineWindow::getHeight()
 {
-    return height;
+    return renderData.height;
 }
 
 VkSurfaceKHR EngineWindow::createSurface(VkInstance instance)
 {
-    if (!window) {
+    if (!renderData.window) {
         throw std::runtime_error("createSurface called but GLFW window is null");
     }
 
-    VkResult res = glfwCreateWindowSurface(instance, window, nullptr, &surface);
+    VkResult res = glfwCreateWindowSurface(instance, renderData.window, nullptr, &surface);
     if (res != VK_SUCCESS) {
         std::ostringstream os;
         os << "glfwCreateWindowSurface failed (code=" << res << ")";
@@ -68,9 +68,9 @@ VkSurfaceKHR EngineWindow::createSurface(VkInstance instance)
 
 void EngineWindow::cleanup()
 {
-    if (window) {
-        glfwDestroyWindow(window);
-        window = nullptr;
+    if (renderData.window) {
+        glfwDestroyWindow(renderData.window);
+        renderData.window = nullptr;
     }
     glfwTerminate();
 }

@@ -18,8 +18,9 @@ file(GLOB ENGINE_SOURCES
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Descriptors/*.h"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Resources/*.cpp"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Resources/*.h"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/uiManager/*.cpp"
 )
-
+message(STATUS "Engine sources: ${ENGINE_SOURCES}")
 add_executable(MukkiGamesEngine ${ENGINE_SOURCES})
 
 set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD 20)

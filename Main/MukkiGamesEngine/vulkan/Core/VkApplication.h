@@ -10,8 +10,11 @@
 #include "../Descriptors/VkDescriptor.h"
 #include "../Resources/TextureManager.h"
 #include "../Resources/BufferManager.h"
+#include "../Resources/Camera.h"
+#include "../uiManager/uiManager.h"
 #include <vector>
 #include "ShaderCompiler.h"
+
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
 class VulkanApplication {
@@ -68,6 +71,16 @@ private:
 	VkImageView textureImageView;
 	VkSampler textureSampler;
 
+	// Camera
+	Camera* camera = nullptr;
+	
+	// Input tracking
+	float lastX = 400.0f;
+	float lastY = 300.0f;
+	bool firstMouse = true;
+	float deltaTime = 0.0f;
+	float lastFrame = 0.0f;
+
 	// Methods
 	void initVulkan();
 	void mainLoop();
@@ -78,5 +91,11 @@ private:
 	void createTextureResources();
 	void drawFrame();
 	void recreateSwapChain();
+	void SetupUIManager();
+	// Input handling methods
+	void processInput();
+	static void mouseCallback(GLFWwindow* window, double xpos, double ypos);
 
+	//UI Manager
+	UIManager* uiManager = nullptr;
 };
