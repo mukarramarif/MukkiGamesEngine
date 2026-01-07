@@ -131,7 +131,7 @@ void VulkanApplication::initVulkan()
 	createVertexBuffer();
 	createIndexBuffer();
 	createTextureResources();
-
+	createUniformBuffers();
 	// 13. Create descriptor sets (for uniforms, textures, etc.)
 	descriptorBoss = new VkDescriptorBoss(device, MAX_FRAMES_IN_FLIGHT);
 	descriptorBoss->createDescriptorPool(MAX_FRAMES_IN_FLIGHT);
@@ -140,11 +140,12 @@ void VulkanApplication::initVulkan()
 		MAX_FRAMES_IN_FLIGHT,
 		descriptorSets
 	);
-	/*descriptorBoss->updateDescriptorSets(
+	descriptorBoss->updateDescriptorSets(
 		descriptorSets,
+		uniformBuffers,
 		textureImageView,
 		textureSampler
-	);*/
+	);
 
 	// 14. Create synchronization objects (semaphores and fences)
 	createSyncObjects();
@@ -286,6 +287,36 @@ void VulkanApplication::createIndexBuffer()
 	vkFreeMemory(device->getDevice(), stagingBufferMemory, nullptr);
 }
 
+void VulkanApplication::createUniformBuffers()
+{
+	VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+	uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+	uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
+	uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
+	for(size_t i =0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		device->createBuffer(
+			bufferSize,
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			uniformBuffers[i],
+			uniformBuffersMemory[i]
+		);
+		vkMapMemory(device->getDevice(), uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
+	}
+
+}
+
+void VulkanApplication::updateUniformBuffer(uint32_t currentImage)
+{
+	UniformBufferObject ubo{};
+	ubo.model = glm::mat4(1.0f);
+	ubo.view =camera->getViewMatrix();
+	VkExtent2D extent = swapChain->getSwapChainExtent();
+	float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+	ubo.proj = camera->getProjectionMatrix(aspect);
+	memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+}
+
 void VulkanApplication::createTextureResources()
 {
 	textureManager->createDebugTextureImage(textureImage, textureImageMemory, textureImageView);
@@ -324,7 +355,7 @@ void VulkanApplication::drawFrame()
 	
 	// 4. Reset fence only after we're sure we'll submit work
 	vkResetFences(device->getDevice(), 1, &inFlightFences[currentFrame]);
-	
+	updateUniformBuffer(currentFrame);
 	// 5. Record command buffer
 	commandBufferManager->resetCommandBuffer(currentFrame);
 	VkCommandBuffer commandBuffer = commandBufferManager->getCommandBuffer(currentFrame);
@@ -417,6 +448,7 @@ void VulkanApplication::recreateSwapChain()
 		depthImage = VK_NULL_HANDLE;
 		depthImageMemory = VK_NULL_HANDLE;
 	}
+	
 	// Cleanup old compute output image
 	if (computeOutputImageView != VK_NULL_HANDLE) {
 		vkDestroyImageView(device->getDevice(), computeOutputImageView, nullptr);
@@ -430,6 +462,7 @@ void VulkanApplication::recreateSwapChain()
 		vkFreeMemory(device->getDevice(), computeOutputImageMemory, nullptr);
 		computeOutputImageMemory = VK_NULL_HANDLE;
 	}
+	
 	// Cleanup old per-image semaphores
 	for (size_t i = 0; i < renderFinishedSemaphores.size(); i++) {
 		vkDestroySemaphore(device->getDevice(), renderFinishedSemaphores[i], nullptr);
@@ -445,8 +478,15 @@ void VulkanApplication::recreateSwapChain()
 	VkExtent2D swapExtent = swapChain->getSwapChainExtent();
 	textureManager->createdepthResources(depthImage, depthImageMemory, depthImageView, swapExtent.width, swapExtent.height);
 	swapChain->createFramebuffers(renderPass, depthImageView);
-	//recreating compute output image
+	
+	// Recreate compute output image
 	createComputeOutputImage();
+	
+	// IMPORTANT: Update compute pipeline descriptor sets with new image view
+	if (computePipeline) {
+		computePipeline->createDescriptorSets(device, computeOutputImageView);
+	}
+	
 	// Recreate per-image semaphores for new swapchain
 	size_t imageCount = swapChain->getSwapChainImages().size();
 	renderFinishedSemaphores.resize(imageCount);
@@ -506,6 +546,15 @@ void VulkanApplication::cleanup()
 {
 	// Cleanup in reverse order of creation
 	cleanupComputeResources();
+	//cleanup uniform buffers
+	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		if (uniformBuffers[i] != VK_NULL_HANDLE) {
+			vkDestroyBuffer(device->getDevice(), uniformBuffers[i], nullptr);
+		}
+		if (uniformBuffersMemory[i] != VK_NULL_HANDLE) {
+			vkFreeMemory(device->getDevice(), uniformBuffersMemory[i], nullptr);
+		}
+	}
 	// Cleanup per-frame synchronization objects
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		vkDestroySemaphore(device->getDevice(), imageAvailableSemaphores[i], nullptr);

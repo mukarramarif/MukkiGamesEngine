@@ -128,7 +128,7 @@ void CommandBufferManager::recordCommandBuffer(
 	vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
 	// Bind descriptor sets
-	/*if (!descriptorSets.empty()) {
+	if (!descriptorSets.empty()) {
 		vkCmdBindDescriptorSets(
 			commandBuffer,
 			VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -139,7 +139,7 @@ void CommandBufferManager::recordCommandBuffer(
 			0,
 			nullptr
 		);
-	}*/
+	}
 
 	// DRAW
 	/*std::cout << "Drawing " << indexCount << " indices" << std::endl;*/

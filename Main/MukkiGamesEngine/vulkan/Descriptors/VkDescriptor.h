@@ -4,6 +4,7 @@
 #include <vector>
 #include <array>
 #include <glm/glm.hpp>
+
 class VkDescriptorBoss
 {
 public:
@@ -12,17 +13,17 @@ public:
 		alignas(16) glm::mat4 view;
 		alignas(16) glm::mat4 proj;
 	};
+	
 	VkDescriptorBoss(const Device* device, uint32_t maxSets);
 	void createDescriptorPool(uint32_t maxSets);
 	VkDescriptorPool getDescriptorPool() const { return descriptorPool; }
 	void createDescriptorSets(VkDescriptorSetLayout descriptorSetLayout, uint32_t count, std::vector<VkDescriptorSet>& descriptorSets);
-	void updateDescriptorSets(const std::vector<VkDescriptorSet>& descriptorSets, VkImageView textureImageView, VkSampler textureSampler);
+	void updateDescriptorSets(const std::vector<VkDescriptorSet>& descriptorSets, const std::vector<VkBuffer>& uniformBuffers, VkImageView textureImageView, VkSampler textureSampler);
 	void destroyDescriptorPool();
 	~VkDescriptorBoss();
 	void cleanup();
+	
 private:
 	VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
 	const Device* device = nullptr;
-
-
 };

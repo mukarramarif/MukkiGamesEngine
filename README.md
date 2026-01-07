@@ -16,6 +16,10 @@
 - [ ] create scene loader
 - [ ] looking into SIMD 
 - [ ] multithreading for rendering and resource loading
+## Fixes
+- [ ] recreating swapchain on window resize
+- [ ] validation layers errors when switching from compute to graphics and back
+- [ ] cleanup code maybe using RAII or smart pointers
 ## Architecture Diagram
 ```mermaid
 flowchart TD

@@ -17,7 +17,11 @@
 #include "ShaderCompiler.h"
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
-
+struct UniformBufferObject {
+	alignas(16) glm::mat4 model;
+	alignas(16) glm::mat4 view;
+	alignas(16) glm::mat4 proj;
+};
 class VulkanApplication {
 public:
 	// Explicit constructor and destructor
@@ -78,6 +82,10 @@ private:
 	VkDeviceMemory textureImageMemory;
 	VkImageView textureImageView;
 	VkSampler textureSampler;
+	//Uniform Buffers
+	std::vector<VkBuffer> uniformBuffers;
+	std::vector<VkDeviceMemory> uniformBuffersMemory;
+	std::vector<void*> uniformBuffersMapped;
 
 	// Camera
 	Camera* camera = nullptr;
@@ -96,6 +104,8 @@ private:
 	void createSyncObjects();
 	void createVertexBuffer();
 	void createIndexBuffer();
+	void createUniformBuffers();
+	void updateUniformBuffer(uint32_t currentImage);
 	void createTextureResources();
 	void drawFrame();
 	void recreateSwapChain();

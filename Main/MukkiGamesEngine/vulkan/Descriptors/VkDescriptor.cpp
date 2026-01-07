@@ -19,7 +19,7 @@ void VkDescriptorBoss::createDescriptorPool(uint32_t maxSets)
 	poolSizes[2].descriptorCount = maxSets;
 
 	VkDescriptorPoolCreateInfo poolInfo{};
-	poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;  // Fixed typo: Stype -> sType
+	poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 	poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
 	poolInfo.pPoolSizes = poolSizes.data();
 	poolInfo.maxSets = maxSets;
@@ -42,30 +42,45 @@ void VkDescriptorBoss::createDescriptorSets(VkDescriptorSetLayout descriptorSetL
 	if (vkAllocateDescriptorSets(device->getDevice(), &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
 		throw std::runtime_error("failed to allocate descriptor sets!");
 	}
-
-	// Note: Descriptor set updates would go here when you have uniform buffers, textures, etc.
-	// For now, we just allocate the sets
 }
 
-void VkDescriptorBoss::updateDescriptorSets(const std::vector<VkDescriptorSet>& descriptorSets, VkImageView textureImageView, VkSampler textureSampler)
+void VkDescriptorBoss::updateDescriptorSets(const std::vector<VkDescriptorSet>& descriptorSets, const std::vector<VkBuffer>& uniformBuffers, VkImageView textureImageView, VkSampler textureSampler)
 {
 	for (size_t i = 0; i < descriptorSets.size(); i++) {
+		// Update uniform buffer (binding = 0)
+		VkDescriptorBufferInfo bufferInfo{};
+		bufferInfo.buffer = uniformBuffers[i];
+		bufferInfo.offset = 0;
+		bufferInfo.range = sizeof(uniformBufferObject);
+
+		VkWriteDescriptorSet uboWrite{};
+		uboWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		uboWrite.dstSet = descriptorSets[i];
+		uboWrite.dstBinding = 0; // Uniform buffer binding
+		uboWrite.dstArrayElement = 0;
+		uboWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		uboWrite.descriptorCount = 1;
+		uboWrite.pBufferInfo = &bufferInfo;
+
 		// Update texture sampler (binding = 1)
 		VkDescriptorImageInfo imageInfo{};
 		imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		imageInfo.imageView = textureImageView;
 		imageInfo.sampler = textureSampler;
 
-		VkWriteDescriptorSet descriptorWrite{};
-		descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		descriptorWrite.dstSet = descriptorSets[i];
-		descriptorWrite.dstBinding = 1; // Texture sampler binding
-		descriptorWrite.dstArrayElement = 0;
-		descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		descriptorWrite.descriptorCount = 1;
-		descriptorWrite.pImageInfo = &imageInfo;
+		VkWriteDescriptorSet samplerWrite{};
+		samplerWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		samplerWrite.dstSet = descriptorSets[i];
+		samplerWrite.dstBinding = 1; // Texture sampler binding
+		samplerWrite.dstArrayElement = 0;
+		samplerWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		samplerWrite.descriptorCount = 1;
+		samplerWrite.pImageInfo = &imageInfo;
 
-		vkUpdateDescriptorSets(device->getDevice(), 1, &descriptorWrite, 0, nullptr);
+		// Update both descriptors
+		// @TO-DO: Add sample writer for textures
+		std::array<VkWriteDescriptorSet, 1> descriptorWrites = { uboWrite }; 
+		vkUpdateDescriptorSets(device->getDevice(), static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 	}
 }
 
