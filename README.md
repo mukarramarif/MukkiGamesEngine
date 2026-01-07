@@ -32,3 +32,4 @@ flowchart TD
 ```
 ## Progress
 ![MukkiGamesEngine Progress1: rectangle](image.png)
+![MukkiGamesEngine Progress2: Compute Switching](Compute_Switching_Demo.mp4)
