@@ -5,6 +5,7 @@
 #include <array>
 #include "ShaderCompiler.h"
 #include <iostream>
+#include "../pipeline/computePipeline.h"
 
 // Example vertices (triangle)
 const std::vector<Vertex> vertices = {
@@ -42,6 +43,7 @@ VulkanApplication::VulkanApplication()
 	, textureImageMemory(VK_NULL_HANDLE)
 	, textureImageView(VK_NULL_HANDLE)
 	, textureSampler(VK_NULL_HANDLE)
+	, computePipeline(nullptr)
 {
 }
 
@@ -124,7 +126,7 @@ void VulkanApplication::initVulkan()
 		window,
 		&instance
 	);
-
+	initComputePipeline();
 	// 12. Create vertex and index buffers
 	createVertexBuffer();
 	createIndexBuffer();
@@ -326,21 +328,30 @@ void VulkanApplication::drawFrame()
 	// 5. Record command buffer
 	commandBufferManager->resetCommandBuffer(currentFrame);
 	VkCommandBuffer commandBuffer = commandBufferManager->getCommandBuffer(currentFrame);
-	commandBufferManager->recordCommandBuffer(
-		commandBuffer,
-		imageIndex,
-		renderPass,
-		swapChain->getSwapChainFramebuffers()[imageIndex],
-		swapChain->getSwapChainExtent(),
-		graphicsPipeline->getGraphicsPipeline(),
-		graphicsPipeline->getPipelineLayout(),
-		vertexBuffer,
-		indexBuffer,
-		descriptorSets,
-		currentFrame,
-		indexCount,
-		*uiManager
-	);
+	if (currentRenderMode == RenderMode::COMPUTE) {
+		recordComputeCommandBuffer(
+			commandBufferManager->getCommandBuffer(currentFrame),
+			imageIndex
+		);
+	}
+	else {
+		
+		commandBufferManager->recordCommandBuffer(
+			commandBuffer,
+			imageIndex,
+			renderPass,
+			swapChain->getSwapChainFramebuffers()[imageIndex],
+			swapChain->getSwapChainExtent(),
+			graphicsPipeline->getGraphicsPipeline(),
+			graphicsPipeline->getPipelineLayout(),
+			vertexBuffer,
+			indexBuffer,
+			descriptorSets,
+			currentFrame,
+			indexCount,
+			* uiManager);
+	}
+	
 	
 	// 6. Submit command buffer
 	VkSubmitInfo submitInfo{};
@@ -406,7 +417,19 @@ void VulkanApplication::recreateSwapChain()
 		depthImage = VK_NULL_HANDLE;
 		depthImageMemory = VK_NULL_HANDLE;
 	}
-	
+	// Cleanup old compute output image
+	if (computeOutputImageView != VK_NULL_HANDLE) {
+		vkDestroyImageView(device->getDevice(), computeOutputImageView, nullptr);
+		computeOutputImageView = VK_NULL_HANDLE;
+	}
+	if (computeOutputImage != VK_NULL_HANDLE) {
+		vkDestroyImage(device->getDevice(), computeOutputImage, nullptr);
+		computeOutputImage = VK_NULL_HANDLE;
+	}
+	if (computeOutputImageMemory != VK_NULL_HANDLE) {
+		vkFreeMemory(device->getDevice(), computeOutputImageMemory, nullptr);
+		computeOutputImageMemory = VK_NULL_HANDLE;
+	}
 	// Cleanup old per-image semaphores
 	for (size_t i = 0; i < renderFinishedSemaphores.size(); i++) {
 		vkDestroySemaphore(device->getDevice(), renderFinishedSemaphores[i], nullptr);
@@ -422,7 +445,8 @@ void VulkanApplication::recreateSwapChain()
 	VkExtent2D swapExtent = swapChain->getSwapChainExtent();
 	textureManager->createdepthResources(depthImage, depthImageMemory, depthImageView, swapExtent.width, swapExtent.height);
 	swapChain->createFramebuffers(renderPass, depthImageView);
-	
+	//recreating compute output image
+	createComputeOutputImage();
 	// Recreate per-image semaphores for new swapchain
 	size_t imageCount = swapChain->getSwapChainImages().size();
 	renderFinishedSemaphores.resize(imageCount);
@@ -481,7 +505,7 @@ void VulkanApplication::mainLoop()
 void VulkanApplication::cleanup()
 {
 	// Cleanup in reverse order of creation
-	
+	cleanupComputeResources();
 	// Cleanup per-frame synchronization objects
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		vkDestroySemaphore(device->getDevice(), imageAvailableSemaphores[i], nullptr);
@@ -571,7 +595,7 @@ void VulkanApplication::cleanup()
 
 void VulkanApplication::processInput() {
 	GLFWwindow* win = window->getGLFWwindow();
-	
+	static bool renderKeyPressed = false;
 	if (glfwGetKey(win, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(win, true);
 	
@@ -587,6 +611,16 @@ void VulkanApplication::processInput() {
 		camera->processKeyboardInput(UP, deltaTime);
 	if (glfwGetKey(win, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
 		camera->processKeyboardInput(DOWN, deltaTime);
+	if (glfwGetKey(win, GLFW_KEY_B) == GLFW_PRESS) {
+		if(!renderKeyPressed) {
+			toggleRenderMode();
+			renderKeyPressed = true;
+		}
+
+	}
+	else {
+		renderKeyPressed = false;
+	}
 }
 
 void VulkanApplication::mouseCallback(GLFWwindow* window, double xpos, double ypos) {
@@ -607,3 +641,289 @@ void VulkanApplication::mouseCallback(GLFWwindow* window, double xpos, double yp
 	app->camera->processMouseMovement(xoffset, yoffset);
 }
 
+void VulkanApplication::initComputePipeline() {
+	computePipeline = new ComputePipeline();
+	
+	// Create the output storage image for compute shader
+	createComputeOutputImage();
+	
+	// Initialize compute pipeline components
+	computePipeline->createDescriptorSetLayout(device);
+	computePipeline->createDescriptorPool(device, MAX_FRAMES_IN_FLIGHT);
+	computePipeline->createDescriptorSets(device, computeOutputImageView);
+	computePipeline->createComputePipeline(device, "comp.spv");
+
+}
+void VulkanApplication::createComputeOutputImage() {
+	VkExtent2D extent = swapChain->getSwapChainExtent();
+	computeOutputImageExtent = extent;
+	VkFormat storageFormat = VK_FORMAT_R8G8B8A8_UNORM;
+	// Create storage image
+	VkImageCreateInfo imageInfo{};
+	imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+	imageInfo.imageType = VK_IMAGE_TYPE_2D;
+	imageInfo.extent.width = extent.width;
+	imageInfo.extent.height = extent.height;
+	imageInfo.extent.depth = 1;
+	imageInfo.mipLevels = 1;
+	imageInfo.arrayLayers = 1;
+	imageInfo.format = storageFormat;
+	imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+	imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+	imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+	if (vkCreateImage(device->getDevice(), &imageInfo, nullptr, &computeOutputImage) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create compute output image!");
+	}
+
+	VkMemoryRequirements memRequirements;
+	vkGetImageMemoryRequirements(device->getDevice(), computeOutputImage, &memRequirements);
+
+	VkMemoryAllocateInfo allocInfo{};
+	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	allocInfo.allocationSize = memRequirements.size;
+	allocInfo.memoryTypeIndex = device->findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	if (vkAllocateMemory(device->getDevice(), &allocInfo, nullptr, &computeOutputImageMemory) != VK_SUCCESS) {
+		throw std::runtime_error("failed to allocate compute output image memory!");
+	}
+
+	vkBindImageMemory(device->getDevice(), computeOutputImage, computeOutputImageMemory, 0);
+
+	// Create image view
+	VkImageViewCreateInfo viewInfo{};
+	viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	viewInfo.image = computeOutputImage;
+	viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	viewInfo.format = storageFormat;
+	viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	viewInfo.subresourceRange.baseMipLevel = 0;
+	viewInfo.subresourceRange.levelCount = 1;
+	viewInfo.subresourceRange.baseArrayLayer = 0;
+	viewInfo.subresourceRange.layerCount = 1;
+
+	if (vkCreateImageView(device->getDevice(), &viewInfo, nullptr, &computeOutputImageView) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create compute output image view!");
+	}
+
+	// Transition image layout to GENERAL for compute shader access
+	VkCommandBuffer commandBuffer = commandBufferManager->beginSingleTimeCommands();
+	
+	VkImageMemoryBarrier barrier{};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = computeOutputImage;
+	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	barrier.subresourceRange.baseMipLevel = 0;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.baseArrayLayer = 0;
+	barrier.subresourceRange.layerCount = 1;
+	barrier.srcAccessMask = 0;
+	barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &barrier
+	);
+	
+	commandBufferManager->endSingleTimeCommands(commandBuffer);
+}
+
+void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
+{
+	VkCommandBufferBeginInfo beginInfo{};
+	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+	if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+		throw std::runtime_error("failed to begin recording compute command buffer!");
+	}
+
+	// Bind compute pipeline
+	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline->getPipeline());
+	
+	// Bind descriptor sets
+	VkDescriptorSet descSet = computePipeline->getDescriptorSet();
+	vkCmdBindDescriptorSets(
+		commandBuffer, 
+		VK_PIPELINE_BIND_POINT_COMPUTE,
+		computePipeline->getPipelineLayout(), 
+		0, 1, 
+		&descSet, 
+		0, nullptr
+	);
+
+	// Dispatch compute work
+	VkExtent2D extent = swapChain->getSwapChainExtent();
+	ComputePushConstants pushConstants{};
+	pushConstants.iResolution[0] = static_cast<float>(extent.width);
+	pushConstants.iResolution[1] = static_cast<float>(extent.height);
+	pushConstants.iTime = static_cast<float>(glfwGetTime());
+	vkCmdPushConstants(
+		commandBuffer,
+		computePipeline->getPipelineLayout(),
+		VK_SHADER_STAGE_COMPUTE_BIT,
+		0,
+		sizeof(ComputePushConstants),
+		&pushConstants
+	);
+	uint32_t groupCountX = (extent.width + 15) / 16;  // 16x16 work groups
+	uint32_t groupCountY = (extent.height + 15) / 16;
+	vkCmdDispatch(commandBuffer, groupCountX, groupCountY, 1);
+
+	// Transition compute output for transfer
+	VkImageMemoryBarrier barrier{};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+	barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = computeOutputImage;
+	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	barrier.subresourceRange.baseMipLevel = 0;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.baseArrayLayer = 0;
+	barrier.subresourceRange.layerCount = 1;
+	barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+	barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &barrier
+	);
+
+	// Transition swapchain image for transfer destination
+	VkImageMemoryBarrier swapBarrier{};
+	swapBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	swapBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	swapBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	swapBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	swapBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	swapBarrier.image = swapChain->getSwapChainImages()[imageIndex];
+	swapBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	swapBarrier.subresourceRange.baseMipLevel = 0;
+	swapBarrier.subresourceRange.levelCount = 1;
+	swapBarrier.subresourceRange.baseArrayLayer = 0;
+	swapBarrier.subresourceRange.layerCount = 1;
+	swapBarrier.srcAccessMask = 0;
+	swapBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &swapBarrier
+	);
+
+	// Copy compute output to swapchain image
+	VkImageCopy copyRegion{};
+	copyRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	copyRegion.srcSubresource.layerCount = 1;
+	copyRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	copyRegion.dstSubresource.layerCount = 1;
+	copyRegion.extent.width = computeOutputImageExtent.width;
+	copyRegion.extent.height = computeOutputImageExtent.height;
+	copyRegion.extent.depth = 1;
+
+	vkCmdCopyImage(
+		commandBuffer,
+		computeOutputImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		swapChain->getSwapChainImages()[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		1, &copyRegion
+	);
+
+	// Transition swapchain image for presentation
+	swapBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	swapBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	swapBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	swapBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &swapBarrier
+	);
+
+	// Transition compute output back to GENERAL
+	barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+	barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+	barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &barrier
+	);
+	/*VkRenderPassBeginInfo renderPassInfo{};
+	renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+	renderPassInfo.renderPass = renderPass;
+	renderPassInfo.framebuffer = swapChain->getSwapChainFramebuffers()[imageIndex];
+	renderPassInfo.renderArea.offset = { 0, 0 };
+	renderPassInfo.renderArea.extent = swapChain->getSwapChainExtent();
+	std::array<VkClearValue, 2> clearValues{};
+	clearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+	clearValues[1].depthStencil = { 1.0f, 0 };
+	renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+	renderPassInfo.pClearValues = clearValues.data();
+	vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);*/
+	uiManager->render(commandBuffer);
+	/*vkCmdEndRenderPass(commandBuffer);*/
+	if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+		throw std::runtime_error("failed to record compute command buffer!");
+	}
+}
+
+void VulkanApplication::toggleRenderMode()
+{
+    if (currentRenderMode == RenderMode::GRAPHICS) {
+        currentRenderMode = RenderMode::COMPUTE;
+        std::cout << "Switched to Compute rendering mode" << std::endl;
+    } else {
+        currentRenderMode = RenderMode::GRAPHICS;
+        std::cout << "Switched to Graphics rendering mode" << std::endl;
+    }
+}
+
+void VulkanApplication::cleanupComputeResources()
+{
+    if (computePipeline) {
+        computePipeline->cleanup(device);
+        delete computePipeline;
+        computePipeline = nullptr;
+    }
+    if (computeOutputImageView != VK_NULL_HANDLE) {
+        vkDestroyImageView(device->getDevice(), computeOutputImageView, nullptr);
+    }
+    if (computeOutputImage != VK_NULL_HANDLE) {
+        vkDestroyImage(device->getDevice(), computeOutputImage, nullptr);
+    }
+    if (computeOutputImageMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device->getDevice(), computeOutputImageMemory, nullptr);
+    }
+}

@@ -12,6 +12,7 @@
 #include "../Resources/BufferManager.h"
 #include "../Resources/Camera.h"
 #include "../uiManager/uiManager.h"
+#include "../pipeline/ComputePipeline.h"	
 #include <vector>
 #include "ShaderCompiler.h"
 
@@ -23,7 +24,14 @@ public:
 	VulkanApplication();
 	~VulkanApplication();
 	void run();
+	void toggleRenderMode();
 private:
+	// Render Mode toggle
+	enum class RenderMode {
+		GRAPHICS,
+		COMPUTE
+	};
+	RenderMode currentRenderMode = RenderMode::GRAPHICS;
 	// Core components
 	Instance instance;
 	EngineWindow* window = nullptr;
@@ -92,10 +100,22 @@ private:
 	void drawFrame();
 	void recreateSwapChain();
 	void SetupUIManager();
+	void initComputePipeline();
+	void createComputeOutputImage();
+	void recordComputeCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
+	void cleanupComputeResources();
 	// Input handling methods
 	void processInput();
 	static void mouseCallback(GLFWwindow* window, double xpos, double ypos);
 
 	//UI Manager
 	UIManager* uiManager = nullptr;
+
+	// Compute Pipeline
+	ComputePipeline* computePipeline = nullptr;
+	VkImage computeOutputImage = VK_NULL_HANDLE;
+	VkDeviceMemory computeOutputImageMemory = VK_NULL_HANDLE;
+	VkImageView computeOutputImageView = VK_NULL_HANDLE;
+	VkExtent2D computeOutputImageExtent{};
+
 };

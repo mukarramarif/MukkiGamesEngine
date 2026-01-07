@@ -4,23 +4,8 @@
 #include <fstream> 
 #include <iostream>
 #include "objects/vertex.h"
-
-std::vector<char> readFile(const std::string& filename) {
-	std::ifstream file(filename, std::ios::ate | std::ios::binary);
-
-	if (!file.is_open()) {
-		throw std::runtime_error("failed to open file!");
-	}
-
-	size_t fileSize = (size_t)file.tellg();
-	std::vector<char> buffer(fileSize);
-	file.seekg(0);
-	file.read(buffer.data(), fileSize);
-	file.close();
-
-	return buffer;
-}
-
+#include "pipeline/computePipeline.h"
+#include "utils/utils.h"
 VulkanPipeline::VulkanPipeline(Device* device, VkRenderPass renderPass, const std::string& vertShaderPath, const std::string& fragShaderPath, EngineWindow* window, Instance* instance)
 {
 	this->device = device;
@@ -52,8 +37,8 @@ void VulkanPipeline::recreate(const VulkanSwap& swapChain)
 
 void VulkanPipeline::createGraphicsPipeline(VkExtent2D swapChainExtent, const std::string& vertShaderPath, const std::string& fragShaderPath)
 {
-	auto vertShaderCode = readFile(vertShaderPath);
-	auto fragShaderCode = readFile(fragShaderPath);
+	auto vertShaderCode = EngineUtils::readFile(vertShaderPath);
+	auto fragShaderCode = EngineUtils::readFile(fragShaderPath);
 
 	VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
 	VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);

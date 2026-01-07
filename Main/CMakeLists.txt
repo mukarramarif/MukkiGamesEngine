@@ -19,7 +19,10 @@ file(GLOB ENGINE_SOURCES
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Resources/*.cpp"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Resources/*.h"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/uiManager/*.cpp"
-)
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/uiManager/*.h"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/pipeline/*.cpp"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/pipeline/*.h"
+)   
 message(STATUS "Engine sources: ${ENGINE_SOURCES}")
 add_executable(MukkiGamesEngine ${ENGINE_SOURCES})
 
@@ -60,5 +63,6 @@ function(add_shaders TARGET_NAME)
 endfunction()
 
 # Example: compile Shaders/shader.vert -> vert.spv and Shaders/shader.frag -> frag.spv
-add_shaders(MukkiGamesEngine ../Main/MukkiGamesEngine/Shaders/shader.vert ../Main/MukkiGamesEngine/Shaders/shader.frag)
+add_shaders(MukkiGamesEngine ../Main/MukkiGamesEngine/Shaders/shader.vert ../Main/MukkiGamesEngine/Shaders/shader.frag ../Main/MukkiGamesEngine/Shaders/compute.comp)
+
 
