@@ -1,0 +1,11 @@
+Model Information:
+* title:	McLaren F1 GTR Longtail (AMS2)
+* source:	https://sketchfab.com/3d-models/mclaren-f1-gtr-longtail-ams2-4139fefc9567492dac64303b247719b8
+* author:	VückyZ (https://sketchfab.com/vuckyz123)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "McLaren F1 GTR Longtail (AMS2)" (https://sketchfab.com/3d-models/mclaren-f1-gtr-longtail-ams2-4139fefc9567492dac64303b247719b8) by VückyZ (https://sketchfab.com/vuckyz123) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
