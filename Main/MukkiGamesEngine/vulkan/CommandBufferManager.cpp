@@ -103,7 +103,7 @@ void CommandBufferManager::recordCommandBuffer(
 	vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-	// CRITICAL: Set viewport BEFORE scissor
+	
 	VkViewport viewport{};
 	viewport.x = 0.0f;
 	viewport.y = 0.0f;

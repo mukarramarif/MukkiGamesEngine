@@ -119,26 +119,24 @@ void VulkanApplication::initVulkan()
 	// 10. Create framebuffers (attachments for render pass)
 	swapChain->createFramebuffers(renderPass, depthImageView);
 
-	// 11. Create graphics pipeline (shaders and rendering configuration)
-	graphicsPipeline = new VulkanPipeline(
-		device,
-		renderPass,
-		"vert.spv",
-		"frag.spv",
-		window,
-		&instance
-	);
+	// 11. Create descriptor set layout and pipeline layout BEFORE creating the pipeline
+	createDescriptorSetLayout();
+	createPipelineLayout();
+
+	// 12. Create graphics pipeline (shaders and rendering configuration)
+	createGraphicsPipeline();
+	
 	initComputePipeline();
-	// 12. Create vertex and index buffers
+	// 13. Create vertex and index buffers
 	createVertexBuffer();
 	createIndexBuffer();
 	createTextureResources();
 	createUniformBuffers();
-	// 13. Create descriptor sets (for uniforms, textures, etc.)
+	// 14. Create descriptor sets (for uniforms, textures, etc.)
 	descriptorBoss = new VkDescriptorBoss(device, MAX_FRAMES_IN_FLIGHT);
 	descriptorBoss->createDescriptorPool(MAX_FRAMES_IN_FLIGHT);
 	descriptorBoss->createDescriptorSets(
-		graphicsPipeline->getDescriptorSetLayout(),
+		descriptorSetLayout,  // Use the member variable
 		MAX_FRAMES_IN_FLIGHT,
 		descriptorSets
 	);
@@ -150,7 +148,7 @@ void VulkanApplication::initVulkan()
 		textureSampler
 	);
 	loadModel(ASSETS_PATH "Car_Model/scene.gltf");
-	// 14. Create synchronization objects (semaphores and fences)
+	// 15. Create synchronization objects (semaphores and fences)
 	createSyncObjects();
 	
 	// Initialize camera
@@ -312,7 +310,7 @@ void VulkanApplication::createUniformBuffers()
 void VulkanApplication::updateUniformBuffer(uint32_t currentImage)
 {
 	UniformBufferObject ubo{};
-	ubo.model = glm::mat4(1.0f);
+	ubo.model = glm::scale(glm::mat4(1.0f),glm::vec3(100.0f));
 	ubo.view =camera->getViewMatrix();
 	VkExtent2D extent = swapChain->getSwapChainExtent();
 	float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
@@ -375,7 +373,7 @@ void VulkanApplication::drawFrame()
 				swapChain->getSwapChainFramebuffers()[imageIndex],
 				swapChain->getSwapChainExtent(),
 				graphicsPipeline->getGraphicsPipeline(),
-				graphicsPipeline->getPipelineLayout(),
+				pipelineLayout,  // Changed from graphicsPipeline->getPipelineLayout()
 				loadedModel,
 				modelDescriptorSets,
 				currentFrame,
@@ -391,7 +389,7 @@ void VulkanApplication::drawFrame()
 				swapChain->getSwapChainFramebuffers()[imageIndex],
 				swapChain->getSwapChainExtent(),
 				graphicsPipeline->getGraphicsPipeline(),
-				graphicsPipeline->getPipelineLayout(),
+				pipelineLayout,
 				vertexBuffer,
 				indexBuffer,
 				descriptorSets,
@@ -487,6 +485,12 @@ void VulkanApplication::recreateSwapChain()
 		vkDestroySemaphore(device->getDevice(), renderFinishedSemaphores[i], nullptr);
 	}
 	
+	// Cleanup old graphics pipeline
+	if (graphicsPipeline) {
+		delete graphicsPipeline;
+		graphicsPipeline = nullptr;
+	}
+	
 	// Cleanup old swap chain
 	swapChain->cleanup();
 	
@@ -497,6 +501,9 @@ void VulkanApplication::recreateSwapChain()
 	VkExtent2D swapExtent = swapChain->getSwapChainExtent();
 	textureManager->createdepthResources(depthImage, depthImageMemory, depthImageView, swapExtent.width, swapExtent.height);
 	swapChain->createFramebuffers(renderPass, depthImageView);
+	
+	// Recreate graphics pipeline
+	createGraphicsPipeline();
 	
 	// Recreate compute output image
 	createComputeOutputImage();
@@ -519,9 +526,6 @@ void VulkanApplication::recreateSwapChain()
 			throw std::runtime_error("failed to recreate per-image semaphores!");
 		}
 	}
-	
-	// Recreate the graphics pipeline
-	graphicsPipeline->recreate(*swapChain);
 }
 
 void VulkanApplication::SetupUIManager()
@@ -624,7 +628,12 @@ void VulkanApplication::cleanup()
 	if (graphicsPipeline) {
 		delete graphicsPipeline;
 	}
-	
+	if(pipelineLayout != VK_NULL_HANDLE) {
+		vkDestroyPipelineLayout(device->getDevice(), pipelineLayout, nullptr);
+	}
+	if(descriptorSetLayout != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(device->getDevice(), descriptorSetLayout, nullptr);
+	}
 	if (swapChain) {
 		swapChain->cleanup();
 		delete swapChain;
@@ -724,7 +733,7 @@ void VulkanApplication::createModelDescriptorSets()
 		// Allocate descriptor sets for this material (one per frame in flight)
 		modelDescriptorSets[matIndex].resize(MAX_FRAMES_IN_FLIGHT);
 
-		std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, graphicsPipeline->getDescriptorSetLayout());
+		std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
 		VkDescriptorSetAllocateInfo allocInfo{};
 		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 		allocInfo.descriptorPool = descriptorBoss->getDescriptorPool();
@@ -1101,4 +1110,66 @@ void VulkanApplication::cleanupComputeResources()
 		objectLoader->destroyModel(loadedModel);
 		delete objectLoader;
 	}
+}
+
+void VulkanApplication::createDescriptorSetLayout()
+{
+	// UBO binding (binding = 0)
+	VkDescriptorSetLayoutBinding uboLayoutBinding{};
+	uboLayoutBinding.binding = 0;
+	uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+	uboLayoutBinding.descriptorCount = 1;
+	uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+	uboLayoutBinding.pImmutableSamplers = nullptr;
+
+	// Sampler binding (binding = 1)
+	VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+	samplerLayoutBinding.binding = 1;
+	samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	samplerLayoutBinding.descriptorCount = 1;
+	samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+	samplerLayoutBinding.pImmutableSamplers = nullptr;
+
+	std::array<VkDescriptorSetLayoutBinding, 2> bindings = {
+		uboLayoutBinding,
+		samplerLayoutBinding
+	};
+
+	VkDescriptorSetLayoutCreateInfo layoutInfo{};
+	layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+	layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+	layoutInfo.pBindings = bindings.data();
+
+	if (vkCreateDescriptorSetLayout(device->getDevice(), &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create descriptor set layout!");
+	}
+}
+
+void VulkanApplication::createPipelineLayout()
+{
+	VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+	pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+	pipelineLayoutInfo.setLayoutCount = 1;
+	pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+	pipelineLayoutInfo.pushConstantRangeCount = 0;
+	pipelineLayoutInfo.pPushConstantRanges = nullptr;
+
+	if (vkCreatePipelineLayout(device->getDevice(), &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create pipeline layout!");
+	}
+}
+
+void VulkanApplication::createGraphicsPipeline()
+{
+	PipelineConfigInfo pipelineConfig{};
+	VulkanPipeline::defaultPipelineConfigInfo(pipelineConfig);
+	pipelineConfig.renderPass = renderPass;
+	pipelineConfig.pipelineLayout = pipelineLayout;
+	VulkanPipeline::enableAlphaBlending(pipelineConfig);
+	graphicsPipeline = new VulkanPipeline(
+		device,
+		"vert.spv",
+		"frag.spv",
+		pipelineConfig
+	);
 }

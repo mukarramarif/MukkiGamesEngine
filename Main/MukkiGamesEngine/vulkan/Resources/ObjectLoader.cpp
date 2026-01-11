@@ -88,7 +88,24 @@ bool ObjectLoader::loadGLTF(const std::string& filepath, Model& outModel)
 	std::cout << "  Loaded vertices: " << outModel.vertices.size() << std::endl;
 	std::cout << "  Loaded indices: " << outModel.indices.size() << std::endl;
 	std::cout << "  Loaded textures: " << outModel.textures.size() << std::endl;
-	
+	for (size_t i = 0; i < outModel.meshes.size(); i++) {
+		bool hasTransparent = false;
+		for (const auto& prim : outModel.meshes[i].primitives) {
+			if (prim.materialIndex >= 0 &&
+				prim.materialIndex < static_cast<int32_t>(outModel.materials.size()) &&
+				outModel.materials[prim.materialIndex].isTransparent) {
+				hasTransparent = true;
+				break;
+			}
+		}
+
+		if (hasTransparent) {
+			outModel.transparentMeshIndices.push_back(i);
+		}
+		else {
+			outModel.opaqueMeshIndices.push_back(i);
+		}
+	}
 	return true;
 }
 
@@ -293,7 +310,10 @@ void ObjectLoader::loadMaterials(const tinygltf::Model& gltfModel, Model& model)
 {
 	for (const auto& gltfMaterial : gltfModel.materials) {
 		Material material;
-		
+		material.isTransparent = (gltfMaterial.alphaMode == "BlEND");
+		if(gltfMaterial.alphaMode == "MASK") {
+			material.alphaCutoff = static_cast<float>(gltfMaterial.alphaCutoff);
+		}
 		// PBR Metallic Roughness workflow
 		if (gltfMaterial.values.find("baseColorFactor") != gltfMaterial.values.end()) {
 			material.baseColorFactor = glm::make_vec4(gltfMaterial.values.at("baseColorFactor").ColorFactor().data());
@@ -330,10 +350,10 @@ void ObjectLoader::loadNode(const tinygltf::Model& gltfModel, const tinygltf::No
 	node.localTransform = getNodeTransform(gltfNode);
 	node.worldTransform = parentTransform * node.localTransform;
 	
-	// Load mesh if present
+	// Load mesh if present - pass the world transform to apply to vertices
 	if (gltfNode.mesh > -1) {
 		node.meshIndex = static_cast<int32_t>(model.meshes.size());
-		loadMesh(gltfModel, gltfModel.meshes[gltfNode.mesh], model);
+		loadMesh(gltfModel, gltfModel.meshes[gltfNode.mesh], model, node.worldTransform);
 	}
 	
 	// Process children
@@ -344,81 +364,85 @@ void ObjectLoader::loadNode(const tinygltf::Model& gltfModel, const tinygltf::No
 	}
 }
 
-void ObjectLoader::loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Mesh& gltfMesh, Model& model)
+void ObjectLoader::loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Mesh& gltfMesh,
+	Model& model, const glm::mat4& worldTransform)
 {
 	Mesh mesh;
 	mesh.name = gltfMesh.name;
-	
+
+	// Calculate normal matrix for transforming normals (for future lighting)
+	glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
+
 	for (const auto& primitive : gltfMesh.primitives) {
 		Primitive prim;
 		prim.firstVertex = static_cast<uint32_t>(model.vertices.size());
 		prim.firstIndex = static_cast<uint32_t>(model.indices.size());
 		prim.materialIndex = primitive.material;
-		
+
 		uint32_t vertexCount = 0;
 		uint32_t indexCount = 0;
-		
+
 		const float* positionBuffer = nullptr;
 		const float* normalBuffer = nullptr;
 		const float* texCoordBuffer = nullptr;
 		const float* colorBuffer = nullptr;
-		
+		int colorComponentCount = 3; // Default to RGB
+
 		if (primitive.attributes.find("POSITION") != primitive.attributes.end()) {
 			const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.attributes.find("POSITION")->second];
 			const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
 			positionBuffer = reinterpret_cast<const float*>(&gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset]);
 			vertexCount = static_cast<uint32_t>(accessor.count);
 		}
-		
+
 		if (primitive.attributes.find("NORMAL") != primitive.attributes.end()) {
 			const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.attributes.find("NORMAL")->second];
 			const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
 			normalBuffer = reinterpret_cast<const float*>(&gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset]);
 		}
-		
+
 		if (primitive.attributes.find("TEXCOORD_0") != primitive.attributes.end()) {
 			const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.attributes.find("TEXCOORD_0")->second];
 			const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
 			texCoordBuffer = reinterpret_cast<const float*>(&gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset]);
 		}
-		
+
 		if (primitive.attributes.find("COLOR_0") != primitive.attributes.end()) {
 			const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.attributes.find("COLOR_0")->second];
 			const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
 			colorBuffer = reinterpret_cast<const float*>(&gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset]);
+			// Check if it's VEC3 or VEC4
+			colorComponentCount = (accessor.type == TINYGLTF_TYPE_VEC4) ? 4 : 3;
 		}
-		
-		// Build vertices
+
+		// Build vertices with world transform applied
 		for (uint32_t v = 0; v < vertexCount; v++) {
 			Vertex vertex{};
-			
-			// Position
-			vertex.pos = glm::vec3(
+
+			// Position - apply world transform
+			glm::vec4 localPos = glm::vec4(
 				positionBuffer[v * 3 + 0],
 				positionBuffer[v * 3 + 1],
-				positionBuffer[v * 3 + 2]
+				positionBuffer[v * 3 + 2],
+				1.0f
 			);
-			
-			// Use normal as color if available, otherwise default to white
-			if (normalBuffer) {
-				// Map normal to color for visualization (can be changed later)
+			glm::vec4 worldPos = worldTransform * localPos;
+			vertex.pos = glm::vec3(worldPos);
+
+			// Vertex color - use actual vertex colors if available, otherwise white
+			// White ensures texture is displayed at full brightness
+			if (colorBuffer) {
 				vertex.color = glm::vec3(
-					normalBuffer[v * 3 + 0] * 0.5f + 0.5f,
-					normalBuffer[v * 3 + 1] * 0.5f + 0.5f,
-					normalBuffer[v * 3 + 2] * 0.5f + 0.5f
-				);
-			}
-			else if (colorBuffer) {
-				vertex.color = glm::vec3(
-					colorBuffer[v * 3 + 0],
-					colorBuffer[v * 3 + 1],
-					colorBuffer[v * 3 + 2]
+					colorBuffer[v * colorComponentCount + 0],
+					colorBuffer[v * colorComponentCount + 1],
+					colorBuffer[v * colorComponentCount + 2]
 				);
 			}
 			else {
+				// Default to white so textures render correctly
 				vertex.color = glm::vec3(1.0f);
 			}
-			
+
 			// Texture coordinates
 			if (texCoordBuffer) {
 				vertex.texCoord = glm::vec2(
@@ -429,52 +453,51 @@ void ObjectLoader::loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Me
 			else {
 				vertex.texCoord = glm::vec2(0.0f);
 			}
-			
+
 			model.vertices.push_back(vertex);
 		}
-		
+
 		// Load indices
 		if (primitive.indices > -1) {
 			const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.indices];
 			const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
 			const void* dataPtr = &gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset];
-			
+
 			indexCount = static_cast<uint32_t>(accessor.count);
-			
-			// Handle different index types
+
 			switch (accessor.componentType) {
-				case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: {
-					const uint32_t* buf = static_cast<const uint32_t*>(dataPtr);
-					for (size_t i = 0; i < accessor.count; i++) {
-						model.indices.push_back(buf[i] + prim.firstVertex);
-					}
-					break;
+			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: {
+				const uint32_t* buf = static_cast<const uint32_t*>(dataPtr);
+				for (size_t i = 0; i < accessor.count; i++) {
+					model.indices.push_back(buf[i] + prim.firstVertex);
 				}
-				case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
-					const uint16_t* buf = static_cast<const uint16_t*>(dataPtr);
-					for (size_t i = 0; i < accessor.count; i++) {
-						model.indices.push_back(buf[i] + prim.firstVertex);
-					}
-					break;
+				break;
+			}
+			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
+				const uint16_t* buf = static_cast<const uint16_t*>(dataPtr);
+				for (size_t i = 0; i < accessor.count; i++) {
+					model.indices.push_back(buf[i] + prim.firstVertex);
 				}
-				case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
-					const uint8_t* buf = static_cast<const uint8_t*>(dataPtr);
-					for (size_t i = 0; i < accessor.count; i++) {
-						model.indices.push_back(buf[i] + prim.firstVertex);
-					}
-					break;
+				break;
+			}
+			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
+				const uint8_t* buf = static_cast<const uint8_t*>(dataPtr);
+				for (size_t i = 0; i < accessor.count; i++) {
+					model.indices.push_back(buf[i] + prim.firstVertex);
 				}
-				default:
-					std::cerr << "Unknown index component type!" << std::endl;
-					break;
+				break;
+			}
+			default:
+				std::cerr << "Unknown index component type!" << std::endl;
+				break;
 			}
 		}
-		
+
 		prim.vertexCount = vertexCount;
 		prim.indexCount = indexCount;
 		mesh.primitives.push_back(prim);
 	}
-	
+
 	model.meshes.push_back(mesh);
 }
 

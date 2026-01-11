@@ -22,6 +22,8 @@ struct Material {
 	int32_t baseColorTextureIndex = -1;
 	int32_t normalTextureIndex = -1;
 	int32_t metallicRoughnessTextureIndex = -1;
+	bool isTransparent = false;
+	float alphaCutoff = 0.5f;
 };
 
 // A single mesh primitive (submesh)
@@ -68,7 +70,9 @@ struct Model {
 	std::vector<Material> materials;
 	std::vector<LoadedTexture> textures;
 	std::vector<int32_t> rootNodes;
-	
+	//rendering order 
+	std::vector<size_t> opaqueMeshIndices;
+	std::vector<size_t> transparentMeshIndices;
 	// GPU buffers
 	VkBuffer vertexBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
@@ -98,8 +102,8 @@ private:
 	
 	void loadNode(const tinygltf::Model& gltfModel, const tinygltf::Node& gltfNode, 
 	              int nodeIndex, Model& model, const glm::mat4& parentTransform);
-	void loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Mesh& gltfMesh, 
-	              Model& model);
+	void loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Mesh& gltfMesh,
+		Model& model, const glm::mat4& worldTransform);
 	void loadMaterials(const tinygltf::Model& gltfModel, Model& model);
 	void loadTextures(const tinygltf::Model& gltfModel, Model& model);
 	

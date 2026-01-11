@@ -48,6 +48,10 @@ private:
 	VkRenderPass renderPass = VK_NULL_HANDLE;
 	VulkanPipeline* graphicsPipeline = nullptr;
 	
+	// Pipeline layout and descriptor set layout (now managed here)
+	VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+	VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
+	
 	// Command buffers
 	CommandBufferManager* commandBufferManager = nullptr;
 	
@@ -68,8 +72,6 @@ private:
 	// Descriptors
 	VkDescriptorBoss* descriptorBoss = nullptr;
 	std::vector<VkDescriptorSet> descriptorSets;
-
-
 
 	//Texture Handler and Buffer Manager
 	TextureManager* textureManager;
@@ -116,6 +118,12 @@ private:
 	void recordComputeCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 	void loadModel(const std::string& filepath);
 	void cleanupComputeResources();
+	
+	// New methods for pipeline setup
+	void createDescriptorSetLayout();
+	void createPipelineLayout();
+	void createGraphicsPipeline();
+	
 	// Input handling methods
 	void processInput();
 	static void mouseCallback(GLFWwindow* window, double xpos, double ypos);
