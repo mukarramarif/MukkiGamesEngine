@@ -11,6 +11,7 @@
 #include "../Resources/TextureManager.h"
 #include "../Resources/BufferManager.h"
 #include "../Resources/Camera.h"
+#include "../Resources/ObjectLoader.h"
 #include "../uiManager/uiManager.h"
 #include "../pipeline/ComputePipeline.h"	
 #include <vector>
@@ -113,6 +114,7 @@ private:
 	void initComputePipeline();
 	void createComputeOutputImage();
 	void recordComputeCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
+	void loadModel(const std::string& filepath);
 	void cleanupComputeResources();
 	// Input handling methods
 	void processInput();
@@ -128,4 +130,10 @@ private:
 	VkImageView computeOutputImageView = VK_NULL_HANDLE;
 	VkExtent2D computeOutputImageExtent{};
 
+	//Object-Loader
+	std::vector<std::vector<VkDescriptorSet>> modelDescriptorSets; // set for each model and each frame
+	ObjectLoader* objectLoader = nullptr;
+	Model loadedModel;
+	bool modelLoaded = false;
+	void createModelDescriptorSets();
 };

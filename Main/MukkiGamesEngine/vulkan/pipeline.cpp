@@ -268,8 +268,9 @@ void VulkanPipeline::createDescriptorSetLayout() {
 	//	samplerLayoutBinding,
 	//	ssboLayoutBinding
 	//};
-	std::array<VkDescriptorSetLayoutBinding, 1> bindings = {
+	std::array<VkDescriptorSetLayoutBinding, 2> bindings = {
 		uboLayoutBinding,
+		samplerLayoutBinding
 	};
 
 	VkDescriptorSetLayoutCreateInfo layoutInfo{};

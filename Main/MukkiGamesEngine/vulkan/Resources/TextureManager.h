@@ -1,11 +1,10 @@
 #pragma once
 #include "vulkan/vulkan.h"
 #include "../Core/VkDevice.h"
-#include "../CommandBufferManager.h"
-#include "BufferManager.h"
-
+#include <stb_image.h>
 #include <string>
-
+class CommandBufferManager;
+class BufferManager;
 class TextureManager {
 public:
 	TextureManager();

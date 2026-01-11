@@ -15,7 +15,7 @@ const std::vector<Vertex> vertices = {
 	{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
 };
 
-const std::vector<uint16_t> indices = {
+const std::vector<uint32_t> indices = {
 	0, 1, 2, 2, 3, 0
 };
 
@@ -113,8 +113,10 @@ void VulkanApplication::initVulkan()
 	VkExtent2D extent = swapChain->getSwapChainExtent();
 	textureManager->createdepthResources(depthImage, depthImageMemory, depthImageView,
 		extent.width, extent.height);
+	objectLoader = new ObjectLoader();
+	objectLoader->init(device, textureManager, bufferManager);
 
-	// 10. Create framebuffers (attachments for render pass) - NOW WITH DEPTH!
+	// 10. Create framebuffers (attachments for render pass)
 	swapChain->createFramebuffers(renderPass, depthImageView);
 
 	// 11. Create graphics pipeline (shaders and rendering configuration)
@@ -140,13 +142,14 @@ void VulkanApplication::initVulkan()
 		MAX_FRAMES_IN_FLIGHT,
 		descriptorSets
 	);
+
 	descriptorBoss->updateDescriptorSets(
 		descriptorSets,
 		uniformBuffers,
 		textureImageView,
 		textureSampler
 	);
-
+	loadModel(ASSETS_PATH "Car_Model/scene.gltf");
 	// 14. Create synchronization objects (semaphores and fences)
 	createSyncObjects();
 	
@@ -360,27 +363,43 @@ void VulkanApplication::drawFrame()
 	commandBufferManager->resetCommandBuffer(currentFrame);
 	VkCommandBuffer commandBuffer = commandBufferManager->getCommandBuffer(currentFrame);
 	if (currentRenderMode == RenderMode::COMPUTE) {
-		recordComputeCommandBuffer(
-			commandBufferManager->getCommandBuffer(currentFrame),
-			imageIndex
-		);
+		recordComputeCommandBuffer(commandBuffer, imageIndex);
 	}
 	else {
-		
-		commandBufferManager->recordCommandBuffer(
-			commandBuffer,
-			imageIndex,
-			renderPass,
-			swapChain->getSwapChainFramebuffers()[imageIndex],
-			swapChain->getSwapChainExtent(),
-			graphicsPipeline->getGraphicsPipeline(),
-			graphicsPipeline->getPipelineLayout(),
-			vertexBuffer,
-			indexBuffer,
-			descriptorSets,
-			currentFrame,
-			indexCount,
-			* uiManager);
+		if (modelLoaded && !modelDescriptorSets.empty()) {
+			// Render loaded model with per-material textures
+			commandBufferManager->recordModelCommandBuffer(
+				commandBuffer,
+				imageIndex,
+				renderPass,
+				swapChain->getSwapChainFramebuffers()[imageIndex],
+				swapChain->getSwapChainExtent(),
+				graphicsPipeline->getGraphicsPipeline(),
+				graphicsPipeline->getPipelineLayout(),
+				loadedModel,
+				modelDescriptorSets,
+				currentFrame,
+				*uiManager
+			);
+		}
+		else {
+			// Fallback to default quad rendering
+			commandBufferManager->recordCommandBuffer(
+				commandBuffer,
+				imageIndex,
+				renderPass,
+				swapChain->getSwapChainFramebuffers()[imageIndex],
+				swapChain->getSwapChainExtent(),
+				graphicsPipeline->getGraphicsPipeline(),
+				graphicsPipeline->getPipelineLayout(),
+				vertexBuffer,
+				indexBuffer,
+				descriptorSets,
+				currentFrame,
+				indexCount,
+				*uiManager
+			);
+		}
 	}
 	
 	
@@ -690,6 +709,92 @@ void VulkanApplication::mouseCallback(GLFWwindow* window, double xpos, double yp
 	app->camera->processMouseMovement(xoffset, yoffset);
 }
 
+void VulkanApplication::createModelDescriptorSets()
+{
+	if (!modelLoaded || loadedModel.materials.empty()) {
+		return;
+	}
+
+	size_t materialCount = loadedModel.materials.size();
+	modelDescriptorSets.resize(materialCount);
+
+	for (size_t matIndex = 0; matIndex < materialCount; matIndex++) {
+		const Material& material = loadedModel.materials[matIndex];
+
+		// Allocate descriptor sets for this material (one per frame in flight)
+		modelDescriptorSets[matIndex].resize(MAX_FRAMES_IN_FLIGHT);
+
+		std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, graphicsPipeline->getDescriptorSetLayout());
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = descriptorBoss->getDescriptorPool();
+		allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+		allocInfo.pSetLayouts = layouts.data();
+
+		if (vkAllocateDescriptorSets(device->getDevice(), &allocInfo, modelDescriptorSets[matIndex].data()) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate model descriptor sets!");
+		}
+
+		// Update descriptor sets with the material's texture
+		for (size_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
+			std::vector<VkWriteDescriptorSet> descriptorWrites;
+
+			// UBO (binding 0)
+			VkDescriptorBufferInfo bufferInfo{};
+			bufferInfo.buffer = uniformBuffers[frame];
+			bufferInfo.offset = 0;
+			bufferInfo.range = sizeof(UniformBufferObject);
+
+			VkWriteDescriptorSet uboWrite{};
+			uboWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			uboWrite.dstSet = modelDescriptorSets[matIndex][frame];
+			uboWrite.dstBinding = 0;
+			uboWrite.dstArrayElement = 0;
+			uboWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			uboWrite.descriptorCount = 1;
+			uboWrite.pBufferInfo = &bufferInfo;
+			descriptorWrites.push_back(uboWrite);
+
+			// Texture sampler (binding 1)
+			VkDescriptorImageInfo imageInfo{};
+			imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+			// Get the texture for this material
+			if (material.baseColorTextureIndex >= 0 &&
+				material.baseColorTextureIndex < static_cast<int32_t>(loadedModel.textures.size())) {
+				const LoadedTexture& tex = loadedModel.textures[material.baseColorTextureIndex];
+				imageInfo.imageView = tex.imageView;
+				imageInfo.sampler = tex.sampler;
+			}
+			else {
+				// Use default texture if material has no texture
+				imageInfo.imageView = textureImageView;
+				imageInfo.sampler = textureSampler;
+			}
+
+			VkWriteDescriptorSet samplerWrite{};
+			samplerWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			samplerWrite.dstSet = modelDescriptorSets[matIndex][frame];
+			samplerWrite.dstBinding = 1;
+			samplerWrite.dstArrayElement = 0;
+			samplerWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			samplerWrite.descriptorCount = 1;
+			samplerWrite.pImageInfo = &imageInfo;
+			descriptorWrites.push_back(samplerWrite);
+
+			vkUpdateDescriptorSets(device->getDevice(),
+				static_cast<uint32_t>(descriptorWrites.size()),
+				descriptorWrites.data(), 0, nullptr);
+		}
+
+		std::cout << "  Created descriptor sets for material " << matIndex;
+		if (material.baseColorTextureIndex >= 0) {
+			std::cout << " (texture " << material.baseColorTextureIndex << ")";
+		}
+		std::cout << std::endl;
+	}
+}
+
 void VulkanApplication::initComputePipeline() {
 	computePipeline = new ComputePipeline();
 	
@@ -948,6 +1053,23 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 	}
 }
 
+void VulkanApplication::loadModel(const std::string& filepath)
+{
+	if (objectLoader->loadGLTF(filepath, loadedModel)) {
+		objectLoader->createModelBuffers(loadedModel);
+		modelLoaded = true;
+		indexCount = static_cast<uint32_t>(loadedModel.indices.size());
+		if(!loadedModel.textures.empty() && loadedModel.textures[0].imageView != VK_NULL_HANDLE) {
+			// create descriptor sets for the loaded model
+			createModelDescriptorSets();
+		}
+		std::cout << "Model loaded successfully: " << filepath << std::endl;
+	}
+	else {
+		std::cerr << "Failed to load model: " << filepath << std::endl;
+	}
+}
+
 void VulkanApplication::toggleRenderMode()
 {
     if (currentRenderMode == RenderMode::GRAPHICS) {
@@ -975,4 +1097,8 @@ void VulkanApplication::cleanupComputeResources()
     if (computeOutputImageMemory != VK_NULL_HANDLE) {
         vkFreeMemory(device->getDevice(), computeOutputImageMemory, nullptr);
     }
+	if(objectLoader) {
+		objectLoader->destroyModel(loadedModel);
+		delete objectLoader;
+	}
 }

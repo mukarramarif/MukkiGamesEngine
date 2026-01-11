@@ -3,9 +3,9 @@
 #include "vulkan/vulkan.h"
 #include <vector>
 #include "../Core/VkDevice.h"
-#include "../CommandBufferManager.h"
-#include "../objects/vertex.h"
 
+#include "../objects/vertex.h"
+class CommandBufferManager;
 class BufferManager {
 public:
 	BufferManager();

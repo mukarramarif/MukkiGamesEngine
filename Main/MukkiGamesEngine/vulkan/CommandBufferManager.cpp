@@ -1,4 +1,6 @@
 #include "CommandBufferManager.h"
+#include "uiManager/uiManager.h"
+#include "Resources/ObjectLoader.h"
 #include <stdexcept>
 #include <array>
 #include <vector>
@@ -125,7 +127,7 @@ void CommandBufferManager::recordCommandBuffer(
 	vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
 	// Bind index buffer
-	vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+	vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
 	// Bind descriptor sets
 	if (!descriptorSets.empty()) {
@@ -144,6 +146,98 @@ void CommandBufferManager::recordCommandBuffer(
 	// DRAW
 	/*std::cout << "Drawing " << indexCount << " indices" << std::endl;*/
 	vkCmdDrawIndexed(commandBuffer, indexCount, 1, 0, 0, 0);
+	uiManager.render(commandBuffer);
+	vkCmdEndRenderPass(commandBuffer);
+
+	if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+		throw std::runtime_error("failed to record command buffer!");
+	}
+}
+
+void CommandBufferManager::recordModelCommandBuffer(
+	VkCommandBuffer commandBuffer,
+	uint32_t imageIndex,
+	VkRenderPass renderPass,
+	VkFramebuffer framebuffer,
+	VkExtent2D extent,
+	VkPipeline graphicsPipeline,
+	VkPipelineLayout pipelineLayout,
+	const Model& model,
+	const std::vector<std::vector<VkDescriptorSet>>& materialDescriptorSets,
+	uint32_t currentFrame,
+	UIManager& uiManager)
+{
+	VkCommandBufferBeginInfo beginInfo{};
+	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+	if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+		throw std::runtime_error("failed to begin recording command buffer!");
+	}
+
+	VkRenderPassBeginInfo renderPassInfo{};
+	renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+	renderPassInfo.renderPass = renderPass;
+	renderPassInfo.framebuffer = framebuffer;
+	renderPassInfo.renderArea.offset = { 0, 0 };
+	renderPassInfo.renderArea.extent = extent;
+
+	std::array<VkClearValue, 2> clearValues{};
+	clearValues[0].color = { {0.1f, 0.1f, 0.1f, 1.0f} };
+	clearValues[1].depthStencil = { 1.0f, 0 };
+
+	renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+	renderPassInfo.pClearValues = clearValues.data();
+
+	vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+	// Set viewport
+	VkViewport viewport{};
+	viewport.x = 0.0f;
+	viewport.y = 0.0f;
+	viewport.width = static_cast<float>(extent.width);
+	viewport.height = static_cast<float>(extent.height);
+	viewport.minDepth = 0.0f;
+	viewport.maxDepth = 1.0f;
+	vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+	// Set scissor
+	VkRect2D scissor{};
+	scissor.offset = { 0, 0 };
+	scissor.extent = extent;
+	vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+	// Bind model buffers
+	VkBuffer vertexBuffers[] = { model.vertexBuffer };
+	VkDeviceSize offsets[] = { 0 };
+	vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+	vkCmdBindIndexBuffer(commandBuffer, model.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+	// Render each mesh
+	for (const auto& mesh : model.meshes) {
+		for (const auto& primitive : mesh.primitives) {
+			// Get material index (use 0 if no material)
+			int32_t matIndex = primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
+
+			// Bind the descriptor set for this material
+			if (matIndex < static_cast<int32_t>(materialDescriptorSets.size())) {
+				vkCmdBindDescriptorSets(
+					commandBuffer,
+					VK_PIPELINE_BIND_POINT_GRAPHICS,
+					pipelineLayout,
+					0,
+					1,
+					&materialDescriptorSets[matIndex][currentFrame],
+					0,
+					nullptr
+				);
+			}
+
+			// Draw this primitive
+			vkCmdDrawIndexed(commandBuffer, primitive.indexCount, 1, primitive.firstIndex, 0, 0);
+		}
+	}
+
 	uiManager.render(commandBuffer);
 	vkCmdEndRenderPass(commandBuffer);
 
