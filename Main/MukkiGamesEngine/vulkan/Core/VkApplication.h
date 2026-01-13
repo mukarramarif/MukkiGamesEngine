@@ -1,5 +1,6 @@
 #pragma once
 #include <vulkan/vulkan.h>
+#include <vulkan/vulkan_raii.hpp>
 #include "VkInstance.h"
 #include "VkDevice.h"
 #include "EngineWindow.h"
@@ -32,6 +33,7 @@ public:
 	void toggleRenderMode();
 private:
 	// Render Mode toggle
+	vk::raii::Context context;
 	enum class RenderMode {
 		GRAPHICS,
 		COMPUTE
@@ -99,11 +101,12 @@ private:
 	bool firstMouse = true;
 	float deltaTime = 0.0f;
 	float lastFrame = 0.0f;
-
+	bool cursorEnabled = false;
 	// Methods
 	void initVulkan();
 	void mainLoop();
 	void cleanup();
+	void toggleCursor();
 	void createSyncObjects();
 	void createVertexBuffer();
 	void createIndexBuffer();
@@ -130,7 +133,7 @@ private:
 
 	//UI Manager
 	UIManager* uiManager = nullptr;
-
+	ModelTransform modelTransform;
 	// Compute Pipeline
 	ComputePipeline* computePipeline = nullptr;
 	VkImage computeOutputImage = VK_NULL_HANDLE;

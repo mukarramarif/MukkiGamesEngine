@@ -124,6 +124,11 @@ void ComputePipeline::createDescriptorSets(Device* device, VkImageView outputIma
 	vkUpdateDescriptorSets(device->getDevice(), 1, &descriptorWrite, 0, nullptr);
 }
 
+void ComputePipeline::resetDesciriptorPool(Device* device)
+{
+	vkResetDescriptorPool(device->getDevice(), descriptorPool, 0);
+}
+
 void ComputePipeline::cleanup(Device* device)
 {
 	if (computePipeline != VK_NULL_HANDLE) {
@@ -136,6 +141,7 @@ void ComputePipeline::cleanup(Device* device)
 	}
 	if (descriptorPool != VK_NULL_HANDLE) {
 		vkDestroyDescriptorPool(device->getDevice(), descriptorPool, nullptr);
+		
 		descriptorPool = VK_NULL_HANDLE;
 	}
 	if (descriptorSetLayout != VK_NULL_HANDLE) {

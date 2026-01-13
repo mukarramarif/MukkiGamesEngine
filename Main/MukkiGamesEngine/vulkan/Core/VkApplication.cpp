@@ -310,14 +310,27 @@ void VulkanApplication::createUniformBuffers()
 void VulkanApplication::updateUniformBuffer(uint32_t currentImage)
 {
 	UniformBufferObject ubo{};
-	ubo.model = glm::scale(glm::mat4(1.0f),glm::vec3(100.0f));
-	ubo.view =camera->getViewMatrix();
+	// Build model matrix from transform
+	glm::mat4 model = glm::mat4(1.0f);
+
+	// Apply translation
+	model = glm::translate(model, modelTransform.position);
+
+	// Apply rotation (convert degrees to radians)
+	model = glm::rotate(model, glm::radians(modelTransform.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+	model = glm::rotate(model, glm::radians(modelTransform.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+	model = glm::rotate(model, glm::radians(modelTransform.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+
+	// Apply uniform scale
+	model = glm::scale(model, glm::vec3(modelTransform.scale));
+
+	ubo.model = model;
+	ubo.view = camera->getViewMatrix();
 	VkExtent2D extent = swapChain->getSwapChainExtent();
 	float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
 	ubo.proj = camera->getProjectionMatrix(aspect);
 	memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 }
-
 void VulkanApplication::createTextureResources()
 {
 	textureManager->createDebugTextureImage(textureImage, textureImageMemory, textureImageView);
@@ -495,6 +508,7 @@ void VulkanApplication::recreateSwapChain()
 		delete additivePipeline;
 		additivePipeline = nullptr;
 	}
+	
 	// Cleanup old swap chain
 	swapChain->cleanup();
 	
@@ -514,6 +528,7 @@ void VulkanApplication::recreateSwapChain()
 	
 	// IMPORTANT: Update compute pipeline descriptor sets with new image view
 	if (computePipeline) {
+		computePipeline->resetDesciriptorPool(device);
 		computePipeline->createDescriptorSets(device, computeOutputImageView);
 	}
 	
@@ -563,6 +578,7 @@ void VulkanApplication::mainLoop()
 		float fps = 1.0f / deltaTime;
 		uiManager->renderDebugWindow(fps, deltaTime);
 		uiManager->renderCameraInfo(camera->position, camera->front);
+		uiManager->renderModelTransformWindow(modelTransform, deltaTime);
 		drawFrame();
 	}
 	
@@ -677,24 +693,46 @@ void VulkanApplication::cleanup()
 	instance.cleanup();
 }
 
+void VulkanApplication::toggleCursor()
+{
+	cursorEnabled = !cursorEnabled;
+	if(cursorEnabled) {
+		glfwSetInputMode(window->getGLFWwindow(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+	} else {
+		glfwSetInputMode(window->getGLFWwindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+		firstMouse = true; // Reset mouse tracking
+	}
+}
+
 void VulkanApplication::processInput() {
 	GLFWwindow* win = window->getGLFWwindow();
 	static bool renderKeyPressed = false;
+	static bool cursorKeyPressed = false;
 	if (glfwGetKey(win, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(win, true);
-	
-	if (glfwGetKey(win, GLFW_KEY_W) == GLFW_PRESS)
-		camera->processKeyboardInput(FORWARD, deltaTime);
-	if (glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS)
-		camera->processKeyboardInput(BACKWARD, deltaTime);
-	if (glfwGetKey(win, GLFW_KEY_A) == GLFW_PRESS)
-		camera->processKeyboardInput(LEFT, deltaTime);
-	if (glfwGetKey(win, GLFW_KEY_D) == GLFW_PRESS)
-		camera->processKeyboardInput(RIGHT, deltaTime);
-	if (glfwGetKey(win, GLFW_KEY_SPACE) == GLFW_PRESS)
-		camera->processKeyboardInput(UP, deltaTime);
-	if (glfwGetKey(win, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
-		camera->processKeyboardInput(DOWN, deltaTime);
+	if (glfwGetKey(win, GLFW_KEY_TAB) == GLFW_PRESS) {
+		if (!cursorKeyPressed) {
+			toggleCursor();
+			cursorKeyPressed = true;
+		}
+	}
+	else {
+		cursorKeyPressed = false;
+	}
+	if (!cursorEnabled) {
+		if (glfwGetKey(win, GLFW_KEY_W) == GLFW_PRESS)
+			camera->processKeyboardInput(FORWARD, deltaTime);
+		if (glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS)
+			camera->processKeyboardInput(BACKWARD, deltaTime);
+		if (glfwGetKey(win, GLFW_KEY_A) == GLFW_PRESS)
+			camera->processKeyboardInput(LEFT, deltaTime);
+		if (glfwGetKey(win, GLFW_KEY_D) == GLFW_PRESS)
+			camera->processKeyboardInput(RIGHT, deltaTime);
+		if (glfwGetKey(win, GLFW_KEY_SPACE) == GLFW_PRESS)
+			camera->processKeyboardInput(UP, deltaTime);
+		if (glfwGetKey(win, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
+			camera->processKeyboardInput(DOWN, deltaTime);
+	}
 	if (glfwGetKey(win, GLFW_KEY_B) == GLFW_PRESS) {
 		if(!renderKeyPressed) {
 			toggleRenderMode();
@@ -709,7 +747,9 @@ void VulkanApplication::processInput() {
 
 void VulkanApplication::mouseCallback(GLFWwindow* window, double xpos, double ypos) {
 	auto app = reinterpret_cast<VulkanApplication*>(glfwGetWindowUserPointer(window));
-	
+	if(app->cursorEnabled) {
+		return; // Ignore mouse movement when cursor is enabled
+	}
 	if (app->firstMouse) {
 		app->lastX = static_cast<float>(xpos);
 		app->lastY = static_cast<float>(ypos);

@@ -19,7 +19,14 @@ struct UIRenderData {
 	uint32_t imageCount;
 	uint32_t minImageCount;
 };
-
+struct ModelTransform {
+	glm::vec3 rotation = glm::vec3(1.0f);
+	glm::vec3 position = glm::vec3(1.0f);
+	float scale = 100.0f;
+	bool autoRotate = false;
+	float autoRotateSpeed = 0.5f;
+	int autoRotateAxis = 1;
+};
 class UIManager {
 public:
 	UIManager();
@@ -33,7 +40,7 @@ public:
 	
 	void renderDebugWindow(float fps, float deltaTime);
 	void renderCameraInfo(const glm::vec3& position, const glm::vec3& front);
-
+	void renderModelTransformWindow(ModelTransform& transform, float deltaTime);
 private:
 	VkDevice device = VK_NULL_HANDLE;
 	VkDescriptorPool imguiPool = VK_NULL_HANDLE;

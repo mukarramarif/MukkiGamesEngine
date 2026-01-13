@@ -1,4 +1,5 @@
 #include "uiManager.h"
+#include "uiThemes.h"
 #include <stdexcept>
 
 UIManager::UIManager()
@@ -65,13 +66,14 @@ void UIManager::init(const UIRenderData& renderData, EngineWindow* window)
 	// Setup Dear ImGui context
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
+	
 	ImGuiIO& io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	
 	// Setup Dear ImGui style
-	ImGui::StyleColorsDark();
+	/*ImGui::StyleColorsDark();*/
 	// Or: ImGui::StyleColorsLight();
-
+	setUpMainTheme(ImGui::GetStyle());
 	// Setup Platform/Renderer backends
 	ImGui_ImplGlfw_InitForVulkan(window->getGLFWwindow(), true);
 	
@@ -169,7 +171,12 @@ void UIManager::renderDebugWindow(float fps, float deltaTime)
 	ImGui::Text("FPS: %.1f", fps);
 	ImGui::Text("Frame Time: %.3f ms", deltaTime * 1000.0f);
 	ImGui::Separator();
-	ImGui::Text("Press ESC to exit");
+	ImGui::Text("Controls:");
+	ImGui::BulletText("TAB - Toggle mouse cursor");
+	ImGui::BulletText("WASD - Move camera");
+	ImGui::BulletText("Mouse - Look around");
+	ImGui::BulletText("B - Toggle render mode");
+	ImGui::BulletText("ESC - Exit");
 	ImGui::End();
 }
 
@@ -178,5 +185,143 @@ void UIManager::renderCameraInfo(const glm::vec3& position, const glm::vec3& fro
 	ImGui::Begin("Camera Info");
 	ImGui::Text("Position: (%.2f, %.2f, %.2f)", position.x, position.y, position.z);
 	ImGui::Text("Front: (%.2f, %.2f, %.2f)", front.x, front.y, front.z);
+	ImGui::End();
+}
+
+void UIManager::renderModelTransformWindow(ModelTransform& transform, float deltaTime)
+{
+	ImGui::Begin("Model Transform", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
+
+	// Rotation controls
+	if (ImGui::CollapsingHeader("Rotation", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Indent(10.0f);
+		ImGui::Spacing();
+
+		ImGui::PushItemWidth(200.0f);
+		ImGui::SliderFloat("Pitch (X)", &transform.rotation.x, -180.0f, 180.0f, "%.1f deg");
+		ImGui::Spacing();
+		ImGui::SliderFloat("Yaw (Y)", &transform.rotation.y, -180.0f, 180.0f, "%.1f deg");
+		ImGui::Spacing();
+		ImGui::SliderFloat("Roll (Z)", &transform.rotation.z, -180.0f, 180.0f, "%.1f deg");
+		ImGui::PopItemWidth();
+
+		ImGui::Spacing();
+		ImGui::Spacing();
+		if (ImGui::Button("Reset Rotation", ImVec2(120, 0))) {
+			transform.rotation = glm::vec3(0.0f);
+		}
+
+		ImGui::Unindent(10.0f);
+		ImGui::Spacing();
+	}
+
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	// Auto-rotation controls
+	if (ImGui::CollapsingHeader("Auto Rotate", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Indent(10.0f);
+		ImGui::Spacing();
+
+		ImGui::Checkbox("Enable Auto Rotate", &transform.autoRotate);
+
+		if (transform.autoRotate) {
+			ImGui::Spacing();
+			ImGui::Spacing();
+
+			ImGui::PushItemWidth(200.0f);
+			ImGui::SliderFloat("Speed", &transform.autoRotateSpeed, 0.0f, 360.0f, "%.1f deg/s");
+			ImGui::Spacing();
+
+			const char* axisNames[] = { "X (Pitch)", "Y (Yaw)", "Z (Roll)" };
+			ImGui::Combo("Axis", &transform.autoRotateAxis, axisNames, IM_ARRAYSIZE(axisNames));
+			ImGui::PopItemWidth();
+
+			// Apply auto rotation
+			float rotationDelta = transform.autoRotateSpeed * deltaTime;
+			switch (transform.autoRotateAxis) {
+			case 0: transform.rotation.x += rotationDelta; break;
+			case 1: transform.rotation.y += rotationDelta; break;
+			case 2: transform.rotation.z += rotationDelta; break;
+			}
+
+			// Keep rotation in [-180, 180] range
+			for (int i = 0; i < 3; i++) {
+				while (transform.rotation[i] > 180.0f) transform.rotation[i] -= 360.0f;
+				while (transform.rotation[i] < -180.0f) transform.rotation[i] += 360.0f;
+			}
+		}
+
+		ImGui::Unindent(10.0f);
+		ImGui::Spacing();
+	}
+
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	// Position controls
+	if (ImGui::CollapsingHeader("Position")) {
+		ImGui::Indent(10.0f);
+		ImGui::Spacing();
+
+		ImGui::PushItemWidth(200.0f);
+		ImGui::DragFloat("X##pos", &transform.position.x, 0.1f, 0.0f, 0.0f, "%.2f");
+		ImGui::Spacing();
+		ImGui::DragFloat("Y##pos", &transform.position.y, 0.1f, 0.0f, 0.0f, "%.2f");
+		ImGui::Spacing();
+		ImGui::DragFloat("Z##pos", &transform.position.z, 0.1f, 0.0f, 0.0f, "%.2f");
+		ImGui::PopItemWidth();
+
+		ImGui::Spacing();
+		ImGui::Spacing();
+		if (ImGui::Button("Reset Position", ImVec2(120, 0))) {
+			transform.position = glm::vec3(0.0f);
+		}
+
+		ImGui::Unindent(10.0f);
+		ImGui::Spacing();
+	}
+
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	// Scale control
+	if (ImGui::CollapsingHeader("Scale")) {
+		ImGui::Indent(10.0f);
+		ImGui::Spacing();
+
+		ImGui::PushItemWidth(200.0f);
+		ImGui::SliderFloat("Uniform Scale", &transform.scale, 0.1f, 500.0f, "%.1f");
+		ImGui::PopItemWidth();
+
+		ImGui::Spacing();
+		ImGui::Spacing();
+		if (ImGui::Button("Reset Scale", ImVec2(120, 0))) {
+			transform.scale = 100.0f;
+		}
+
+		ImGui::Unindent(10.0f);
+		ImGui::Spacing();
+	}
+
+	ImGui::PopStyleVar(2);
+
+	ImGui::Separator();
+	ImGui::Spacing();
+	ImGui::Spacing();
+
+	// Center the reset all button
+	float buttonWidth = 150.0f;
+	float windowWidth = ImGui::GetWindowSize().x;
+	ImGui::SetCursorPosX((windowWidth - buttonWidth) * 0.5f);
+
+	if (ImGui::Button("Reset All", ImVec2(buttonWidth, 30))) {
+		transform = ModelTransform{};
+	}
+
+	ImGui::Spacing();
 	ImGui::End();
 }

@@ -22,6 +22,7 @@ public:
 	void createDescriptorSetLayout(Device* device);
 	void createDescriptorPool(Device* device, uint32_t maxSets);
 	void createDescriptorSets(Device* device, VkImageView outputImageView);
+	void resetDesciriptorPool(Device* device);
 	void cleanup(Device* device);
 
 	VkPipeline getPipeline() const { return computePipeline; }
