@@ -12,14 +12,18 @@
 - [x] create command pool and command buffers
 - [x] create synchronization objects
 - [x] basic rendering loop to clear screen with a color
-- [ ] render 3d objects
+- [x] render 3d objects
+- [ ] skybox
+- [ ] render cubmaps
 - [ ] create scene loader
 - [ ] looking into SIMD 
 - [ ] multithreading for rendering and resource loading
+- [ ] 
 ## Fixes
-- [ ] recreating swapchain on window resize
-- [ ] validation layers errors when switching from compute to graphics and back
+- [x] recreating swapchain on window resize
+- [x] validation layers errors when switching from compute to graphics and back
 - [ ] cleanup code maybe using RAII or smart pointers
+- [ ] RAII would require bit to much refactoring right now will fix later (tech depth)
 ## Architecture Diagram
 ```mermaid
 flowchart TD
@@ -37,8 +41,11 @@ flowchart TD
 ## Progress
 ![MukkiGamesEngine Progress1: rectangle](image.png)
 
-## Camera Works!
+## UI changes Works!
 
-https://github.com/user-attachments/assets/ff630a43-192a-41ac-8b42-d23caa52ade8
+https://github.com/user-attachments/assets/0c19a22d-971b-4ff4-b9d8-ecf9d9b7e023
+
+
+
 
 
