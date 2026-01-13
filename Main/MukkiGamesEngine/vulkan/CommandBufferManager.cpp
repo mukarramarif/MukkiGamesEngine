@@ -161,6 +161,7 @@ void CommandBufferManager::recordModelCommandBuffer(
 	VkFramebuffer framebuffer,
 	VkExtent2D extent,
 	VkPipeline graphicsPipeline,
+	VkPipeline additivePipeline,
 	VkPipelineLayout pipelineLayout,
 	const Model& model,
 	const std::vector<std::vector<VkDescriptorSet>>& materialDescriptorSets,
@@ -212,14 +213,25 @@ void CommandBufferManager::recordModelCommandBuffer(
 	VkDeviceSize offsets[] = { 0 };
 	vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 	vkCmdBindIndexBuffer(commandBuffer, model.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-
+	VkPipeline currentPipeline = VK_NULL_HANDLE;
 	// Render each mesh
+	// First pass: Render opaque and standard alpha blended meshes
 	for (const auto& mesh : model.meshes) {
 		for (const auto& primitive : mesh.primitives) {
-			// Get material index (use 0 if no material)
 			int32_t matIndex = primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
 
-			// Bind the descriptor set for this material
+			// Skip emissive materials in first pass
+			if (matIndex < static_cast<int32_t>(model.materials.size()) &&
+				model.materials[matIndex].isEmissive) {
+				continue;
+			}
+
+			// Bind standard pipeline if needed
+			if (currentPipeline != graphicsPipeline) {
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+				currentPipeline = graphicsPipeline;
+			}
+
 			if (matIndex < static_cast<int32_t>(materialDescriptorSets.size())) {
 				vkCmdBindDescriptorSets(
 					commandBuffer,
@@ -233,7 +245,40 @@ void CommandBufferManager::recordModelCommandBuffer(
 				);
 			}
 
-			// Draw this primitive
+			vkCmdDrawIndexed(commandBuffer, primitive.indexCount, 1, primitive.firstIndex, 0, 0);
+		}
+	}
+
+	// Second pass: Render emissive/light flare meshes with additive blending
+	for (const auto& mesh : model.meshes) {
+		for (const auto& primitive : mesh.primitives) {
+			int32_t matIndex = primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
+
+			// Only render emissive materials in second pass
+			if (matIndex >= static_cast<int32_t>(model.materials.size()) ||
+				!model.materials[matIndex].isEmissive) {
+				continue;
+			}
+
+			// Bind additive pipeline if needed
+			if (currentPipeline != additivePipeline) {
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, additivePipeline);
+				currentPipeline = additivePipeline;
+			}
+
+			if (matIndex < static_cast<int32_t>(materialDescriptorSets.size())) {
+				vkCmdBindDescriptorSets(
+					commandBuffer,
+					VK_PIPELINE_BIND_POINT_GRAPHICS,
+					pipelineLayout,
+					0,
+					1,
+					&materialDescriptorSets[matIndex][currentFrame],
+					0,
+					nullptr
+				);
+			}
+
 			vkCmdDrawIndexed(commandBuffer, primitive.indexCount, 1, primitive.firstIndex, 0, 0);
 		}
 	}

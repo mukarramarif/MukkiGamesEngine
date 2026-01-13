@@ -22,7 +22,10 @@ struct Material {
 	int32_t baseColorTextureIndex = -1;
 	int32_t normalTextureIndex = -1;
 	int32_t metallicRoughnessTextureIndex = -1;
+	int32_t emissiveTextureIndex = -1;
+	glm::vec3 emissiveFactor = glm::vec3(0.0f);
 	bool isTransparent = false;
+	bool isEmissive = false;
 	float alphaCutoff = 0.5f;
 };
 

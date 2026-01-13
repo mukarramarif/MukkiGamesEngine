@@ -373,6 +373,7 @@ void VulkanApplication::drawFrame()
 				swapChain->getSwapChainFramebuffers()[imageIndex],
 				swapChain->getSwapChainExtent(),
 				graphicsPipeline->getGraphicsPipeline(),
+				additivePipeline ? additivePipeline->getGraphicsPipeline() : VK_NULL_HANDLE,
 				pipelineLayout,  // Changed from graphicsPipeline->getPipelineLayout()
 				loadedModel,
 				modelDescriptorSets,
@@ -490,7 +491,10 @@ void VulkanApplication::recreateSwapChain()
 		delete graphicsPipeline;
 		graphicsPipeline = nullptr;
 	}
-	
+	if(additivePipeline) {
+		delete additivePipeline;
+		additivePipeline = nullptr;
+	}
 	// Cleanup old swap chain
 	swapChain->cleanup();
 	
@@ -627,6 +631,9 @@ void VulkanApplication::cleanup()
 	
 	if (graphicsPipeline) {
 		delete graphicsPipeline;
+	}
+	if(additivePipeline) {
+		delete additivePipeline;
 	}
 	if(pipelineLayout != VK_NULL_HANDLE) {
 		vkDestroyPipelineLayout(device->getDevice(), pipelineLayout, nullptr);
@@ -1171,5 +1178,16 @@ void VulkanApplication::createGraphicsPipeline()
 		"vert.spv",
 		"frag.spv",
 		pipelineConfig
+	);
+	PipelineConfigInfo additiveConfig{};
+	VulkanPipeline::defaultPipelineConfigInfo(additiveConfig);
+	additiveConfig.renderPass = renderPass;
+	additiveConfig.pipelineLayout = pipelineLayout;
+	VulkanPipeline::enableAdditiveBlending(additiveConfig);
+	additivePipeline = new VulkanPipeline(
+		device,
+		"vert.spv",
+		"frag.spv",
+		additiveConfig
 	);
 }

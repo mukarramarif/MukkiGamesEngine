@@ -42,7 +42,7 @@ public:
 	
 	static void defaultPipelineConfigInfo(PipelineConfigInfo& configInfo);
 	static void enableAlphaBlending(PipelineConfigInfo& configInfo);
-
+	static void enableAdditiveBlending(PipelineConfigInfo& configInfo);
 	VkPipeline getGraphicsPipeline() const { return graphicsPipeline; }
 
 private:

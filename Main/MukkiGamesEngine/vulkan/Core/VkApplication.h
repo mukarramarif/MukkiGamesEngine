@@ -47,7 +47,7 @@ private:
 	VulkanRenderPass* renderPassObj = nullptr;
 	VkRenderPass renderPass = VK_NULL_HANDLE;
 	VulkanPipeline* graphicsPipeline = nullptr;
-	
+	VulkanPipeline* additivePipeline = nullptr;
 	// Pipeline layout and descriptor set layout (now managed here)
 	VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 	VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;

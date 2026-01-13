@@ -31,6 +31,7 @@ public:
 		VkFramebuffer framebuffer,
 		VkExtent2D extent,
 		VkPipeline graphicsPipeline,
+		VkPipeline additivePipeline,
 		VkPipelineLayout pipelineLayout,
 		const Model& model,
 		const std::vector<std::vector<VkDescriptorSet>>& materialDescriptorSets,

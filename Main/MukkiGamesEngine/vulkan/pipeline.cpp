@@ -123,6 +123,23 @@ void VulkanPipeline::enableAlphaBlending(PipelineConfigInfo& configInfo)
 	configInfo.colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
 }
 
+void VulkanPipeline::enableAdditiveBlending(PipelineConfigInfo& configInfo)
+{
+	configInfo.colorBlendAttachment.blendEnable = VK_TRUE;
+	configInfo.colorBlendAttachment.colorWriteMask =
+		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+		VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+	configInfo.colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+	configInfo.colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;  // Additive: adds to existing color
+	configInfo.colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+	configInfo.colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+	configInfo.colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+	configInfo.colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+
+	// Disable depth writing for additive blending (light flares should not occlude)
+	configInfo.depthStencilInfo.depthWriteEnable = VK_FALSE;
+}
+
 void VulkanPipeline::createGraphicsPipeline(const std::string& vertShaderPath, const std::string& fragShaderPath, const PipelineConfigInfo& configInfo)
 {
 	assert(configInfo.pipelineLayout != VK_NULL_HANDLE && "Cannot create graphics pipeline: no pipelineLayout provided in configInfo");

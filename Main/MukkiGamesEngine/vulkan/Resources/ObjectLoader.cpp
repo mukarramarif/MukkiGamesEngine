@@ -308,6 +308,7 @@ VkFilter ObjectLoader::getVkFilterMode(int filterMode)
 
 void ObjectLoader::loadMaterials(const tinygltf::Model& gltfModel, Model& model)
 {
+	model.materials.reserve(gltfModel.materials.size());
 	for (const auto& gltfMaterial : gltfModel.materials) {
 		Material material;
 		material.isTransparent = (gltfMaterial.alphaMode == "BlEND");
@@ -328,14 +329,33 @@ void ObjectLoader::loadMaterials(const tinygltf::Model& gltfModel, Model& model)
 			material.baseColorTextureIndex = gltfMaterial.values.at("baseColorTexture").TextureIndex();
 		}
 		
-		// Additional textures from additionalValues
-		if (gltfMaterial.additionalValues.find("normalTexture") != gltfMaterial.additionalValues.end()) {
-			material.normalTextureIndex = gltfMaterial.additionalValues.at("normalTexture").TextureIndex();
-		}
-		
 		model.materials.push_back(material);
 	}
-	
+	// Process emissive properties
+	for (size_t i = 0; i < gltfModel.materials.size(); i++) {
+		const auto& gltfMat = gltfModel.materials[i];
+		Material& mat = model.materials[i];
+		if (!gltfMat.emissiveFactor.empty()) {
+			mat.emissiveFactor = glm::vec3(
+				gltfMat.emissiveFactor[0],
+				gltfMat.emissiveFactor[1],
+				gltfMat.emissiveFactor[2]
+			);
+		}
+
+		if (gltfMat.emissiveTexture.index >= 0) {
+			mat.emissiveTextureIndex = gltfMat.emissiveTexture.index;
+		}
+
+		// Mark as emissive if it has emissive texture or non-zero emissive factor
+		// Also check material name for "lightflare" or similar
+		mat.isEmissive = (mat.emissiveTextureIndex >= 0) ||
+			(glm::length(mat.emissiveFactor) > 0.01f) ||
+			(gltfMat.name.find("lightflare") != std::string::npos) ||
+			(gltfMat.name.find("flare") != std::string::npos) ||
+			(gltfMat.name.find("glow") != std::string::npos) ||
+			(gltfMat.name.find("emissive") != std::string::npos);
+	}
 	// Add default material if none exist
 	if (model.materials.empty()) {
 		model.materials.push_back(Material{});
