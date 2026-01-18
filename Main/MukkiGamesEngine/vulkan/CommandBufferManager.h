@@ -4,6 +4,7 @@
 #include <vector>
 #include "Core/VkDevice.h"
 class UIManager;
+class SkyBox;
 struct Model;
 class CommandBufferManager {
 public:
@@ -34,6 +35,7 @@ public:
 		VkPipeline additivePipeline,
 		VkPipelineLayout pipelineLayout,
 		const Model& model,
+		SkyBox* skybox,
 		const std::vector<std::vector<VkDescriptorSet>>& materialDescriptorSets,
 		uint32_t currentFrame,
 		UIManager& uiManager);

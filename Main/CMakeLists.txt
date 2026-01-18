@@ -36,6 +36,7 @@ target_include_directories(MukkiGamesEngine PRIVATE ${TINYGLTF_INCLUDE_DIRS})
 # Helper to compile GLSL to SPIR-V. Usage: add_shaders(<target> Shaders/foo.vert Shaders/bar.frag)
 target_compile_definitions(MukkiGamesEngine PRIVATE 
     ASSETS_PATH="${CMAKE_SOURCE_DIR}/MukkiGamesEngine/Assets/")
+
 function(add_shaders TARGET_NAME)
   set(SHADER_SOURCE_FILES ${ARGN})
   list(LENGTH SHADER_SOURCE_FILES FILE_COUNT)
@@ -45,12 +46,11 @@ function(add_shaders TARGET_NAME)
 
   set(SHADER_PRODUCTS)
   foreach(SHADER_SOURCE IN LISTS SHADER_SOURCE_FILES)
-    # Get extension name without leading dot: "vert" or "frag"
-    get_filename_component(SHADER_EXT "${SHADER_SOURCE}" EXT)
-    string(REGEX REPLACE "^\\." "" SHADER_EXT "${SHADER_EXT}")
-
-    # Output name will be <build-dir>/<ext>.spv -> vert.spv, frag.spv
-    set(OUT "${CMAKE_CURRENT_BINARY_DIR}/${SHADER_EXT}.spv")
+    # Get the filename without path (e.g., "shader.vert")
+    get_filename_component(SHADER_NAME "${SHADER_SOURCE}" NAME)
+    
+    # Output name will be <build-dir>/<name>.spv -> shader.vert.spv, skybox.vert.spv
+    set(OUT "${CMAKE_CURRENT_BINARY_DIR}/${SHADER_NAME}.spv")
     add_custom_command(
       OUTPUT "${OUT}"
       COMMAND Vulkan::glslc "${CMAKE_SOURCE_DIR}/${SHADER_SOURCE}" -o "${OUT}"
@@ -66,7 +66,13 @@ function(add_shaders TARGET_NAME)
   add_dependencies(${TARGET_NAME} ${TARGET_NAME}_shaders)
 endfunction()
 
-# Example: compile Shaders/shader.vert -> vert.spv and Shaders/shader.frag -> frag.spv
-add_shaders(MukkiGamesEngine ../Main/MukkiGamesEngine/Shaders/shader.vert ../Main/MukkiGamesEngine/Shaders/shader.frag ../Main/MukkiGamesEngine/Shaders/compute.comp)
+# Compile all shaders
+add_shaders(MukkiGamesEngine 
+    ../Main/MukkiGamesEngine/Shaders/shader.vert 
+    ../Main/MukkiGamesEngine/Shaders/shader.frag 
+    ../Main/MukkiGamesEngine/Shaders/compute.comp 
+    ../Main/MukkiGamesEngine/Shaders/skybox.vert 
+    ../Main/MukkiGamesEngine/Shaders/skybox.frag
+)
 
 

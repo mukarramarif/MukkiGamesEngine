@@ -1,5 +1,5 @@
 #pragma once
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.h>	
 #include <vulkan/vulkan_raii.hpp>
 #include "VkInstance.h"
 #include "VkDevice.h"
@@ -13,8 +13,10 @@
 #include "../Resources/BufferManager.h"
 #include "../Resources/Camera.h"
 #include "../Resources/ObjectLoader.h"
+#include "../Resources/SkyBox.h"
 #include "../uiManager/uiManager.h"
 #include "../pipeline/ComputePipeline.h"	
+
 #include <vector>
 #include "ShaderCompiler.h"
 
@@ -76,8 +78,8 @@ private:
 	std::vector<VkDescriptorSet> descriptorSets;
 
 	//Texture Handler and Buffer Manager
-	TextureManager* textureManager;
-	BufferManager* bufferManager;
+	TextureManager* textureManager = nullptr;
+	BufferManager* bufferManager = nullptr;
 	//depth resources
 	VkImage depthImage;
 	VkDeviceMemory depthImageMemory;
@@ -147,4 +149,7 @@ private:
 	Model loadedModel;
 	bool modelLoaded = false;
 	void createModelDescriptorSets();
+
+	//Skybox
+	SkyBox* skybox = nullptr;
 };

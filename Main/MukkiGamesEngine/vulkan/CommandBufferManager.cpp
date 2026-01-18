@@ -1,6 +1,7 @@
 #include "CommandBufferManager.h"
 #include "uiManager/uiManager.h"
 #include "Resources/ObjectLoader.h"
+#include "Resources/SkyBox.h"
 #include <stdexcept>
 #include <array>
 #include <vector>
@@ -120,7 +121,7 @@ void CommandBufferManager::recordCommandBuffer(
 	scissor.offset = { 0, 0 };
 	scissor.extent = extent;
 	vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-
+	
 	// Bind vertex buffer
 	VkBuffer vertexBuffers[] = { vertexBuffer };
 	VkDeviceSize offsets[] = { 0 };
@@ -164,6 +165,7 @@ void CommandBufferManager::recordModelCommandBuffer(
 	VkPipeline additivePipeline,
 	VkPipelineLayout pipelineLayout,
 	const Model& model,
+	SkyBox* skybox,
 	const std::vector<std::vector<VkDescriptorSet>>& materialDescriptorSets,
 	uint32_t currentFrame,
 	UIManager& uiManager)
@@ -207,7 +209,9 @@ void CommandBufferManager::recordModelCommandBuffer(
 	scissor.offset = { 0, 0 };
 	scissor.extent = extent;
 	vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-
+	if (skybox) {
+		skybox->s_recordCommandBuffer(commandBuffer, currentFrame);
+	}
 	// Bind model buffers
 	VkBuffer vertexBuffers[] = { model.vertexBuffer };
 	VkDeviceSize offsets[] = { 0 };

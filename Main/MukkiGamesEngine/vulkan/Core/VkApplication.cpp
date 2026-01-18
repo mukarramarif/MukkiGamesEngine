@@ -97,7 +97,7 @@ void VulkanApplication::initVulkan()
 	// 6. Create render pass (defines how rendering operations are performed)
 	renderPassObj = new VulkanRenderPass(device, swapChain->getSwapChainImageFormat());
 	renderPass = renderPassObj->getRenderPass();
-
+	
 	// 7. Create command buffers FIRST (required by BufferManager and TextureManager)
 	commandBufferManager = new CommandBufferManager();
 	commandBufferManager->init(device, MAX_FRAMES_IN_FLIGHT);
@@ -108,7 +108,10 @@ void VulkanApplication::initVulkan()
 
 	textureManager = new TextureManager();
 	textureManager->init(*device, *commandBufferManager, *bufferManager);
-
+	skybox = new SkyBox();
+	skybox->init(device, textureManager, bufferManager,
+		renderPass, ASSETS_PATH "SkyBox.png",
+		CubemapLayout::VerticalCross, MAX_FRAMES_IN_FLIGHT);
 	// 9. Create depth resources using TextureManager
 	VkExtent2D extent = swapChain->getSwapChainExtent();
 	textureManager->createdepthResources(depthImage, depthImageMemory, depthImageView,
@@ -370,6 +373,16 @@ void VulkanApplication::drawFrame()
 	// 4. Reset fence only after we're sure we'll submit work
 	vkResetFences(device->getDevice(), 1, &inFlightFences[currentFrame]);
 	updateUniformBuffer(currentFrame);
+	if (skybox) {
+		glm::mat4 view = camera->getViewMatrix();
+		glm::mat4 projection = glm::perspective(
+			glm::radians(45.0f),
+			swapChain->getSwapChainExtent().width / (float)swapChain->getSwapChainExtent().height,
+			0.1f, 100.0f
+		);
+		projection[1][1] *= -1; // Vulkan Y flip
+		skybox->updateUniformBuffer(currentFrame, view, projection);
+	}
 	// 5. Record command buffer
 	commandBufferManager->resetCommandBuffer(currentFrame);
 	VkCommandBuffer commandBuffer = commandBufferManager->getCommandBuffer(currentFrame);
@@ -389,6 +402,7 @@ void VulkanApplication::drawFrame()
 				additivePipeline ? additivePipeline->getGraphicsPipeline() : VK_NULL_HANDLE,
 				pipelineLayout,  // Changed from graphicsPipeline->getPipelineLayout()
 				loadedModel,
+				skybox,
 				modelDescriptorSets,
 				currentFrame,
 				*uiManager
@@ -644,7 +658,10 @@ void VulkanApplication::cleanup()
 		commandBufferManager->cleanup();
 		delete commandBufferManager;
 	}
-	
+	if(skybox) {
+		skybox->cleanup();
+		delete skybox;
+	}
 	if (graphicsPipeline) {
 		delete graphicsPipeline;
 	}
