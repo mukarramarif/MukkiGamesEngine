@@ -1,7 +1,8 @@
 #include "TextureManager.h"
 #include"../CommandBufferManager.h"
 #include "BufferManager.h"
-#include "BufferManager.h"
+#include "../objects/bitmap.h"
+#include "../utils/ect_cubemap.h"
 #include <stdexcept>
 
 TextureManager::~TextureManager()
@@ -398,50 +399,40 @@ void TextureManager::createCubemapImage(const std::string& filePath,
 		throw std::runtime_error("failed to load cubemap texture: " + filePath);
 	}
 
-	// Determine face size based on layout
-	int faceSize = 0;
-	switch (layout) {
-	case CubemapLayout::HorizontalCross:
-		faceSize = texWidth / 4;  // 4 columns
-		break;
-	case CubemapLayout::VerticalCross:
-		faceSize = std::min(texWidth / 3, texHeight / 4);  // 3 columns
-		break;
-	case CubemapLayout::HorizontalStrip:
-		faceSize = texWidth / 6;  // 6 columns
-		break;
-	case CubemapLayout::VerticalStrip:
-		faceSize = texHeight / 6; // 6 rows
-		break;
-	}
-
-	VkDeviceSize faceSizeBytes = static_cast<VkDeviceSize>(faceSize) * faceSize * 4;
-	VkDeviceSize totalSize = faceSizeBytes * 6;
-
-	// Allocate buffer for all 6 extracted faces
-	std::vector<stbi_uc> faceData(totalSize);
-
-	// Extract each face from the source image
-	for (int i = 0; i < 6; i++) {
-		extractCubemapFace(pixels, texWidth, texHeight,
-			faceData.data() + (i * faceSizeBytes), faceSize, i, layout);
-	}
-
+	Bitmap Source(texWidth, texHeight, 4, eBitmapFormat_UnsignedByte, pixels);
+	std::vector<Bitmap> cubemap;
+	int faceSize = ConvertEctToCubemapFaces(Source, cubemap);
+	std::cout << "  Face size: " << faceSize << "x" << faceSize << std::endl;
 	stbi_image_free(pixels);
+	int numFaces = 6;
+	VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
+	int bytesPerPixel = 4;
+	size_t singleFaceNumBytes = static_cast<size_t>(faceSize) * faceSize * bytesPerPixel;
+	size_t totalBytes = numFaces * singleFaceNumBytes;
+	std::cout << "  Single face bytes: " << singleFaceNumBytes << std::endl;
+	std::cout << "  Total bytes needed: " << totalBytes << std::endl;
 
-	// Create staging buffer
+	std::vector<uint8_t> faceData;
+	for (int i = 0; i < numFaces; i++) {
+		Bitmap& faceBitmap = cubemap[i];
+		std::cout << "  Face " << i << " data size: " << faceBitmap.data_.size() << std::endl;
+		faceData.insert(faceData.end(),
+			faceBitmap.data_.begin(),
+			faceBitmap.data_.end());
+	}
+	std::cout << "  Actual faceData size: " << faceData.size() << std::endl;
 	VkBuffer stagingBuffer;
 	VkDeviceMemory stagingBufferMemory;
-	bufferManager->createBuffer(totalSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+	bufferManager->createBuffer(totalBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 		stagingBuffer, stagingBufferMemory);
 
 	void* data;
-	vkMapMemory(device->getDevice(), stagingBufferMemory, 0, totalSize, 0, &data);
-	memcpy(data, faceData.data(), totalSize);
+	vkMapMemory(device->getDevice(), stagingBufferMemory, 0, totalBytes, 0, &data);
+	memcpy(data, faceData.data(), totalBytes);
 	vkUnmapMemory(device->getDevice(), stagingBufferMemory);
 
-	// Create cubemap image
+	
 	createImage(faceSize, faceSize, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
 		VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, cubemapImage, cubemapImageMemory, true);

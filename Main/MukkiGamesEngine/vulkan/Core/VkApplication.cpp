@@ -110,7 +110,7 @@ void VulkanApplication::initVulkan()
 	textureManager->init(*device, *commandBufferManager, *bufferManager);
 	skybox = new SkyBox();
 	skybox->init(device, textureManager, bufferManager,
-		renderPass, ASSETS_PATH "SkyBox.png",
+		renderPass, ASSETS_PATH "studio_small.jpg",
 		CubemapLayout::VerticalCross, MAX_FRAMES_IN_FLIGHT);
 	// 9. Create depth resources using TextureManager
 	VkExtent2D extent = swapChain->getSwapChainExtent();
@@ -374,14 +374,10 @@ void VulkanApplication::drawFrame()
 	vkResetFences(device->getDevice(), 1, &inFlightFences[currentFrame]);
 	updateUniformBuffer(currentFrame);
 	if (skybox) {
-		glm::mat4 view = camera->getViewMatrix();
-		glm::mat4 projection = glm::perspective(
-			glm::radians(45.0f),
-			swapChain->getSwapChainExtent().width / (float)swapChain->getSwapChainExtent().height,
-			0.1f, 100.0f
-		);
-		projection[1][1] *= -1; // Vulkan Y flip
-		skybox->updateUniformBuffer(currentFrame, view, projection);
+		VkExtent2D extent = swapChain->getSwapChainExtent();
+		float aspect = extent.width / (float)extent.height;
+		glm::mat4 view = camera->getSkyboxVPMatrix(aspect, 0.1f, 100.f);
+		skybox->updateUniformBuffer(currentFrame, view);
 	}
 	// 5. Record command buffer
 	commandBufferManager->resetCommandBuffer(currentFrame);
@@ -1085,7 +1081,7 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 	vkCmdPipelineBarrier(
 		commandBuffer,
 		VK_PIPELINE_STAGE_TRANSFER_BIT,
-		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 		0,
 		0, nullptr,
 		0, nullptr,
@@ -1107,7 +1103,7 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 		0, nullptr,
 		1, &barrier
 	);
-	/*VkRenderPassBeginInfo renderPassInfo{};
+	VkRenderPassBeginInfo renderPassInfo{};
 	renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 	renderPassInfo.renderPass = renderPass;
 	renderPassInfo.framebuffer = swapChain->getSwapChainFramebuffers()[imageIndex];
@@ -1118,7 +1114,7 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 	clearValues[1].depthStencil = { 1.0f, 0 };
 	renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
 	renderPassInfo.pClearValues = clearValues.data();
-	vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);*/
+	vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 	uiManager->render(commandBuffer);
 	/*vkCmdEndRenderPass(commandBuffer);*/
 	if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {

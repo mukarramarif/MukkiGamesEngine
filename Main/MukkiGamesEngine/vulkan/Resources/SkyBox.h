@@ -1,46 +1,47 @@
 #pragma once
+
+#include <vulkan/vulkan.h>
+#include <glm/glm.hpp>
+#include <string>
+#include <vector>
 #include "../Core/VkDevice.h"
 #include "../pipeline.h"
 #include "TextureManager.h"
 #include "BufferManager.h"
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 
+// Single combined VP matrix for skybox shader
 struct SkyboxUBO {
-	glm::mat4 view;
-	glm::mat4 projection;
+	glm::mat4 VP;
 };
 
-class SkyBox {
+class SkyBox
+{
 public:
 	SkyBox();
 	~SkyBox();
 
 	void init(Device* device, TextureManager* textureManager, BufferManager* bufferManager,
 		VkRenderPass renderPass, const std::string& cubemapPath,
-		CubemapLayout layout = CubemapLayout::HorizontalCross, uint32_t maxFramesInFlight = 2);
+		CubemapLayout layout, uint32_t maxFramesInFlight);
 
-	void cleanup();
+	void updateUniformBuffer(uint32_t currentFrame, const glm::mat4& view);
 	void s_recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t currentFrame);
-	void updateUniformBuffer(uint32_t currentFrame, const glm::mat4& view, const glm::mat4& projection);
+	void cleanup();
 
 private:
-	void createDescriptorSetLayout();
-	void createPipelineLayout();
-	void createPipeline(VkRenderPass renderPass);
-	void createVertexBuffer();
 	void createUniformBuffers();
+	void createDescriptorSetLayout();
 	void createDescriptorPool();
 	void createDescriptorSets();
+	
+	void createPipelineLayout();
+	void createPipeline(VkRenderPass renderPass);
 
 	Device* device = nullptr;
 	TextureManager* textureManager = nullptr;
 	BufferManager* bufferManager = nullptr;
 
-	// Pipeline
-	VulkanPipeline* skyboxPipeline = nullptr;
-	VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
-	VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
+	
 
 	// Cubemap texture
 	VkImage cubemapImage = VK_NULL_HANDLE;
@@ -48,19 +49,19 @@ private:
 	VkImageView cubemapImageView = VK_NULL_HANDLE;
 	VkSampler cubemapSampler = VK_NULL_HANDLE;
 
-	// Vertex buffer (cube)
-	VkBuffer vertexBuffer = VK_NULL_HANDLE;
-	VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
-	uint32_t vertexCount = 0;
-
-	// Uniform buffers
+	// Uniform buffers	
 	std::vector<VkBuffer> uniformBuffers;
 	std::vector<VkDeviceMemory> uniformBuffersMemory;
 	std::vector<void*> uniformBuffersMapped;
 
 	// Descriptors
+	VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
 	VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
 	std::vector<VkDescriptorSet> descriptorSets;
+
+	// Pipeline
+	VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+	VulkanPipeline* skyboxPipeline = nullptr;
 
 	uint32_t maxFramesInFlight = 2;
 };

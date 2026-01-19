@@ -1,11 +1,13 @@
-#version 450
+#version 460
 
-layout(location = 0) in vec3 fragTexCoord;
+layout (location=0) in vec3 Dir;
 
-layout(binding = 1) uniform samplerCube skyboxSampler;
+layout (location=0) out vec4 out_Color;
 
-layout(location = 0) out vec4 outColor;
+layout(binding = 1) uniform samplerCube cubeSampler;
 
-void main() {
-    outColor = texture(skyboxSampler, fragTexCoord);
-}
+void main() 
+{
+
+	out_Color = texture(cubeSampler, Dir);
+};

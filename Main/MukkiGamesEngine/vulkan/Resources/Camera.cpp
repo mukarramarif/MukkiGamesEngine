@@ -18,12 +18,27 @@ glm::mat4 Camera::getViewMatrix() const
 	return glm::lookAt(position, position + front, up);
 }
 
+glm::mat4 Camera::getViewMatrixNoTranslation() const
+{
+	// Get the full view matrix and strip translation by converting to mat3 and back
+	// This keeps only the rotation component
+	return glm::mat4(glm::mat3(getViewMatrix()));
+}
+
 glm::mat4 Camera::getProjectionMatrix(float aspect, float near, float far) const
 {
 	glm::mat4 proj = glm::perspective(glm::radians(zoom), aspect, near, far);
 	// Vulkan clip space has inverted Y and half Z
 	proj[1][1] *= -1;
 	return proj;
+}
+
+glm::mat4 Camera::getSkyboxVPMatrix(float aspect, float near, float far) const
+{
+	// Combined View-Projection matrix for skybox (no translation)
+	glm::mat4 view = getViewMatrixNoTranslation();
+	glm::mat4 proj = getProjectionMatrix(aspect, near, far);
+	return proj * view;
 }
 
 void Camera::processKeyboardInput(CameraMovement direction, float deltaTime)
