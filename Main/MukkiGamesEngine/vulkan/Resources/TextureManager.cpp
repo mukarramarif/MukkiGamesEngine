@@ -393,56 +393,90 @@ void TextureManager::createCubemapImage(const std::string& filePath,
 	VkImage& cubemapImage, VkDeviceMemory& cubemapImageMemory, CubemapLayout layout)
 {
 	int texWidth = 0, texHeight = 0, texChannels = 0;
-	stbi_uc* pixels = stbi_load(filePath.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    
+    // Check if HDR file
+    bool isHDR = stbi_is_hdr(filePath.c_str());
+    
+    float* hdrPixels = nullptr;
+    stbi_uc* ldrPixels = nullptr;
+    
+    if (isHDR) {
+        // Load as floating point
+        hdrPixels = stbi_loadf(filePath.c_str(), &texWidth, &texHeight, &texChannels, 4);
+        if (!hdrPixels) {
+            throw std::runtime_error("failed to load HDR cubemap texture: " + filePath);
+        }
+        std::cout << "Loaded HDR image: " << texWidth << "x" << texHeight << std::endl;
+        
+        // Convert HDR to LDR with tone mapping
+        ldrPixels = new stbi_uc[texWidth * texHeight * 4];
+        for (int i = 0; i < texWidth * texHeight; i++) {
+            for (int c = 0; c < 3; c++) {
+                // Reinhard tone mapping
+                float hdrValue = hdrPixels[i * 4 + c];
+                float mapped = hdrValue / (hdrValue + 1.0f);
+                // Gamma correction
+                mapped = powf(mapped, 1.0f / 2.2f);
+                ldrPixels[i * 4 + c] = static_cast<stbi_uc>(glm::clamp(mapped * 255.0f, 0.0f, 255.0f));
+            }
+            ldrPixels[i * 4 + 3] = 255; // Alpha
+        }
+        stbi_image_free(hdrPixels);
+    } else {
+        // Load as regular 8-bit
+        ldrPixels = stbi_load(filePath.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+        if (!ldrPixels) {
+            throw std::runtime_error("failed to load cubemap texture: " + filePath);
+        }
+    }
 
-	if (!pixels) {
-		throw std::runtime_error("failed to load cubemap texture: " + filePath);
-	}
+    Bitmap Source(texWidth, texHeight, 4, eBitmapFormat_UnsignedByte, ldrPixels);
+    std::vector<Bitmap> cubemap;
+    int faceSize = ConvertEctToCubemapFaces(Source, cubemap);
+    
+    std::cout << "  Face size: " << faceSize << "x" << faceSize << std::endl;
+    
+    // Free the loaded pixels
+    if (isHDR) {
+        delete[] ldrPixels;
+    } else {
+        stbi_image_free(ldrPixels);
+    }
 
-	Bitmap Source(texWidth, texHeight, 4, eBitmapFormat_UnsignedByte, pixels);
-	std::vector<Bitmap> cubemap;
-	int faceSize = ConvertEctToCubemapFaces(Source, cubemap);
-	std::cout << "  Face size: " << faceSize << "x" << faceSize << std::endl;
-	stbi_image_free(pixels);
-	int numFaces = 6;
-	VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
-	int bytesPerPixel = 4;
-	size_t singleFaceNumBytes = static_cast<size_t>(faceSize) * faceSize * bytesPerPixel;
-	size_t totalBytes = numFaces * singleFaceNumBytes;
-	std::cout << "  Single face bytes: " << singleFaceNumBytes << std::endl;
-	std::cout << "  Total bytes needed: " << totalBytes << std::endl;
+    constexpr int bytesPerPixel = 4;
+    size_t singleFaceNumBytes = static_cast<size_t>(faceSize) * faceSize * bytesPerPixel;
+    size_t totalBytes = 6 * singleFaceNumBytes;
 
-	std::vector<uint8_t> faceData;
-	for (int i = 0; i < numFaces; i++) {
-		Bitmap& faceBitmap = cubemap[i];
-		std::cout << "  Face " << i << " data size: " << faceBitmap.data_.size() << std::endl;
-		faceData.insert(faceData.end(),
-			faceBitmap.data_.begin(),
-			faceBitmap.data_.end());
-	}
-	std::cout << "  Actual faceData size: " << faceData.size() << std::endl;
-	VkBuffer stagingBuffer;
-	VkDeviceMemory stagingBufferMemory;
-	bufferManager->createBuffer(totalBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-		stagingBuffer, stagingBufferMemory);
+    std::vector<uint8_t> faceData;
+    faceData.reserve(totalBytes);
+    for (int i = 0; i < 6; i++) {
+        Bitmap& faceBitmap = cubemap[i];
+        faceData.insert(faceData.end(),
+            faceBitmap.data_.begin(),
+            faceBitmap.data_.end());
+    }
 
-	void* data;
-	vkMapMemory(device->getDevice(), stagingBufferMemory, 0, totalBytes, 0, &data);
-	memcpy(data, faceData.data(), totalBytes);
-	vkUnmapMemory(device->getDevice(), stagingBufferMemory);
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    bufferManager->createBuffer(totalBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        stagingBuffer, stagingBufferMemory);
 
-	
-	createImage(faceSize, faceSize, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
-		VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, cubemapImage, cubemapImageMemory, true);
+    void* data;
+    vkMapMemory(device->getDevice(), stagingBufferMemory, 0, totalBytes, 0, &data);
+    memcpy(data, faceData.data(), totalBytes);
+    vkUnmapMemory(device->getDevice(), stagingBufferMemory);
 
-	transitionImageLayout(cubemapImage, VK_FORMAT_R8G8B8A8_SRGB,
-		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true);
-	copyBufferToImage(stagingBuffer, cubemapImage, faceSize, faceSize, true);
-	transitionImageLayout(cubemapImage, VK_FORMAT_R8G8B8A8_SRGB,
-		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
+    createImage(faceSize, faceSize, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, cubemapImage, cubemapImageMemory, true);
 
-	vkDestroyBuffer(device->getDevice(), stagingBuffer, nullptr);
-	vkFreeMemory(device->getDevice(), stagingBufferMemory, nullptr);
+    transitionImageLayout(cubemapImage, VK_FORMAT_R8G8B8A8_SRGB,
+        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true);
+    copyBufferToImage(stagingBuffer, cubemapImage, faceSize, faceSize, true);
+    transitionImageLayout(cubemapImage, VK_FORMAT_R8G8B8A8_SRGB,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
+
+    vkDestroyBuffer(device->getDevice(), stagingBuffer, nullptr);
+    vkFreeMemory(device->getDevice(), stagingBufferMemory, nullptr);
 }

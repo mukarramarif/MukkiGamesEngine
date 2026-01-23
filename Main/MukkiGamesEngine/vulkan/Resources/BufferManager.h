@@ -3,7 +3,7 @@
 #include "vulkan/vulkan.h"
 #include <vector>
 #include "../Core/VkDevice.h"
-
+#include "../objects/UBO.h"
 #include "../objects/vertex.h"
 class CommandBufferManager;
 class BufferManager {
@@ -20,13 +20,7 @@ public:
 	void createUniformBuffer(VkDeviceSize size, VkBuffer& uniformBuffer, VkDeviceMemory& uniformBufferMemory);
 	void destroyBuffer(VkBuffer buffer, VkDeviceMemory bufferMemory);
 private:
-	struct UniformBufferObject {
-		alignas(16) glm::mat4 model;
-		alignas(16) glm::mat4 view;
-		alignas(16) glm::mat4 proj;
-		void cleanup();
-
-	};
+	UniformBufferObject ubo{};
 	struct SSBO {
 
 	};

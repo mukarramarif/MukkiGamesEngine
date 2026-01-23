@@ -16,16 +16,12 @@
 #include "../Resources/SkyBox.h"
 #include "../uiManager/uiManager.h"
 #include "../pipeline/ComputePipeline.h"	
-
+#include "../objects/lights.h"
 #include <vector>
 #include "ShaderCompiler.h"
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
-struct UniformBufferObject {
-	alignas(16) glm::mat4 model;
-	alignas(16) glm::mat4 view;
-	alignas(16) glm::mat4 proj;
-};
+
 class VulkanApplication {
 public:
 	// Explicit constructor and destructor
@@ -122,6 +118,7 @@ private:
 	void createComputeOutputImage();
 	void recordComputeCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 	void loadModel(const std::string& filepath);
+	void setupDefaultLights();
 	void cleanupComputeResources();
 	
 	// New methods for pipeline setup
@@ -152,4 +149,7 @@ private:
 
 	//Skybox
 	SkyBox* skybox = nullptr;
+
+	std::vector<Light> lights;
+	float ambientStrength = 0.1f;
 };

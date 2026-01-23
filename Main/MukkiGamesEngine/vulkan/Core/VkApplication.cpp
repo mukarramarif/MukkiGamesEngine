@@ -110,7 +110,7 @@ void VulkanApplication::initVulkan()
 	textureManager->init(*device, *commandBufferManager, *bufferManager);
 	skybox = new SkyBox();
 	skybox->init(device, textureManager, bufferManager,
-		renderPass, ASSETS_PATH "studio_small.jpg",
+		renderPass, ASSETS_PATH "studio_small.hdr",
 		CubemapLayout::VerticalCross, MAX_FRAMES_IN_FLIGHT);
 	// 9. Create depth resources using TextureManager
 	VkExtent2D extent = swapChain->getSwapChainExtent();
@@ -135,6 +135,7 @@ void VulkanApplication::initVulkan()
 	createIndexBuffer();
 	createTextureResources();
 	createUniformBuffers();
+	setupDefaultLights();
 	// 14. Create descriptor sets (for uniforms, textures, etc.)
 	descriptorBoss = new VkDescriptorBoss(device, MAX_FRAMES_IN_FLIGHT);
 	descriptorBoss->createDescriptorPool(MAX_FRAMES_IN_FLIGHT);
@@ -313,25 +314,39 @@ void VulkanApplication::createUniformBuffers()
 void VulkanApplication::updateUniformBuffer(uint32_t currentImage)
 {
 	UniformBufferObject ubo{};
-	// Build model matrix from transform
+
+	// Model matrix
 	glm::mat4 model = glm::mat4(1.0f);
-
-	// Apply translation
 	model = glm::translate(model, modelTransform.position);
-
-	// Apply rotation (convert degrees to radians)
 	model = glm::rotate(model, glm::radians(modelTransform.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
 	model = glm::rotate(model, glm::radians(modelTransform.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
 	model = glm::rotate(model, glm::radians(modelTransform.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
-
-	// Apply uniform scale
 	model = glm::scale(model, glm::vec3(modelTransform.scale));
 
 	ubo.model = model;
 	ubo.view = camera->getViewMatrix();
+
 	VkExtent2D extent = swapChain->getSwapChainExtent();
 	float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
 	ubo.proj = camera->getProjectionMatrix(aspect);
+
+	// Normal matrix (inverse transpose of model matrix for correct normal transformation)
+	ubo.normalMatrix = glm::transpose(glm::inverse(model));
+
+	// Camera position for specular calculations
+	ubo.viewPos = glm::vec4(camera->position, 1.0f);
+
+	// Lighting data
+	ubo.ambientStrength = ambientStrength;
+	ubo.numLights = 0;
+
+	for (size_t i = 0; i < lights.size() && i < MAX_LIGHTS; i++) {
+		if (lights[i].enabled) {
+			ubo.lights[ubo.numLights] = lights[i].toGPU();
+			ubo.numLights++;
+		}
+	}
+
 	memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 }
 void VulkanApplication::createTextureResources()
@@ -589,6 +604,7 @@ void VulkanApplication::mainLoop()
 		uiManager->renderDebugWindow(fps, deltaTime);
 		uiManager->renderCameraInfo(camera->position, camera->front);
 		uiManager->renderModelTransformWindow(modelTransform, deltaTime);
+		uiManager->renderLightingWindow(lights, ambientStrength);
 		drawFrame();
 	}
 	
@@ -863,7 +879,34 @@ void VulkanApplication::createModelDescriptorSets()
 		std::cout << std::endl;
 	}
 }
+void VulkanApplication::setupDefaultLights()
+{
+	// Clear existing lights
+	lights.clear();
 
+	// Add a directional light (like the sun)
+	Light sunLight;
+	sunLight.type = LightType::Directional;
+	sunLight.direction = glm::vec3(-0.5f, -1.0f, -0.3f);
+	sunLight.color = glm::vec3(1.0f, 0.95f, 0.8f);  // Warm white
+	sunLight.intensity = 1.0f;
+	sunLight.enabled = true;
+	lights.push_back(sunLight);
+
+	// Add a point light
+	Light pointLight;
+	pointLight.type = LightType::Point;
+	pointLight.position = glm::vec3(2.0f, 3.0f, 2.0f);
+	pointLight.color = glm::vec3(0.8f, 0.8f, 1.0f);  // Cool white
+	pointLight.intensity = 2.0f;
+	pointLight.constant = 1.0f;
+	pointLight.linear = 0.09f;
+	pointLight.quadratic = 0.032f;
+	pointLight.enabled = true;
+	lights.push_back(pointLight);
+
+	std::cout << "Setup " << lights.size() << " lights" << std::endl;
+}
 void VulkanApplication::initComputePipeline() {
 	computePipeline = new ComputePipeline();
 	

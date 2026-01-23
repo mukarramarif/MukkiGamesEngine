@@ -187,7 +187,64 @@ void UIManager::renderCameraInfo(const glm::vec3& position, const glm::vec3& fro
 	ImGui::Text("Front: (%.2f, %.2f, %.2f)", front.x, front.y, front.z);
 	ImGui::End();
 }
+void UIManager::renderLightingWindow(std::vector<Light>& lights, float& ambientStrength)
+{
+	ImGui::Begin("Lighting", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
 
+	ImGui::SliderFloat("Ambient", &ambientStrength, 0.0f, 1.0f);
+	ImGui::Separator();
+
+	for (size_t i = 0; i < lights.size(); i++) {
+		ImGui::PushID(static_cast<int>(i));
+
+		std::string header = "Light " + std::to_string(i);
+		if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::Checkbox("Enabled", &lights[i].enabled);
+
+			const char* types[] = { "Directional", "Point", "Spot" };
+			int currentType = static_cast<int>(lights[i].type);
+			if (ImGui::Combo("Type", &currentType, types, IM_ARRAYSIZE(types))) {
+				lights[i].type = static_cast<LightType>(currentType);
+			}
+
+			ImGui::ColorEdit3("Color", &lights[i].color.x);
+			ImGui::SliderFloat("Intensity", &lights[i].intensity, 0.0f, 10.0f);
+
+			if (lights[i].type != LightType::Directional) {
+				ImGui::DragFloat3("Position", &lights[i].position.x, 0.1f);
+			}
+
+			if (lights[i].type == LightType::Directional || lights[i].type == LightType::Spot) {
+				ImGui::DragFloat3("Direction", &lights[i].direction.x, 0.01f, -1.0f, 1.0f);
+			}
+
+			if (lights[i].type == LightType::Point || lights[i].type == LightType::Spot) {
+				if (ImGui::TreeNode("Attenuation")) {
+					ImGui::SliderFloat("Constant", &lights[i].constant, 0.0f, 2.0f);
+					ImGui::SliderFloat("Linear", &lights[i].linear, 0.0f, 1.0f);
+					ImGui::SliderFloat("Quadratic", &lights[i].quadratic, 0.0f, 0.5f);
+					ImGui::TreePop();
+				}
+			}
+
+			if (lights[i].type == LightType::Spot) {
+				ImGui::SliderFloat("Cutoff Angle", &lights[i].cutoffAngle, 1.0f, 90.0f);
+			}
+		}
+
+		ImGui::PopID();
+	}
+
+	ImGui::Separator();
+	if (ImGui::Button("Add Point Light") && lights.size() < MAX_LIGHTS) {
+		Light newLight;
+		newLight.type = LightType::Point;
+		newLight.position = glm::vec3(0.0f, 2.0f, 0.0f);
+		lights.push_back(newLight);
+	}
+
+	ImGui::End();
+}
 void UIManager::renderModelTransformWindow(ModelTransform& transform, float deltaTime)
 {
 	ImGui::Begin("Model Transform", nullptr, ImGuiWindowFlags_AlwaysAutoResize);

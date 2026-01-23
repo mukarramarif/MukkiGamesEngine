@@ -6,7 +6,7 @@
 #include <imgui_impl_glfw.h>
 #include "../Core/VkDevice.h"
 #include "../Core/EngineWindow.h"
-
+#include "../objects/lights.h"
 struct UIRenderData {
 	VkInstance instance;
 	VkPhysicalDevice physicalDevice;
@@ -41,6 +41,7 @@ public:
 	void renderDebugWindow(float fps, float deltaTime);
 	void renderCameraInfo(const glm::vec3& position, const glm::vec3& front);
 	void renderModelTransformWindow(ModelTransform& transform, float deltaTime);
+	void renderLightingWindow(std::vector<Light>& lights, float& ambientStrength);
 private:
 	VkDevice device = VK_NULL_HANDLE;
 	VkDescriptorPool imguiPool = VK_NULL_HANDLE;

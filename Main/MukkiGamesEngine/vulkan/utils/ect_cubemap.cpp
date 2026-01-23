@@ -64,8 +64,8 @@ int ConvertEctToCubemapFaces(const Bitmap& ectBitmap, std::vector<Bitmap>& outCu
     int faceSize = ectBitmap.w_ / 4;
     
     std::cout << "=== CUBEMAP DEBUG ===" << std::endl;
-    std::cout << "Source image: " << ectBitmap.w_ << "x" << ectBitmap.h_ << std::endl;
-    std::cout << "Face size: " << faceSize << std::endl;
+  /*  std::cout << "Source image: " << ectBitmap.w_ << "x" << ectBitmap.h_ << std::endl;
+    std::cout << "Face size: " << faceSize << std::endl;*/
 
     outCubemapFaces.resize(CUBE_NUM_FACES);
 
@@ -80,9 +80,9 @@ int ConvertEctToCubemapFaces(const Bitmap& ectBitmap, std::vector<Bitmap>& outCu
 
     for (int face = 0; face < CUBE_NUM_FACES; face++) {
         // Debug: sample the center of each face
-        glm::vec3 centerDir = glm::normalize(FaceCoordsToXYZ(faceSize/2, faceSize/2, face, faceSize));
+       /* glm::vec3 centerDir = glm::normalize(FaceCoordsToXYZ(faceSize/2, faceSize/2, face, faceSize));
         std::cout << "Face " << faceNames[face] << " center direction: (" 
-                  << centerDir.x << ", " << centerDir.y << ", " << centerDir.z << ")" << std::endl;
+                  << centerDir.x << ", " << centerDir.y << ", " << centerDir.z << ")" << std::endl;*/
 
         for (int y = 0; y < faceSize; y++) {
             for (int x = 0; x < faceSize; x++) {
@@ -137,7 +137,7 @@ int ConvertEctToCubemapFaces(const Bitmap& ectBitmap, std::vector<Bitmap>& outCu
     }
 
     // Also save source image for reference
-    {
+    /*{
         std::vector<uint8_t> srcPixels(ectBitmap.w_ * ectBitmap.h_ * 4);
         for (int py = 0; py < ectBitmap.h_; py++) {
             for (int px = 0; px < ectBitmap.w_; px++) {
@@ -150,7 +150,7 @@ int ConvertEctToCubemapFaces(const Bitmap& ectBitmap, std::vector<Bitmap>& outCu
             }
         }
 
-    }
+    }*/
 
     std::cout << "=== END CUBEMAP DEBUG ===" << std::endl;
 
