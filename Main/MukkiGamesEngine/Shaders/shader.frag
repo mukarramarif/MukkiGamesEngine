@@ -3,7 +3,7 @@
 #define MAX_LIGHTS 4
 
 // Debug modes - change this to test different visualizations
-#define DEBUG_MODE 5
+#define DEBUG_MODE 0
 // 0 = Normal rendering (final lit result)
 // 1 = Visualize normals
 // 2 = Visualize world position

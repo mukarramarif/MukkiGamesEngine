@@ -473,7 +473,16 @@ void ObjectLoader::loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Me
 			else {
 				vertex.texCoord = glm::vec2(0.0f);
 			}
-
+			if (normalBuffer) {
+				vertex.normal = normalMatrix * glm::vec3(
+					normalBuffer[v * 3 + 0],
+					normalBuffer[v * 3 + 1],
+					normalBuffer[v * 3 + 2]
+				);
+			}
+			else {
+				vertex.normal = glm::vec3(0.0f, 0.0f, 1.0f);
+			}
 			model.vertices.push_back(vertex);
 		}
 

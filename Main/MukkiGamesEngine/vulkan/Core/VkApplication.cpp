@@ -917,7 +917,7 @@ void VulkanApplication::initComputePipeline() {
 	computePipeline->createDescriptorSetLayout(device);
 	computePipeline->createDescriptorPool(device, MAX_FRAMES_IN_FLIGHT);
 	computePipeline->createDescriptorSets(device, computeOutputImageView);
-	computePipeline->createComputePipeline(device, "comp.spv");
+	computePipeline->createComputePipeline(device, "compute.comp.spv");
 
 }
 void VulkanApplication::createComputeOutputImage() {
@@ -1271,8 +1271,8 @@ void VulkanApplication::createGraphicsPipeline()
 	VulkanPipeline::enableAlphaBlending(pipelineConfig);
 	graphicsPipeline = new VulkanPipeline(
 		device,
-		"vert.spv",
-		"frag.spv",
+		"shader.vert.spv",
+		"shader.frag.spv",
 		pipelineConfig
 	);
 	PipelineConfigInfo additiveConfig{};
@@ -1282,8 +1282,8 @@ void VulkanApplication::createGraphicsPipeline()
 	VulkanPipeline::enableAdditiveBlending(additiveConfig);
 	additivePipeline = new VulkanPipeline(
 		device,
-		"vert.spv",
-		"frag.spv",
+		"shader.vert.spv",
+		"shader.frag.spv",
 		additiveConfig
 	);
 }
