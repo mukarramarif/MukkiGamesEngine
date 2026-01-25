@@ -220,8 +220,9 @@ void CommandBufferManager::recordModelCommandBuffer(
 	VkPipeline currentPipeline = VK_NULL_HANDLE;
 	// Render each mesh
 	// First pass: Render opaque and standard alpha blended meshes
-	for (const auto& mesh : model.meshes) {
-		for (const auto& primitive : mesh.primitives) {
+	for (const auto& mesh : model.opaqueMeshIndices) {
+		const auto& meshRef = model.meshes[mesh];
+		for (const auto& primitive : meshRef.primitives) {
 			int32_t matIndex = primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
 
 			// Skip emissive materials in first pass
@@ -254,8 +255,9 @@ void CommandBufferManager::recordModelCommandBuffer(
 	}
 
 	// Second pass: Render emissive/light flare meshes with additive blending
-	for (const auto& mesh : model.meshes) {
-		for (const auto& primitive : mesh.primitives) {
+	for (const auto& mesh : model.transparentMeshIndices) {
+		const auto& meshRef = model.meshes[mesh];
+		for (const auto& primitive : meshRef.primitives) {
 			int32_t matIndex = primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
 
 			// Only render emissive materials in second pass
