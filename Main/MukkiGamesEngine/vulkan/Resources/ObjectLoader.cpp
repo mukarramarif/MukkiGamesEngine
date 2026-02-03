@@ -311,7 +311,8 @@ void ObjectLoader::loadMaterials(const tinygltf::Model& gltfModel, Model& model)
 	model.materials.reserve(gltfModel.materials.size());
 	for (const auto& gltfMaterial : gltfModel.materials) {
 		Material material;
-		material.isTransparent = (gltfMaterial.alphaMode == "BlEND");
+		material.isTransparent = (gltfMaterial.alphaMode == "BLEND");
+		
 		if(gltfMaterial.alphaMode == "MASK") {
 			material.alphaCutoff = static_cast<float>(gltfMaterial.alphaCutoff);
 		}
