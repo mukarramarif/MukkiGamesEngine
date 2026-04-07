@@ -13,12 +13,13 @@
 - [x] create synchronization objects
 - [x] basic rendering loop to clear screen with a color
 - [x] render 3d objects
-- [ ] skybox
-- [ ] render cubmaps
+- [x] skybox
+- [x] render cubmaps
 - [ ] create scene loader
 - [ ] looking into SIMD 
 - [ ] multithreading for rendering and resource loading
-- [ ] 
+- [ ] Adding Fragment Lighting 
+- [ ] Raytracing
 ## Fixes
 - [x] recreating swapchain on window resize
 - [x] validation layers errors when switching from compute to graphics and back
