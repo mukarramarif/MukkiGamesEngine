@@ -7,6 +7,7 @@
 #include <iostream>
 #include "../pipeline/computePipeline.h"
 
+
 // Example vertices (triangle)
 const std::vector<Vertex> vertices = {
 	{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
@@ -605,6 +606,11 @@ void VulkanApplication::mainLoop()
 		uiManager->renderCameraInfo(camera->position, camera->front);
 		uiManager->renderModelTransformWindow(modelTransform, deltaTime);
 		uiManager->renderLightingWindow(lights, ambientStrength);
+		glm::mat4 view = camera->getViewMatrix();
+		VkExtent2D extent = swapChain->getSwapChainExtent();
+		float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+		glm::mat4 proj = camera->getProjectionMatrix(aspect);
+		uiManager->renderLightGizmo(lights, uiManager->getSelectedLight(),view,proj);
 		drawFrame();
 	}
 	
