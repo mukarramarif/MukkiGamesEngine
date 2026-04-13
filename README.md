@@ -21,6 +21,8 @@
 - [ ] looking into SIMD 
 - [ ] raytracing
 - [ ] multithreading for rendering and resource loading
+- [ ] Adding Fragment Lighting 
+- [ ] Raytracing
 ## Fixes
 - [x] recreating swapchain on window resize
 - [x] validation layers errors when switching from compute to graphics and back
