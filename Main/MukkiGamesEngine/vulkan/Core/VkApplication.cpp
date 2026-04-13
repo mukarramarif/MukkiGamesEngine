@@ -634,6 +634,46 @@ void VulkanApplication::mainLoop()
 		uiManager->renderCameraInfo(camera->position, camera->front);
 		uiManager->renderModelTransformWindow(modelTransform, deltaTime);
 		uiManager->renderLightingWindow(lights, ambientStrength);
+		bool loadSceneFlag = false;
+		uiManager->renderSceneLoader(
+			loadSceneFlag,
+			availableScenes,
+			currentSceneIndex,
+			[this](int sceneIndex) {
+				if (sceneIndex < 0 || sceneIndex >= static_cast<int>(availableScenes.size())) {
+					return;
+				}
+
+				if (!sceneLoader->loadScene(ASSETS_PATH + availableScenes[sceneIndex])) {
+					return;
+				}
+
+				currentSceneIndex = sceneIndex;
+				lights = sceneLoader->getLights();
+				ambientStrength = sceneLoader->getConfig().ambientStrenght;
+				if (lights.empty()) {
+					setupDefaultLights();
+				}
+
+				const auto& sceneObjects = sceneLoader->getObjects();
+				if (!sceneObjects.empty()) {
+					if (modelLoaded) {
+						vkDeviceWaitIdle(device->getDevice());
+						
+						objectLoader->destroyModel(loadedModel);
+						modelLoaded = false;
+						modelDescriptorSets.clear();
+					}
+
+					loadModel(ASSETS_PATH + sceneObjects[0].modelPath);
+					
+				}
+
+				if (sceneLoader->hasCameraSettings()) {
+					camera->position = sceneLoader->getInitialCameraPosition();
+				}
+			}
+		);
 		glm::mat4 view = camera->getViewMatrix();
 		VkExtent2D extent = swapChain->getSwapChainExtent();
 		float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
@@ -1109,7 +1149,7 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 	// Transition swapchain image for transfer destination
 	VkImageMemoryBarrier swapBarrier{};
 	swapBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-	swapBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	swapBarrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 	swapBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	swapBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 	swapBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -1149,7 +1189,7 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 		1, &copyRegion
 	);
 
-	// Transition swapchain image for presentation
+	// Transition swapchain image for color attachment rendering (UI)
 	swapBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	swapBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 	swapBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -1180,6 +1220,7 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 		0, nullptr,
 		1, &barrier
 	);
+
 	VkRenderPassBeginInfo renderPassInfo{};
 	renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 	renderPassInfo.renderPass = renderPass;
@@ -1193,7 +1234,24 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 	renderPassInfo.pClearValues = clearValues.data();
 	vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 	uiManager->render(commandBuffer);
-	/*vkCmdEndRenderPass(commandBuffer);*/
+	vkCmdEndRenderPass(commandBuffer);
+
+	// Transition swapchain image for presentation
+	swapBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	swapBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	swapBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	swapBarrier.dstAccessMask = 0;
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &swapBarrier
+	);
+
 	if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 		throw std::runtime_error("failed to record compute command buffer!");
 	}
@@ -1244,6 +1302,7 @@ void VulkanApplication::cleanupComputeResources()
         vkFreeMemory(device->getDevice(), computeOutputImageMemory, nullptr);
     }
 	if(objectLoader) {
+		vkDeviceWaitIdle(device->getDevice());
 		objectLoader->destroyModel(loadedModel);
 		delete objectLoader;
 	}

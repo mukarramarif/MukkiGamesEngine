@@ -7,6 +7,7 @@ UIManager::UIManager()
 	: device(VK_NULL_HANDLE)
 	, imguiPool(VK_NULL_HANDLE)
 	, initialized(false)
+	, selectedSceneIndex(0)
 {
 }
 
@@ -367,6 +368,33 @@ void UIManager::renderLightGizmo(std::vector<Light>& lights, int selectedIndex,
 
 void UIManager::renderSceneLoader(bool& loadSceneFlag, const std::vector<std::string>& scenes, int sceneNum, const std::function<void(int)>& onLoad)
 {
+	ImGui::Begin("Scene Switcher", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+
+	if (scenes.empty()) {
+		ImGui::Text("No scenes available.");
+		ImGui::End();
+		return;
+	}
+
+	if (sceneNum >= 0 && sceneNum < static_cast<int>(scenes.size())) {
+		selectedSceneIndex = sceneNum;
+	}
+
+	std::vector<const char*> sceneItems;
+	sceneItems.reserve(scenes.size());
+	for (const auto& scene : scenes) {
+		sceneItems.push_back(scene.c_str());
+	}
+
+	ImGui::Combo("Scene", &selectedSceneIndex, sceneItems.data(), static_cast<int>(sceneItems.size()));
+
+	if (ImGui::Button("Load Selected Scene")) {
+		loadSceneFlag = true;
+		onLoad(selectedSceneIndex);
+		loadSceneFlag = false;
+	}
+
+	ImGui::End();
 
 }
 

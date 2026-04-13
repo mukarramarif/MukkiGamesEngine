@@ -19,6 +19,7 @@
 #include "../pipeline/ComputePipeline.h"	
 #include "../objects/lights.h"
 #include <vector>
+#include <string>
 #include "ShaderCompiler.h"
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -156,4 +157,6 @@ private:
 
 	std::vector<Light> lights;
 	float ambientStrength = 0.1f;
+	std::vector<std::string> availableScenes{ "scene.json", "sceneTrack.json" };
+	int currentSceneIndex = 0;
 };
