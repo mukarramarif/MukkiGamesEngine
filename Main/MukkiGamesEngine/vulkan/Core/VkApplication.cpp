@@ -7,6 +7,7 @@
 #include <iostream>
 #include "../pipeline/computePipeline.h"
 
+
 // Example vertices (triangle)
 const std::vector<Vertex> vertices = {
 	{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
@@ -411,7 +412,7 @@ void VulkanApplication::drawFrame()
 				swapChain->getSwapChainExtent(),
 				graphicsPipeline->getGraphicsPipeline(),
 				additivePipeline ? additivePipeline->getGraphicsPipeline() : VK_NULL_HANDLE,
-				pipelineLayout,  // Changed from graphicsPipeline->getPipelineLayout()
+				pipelineLayout,  
 				loadedModel,
 				skybox,
 				modelDescriptorSets,
@@ -605,6 +606,11 @@ void VulkanApplication::mainLoop()
 		uiManager->renderCameraInfo(camera->position, camera->front);
 		uiManager->renderModelTransformWindow(modelTransform, deltaTime);
 		uiManager->renderLightingWindow(lights, ambientStrength);
+		glm::mat4 view = camera->getViewMatrix();
+		VkExtent2D extent = swapChain->getSwapChainExtent();
+		float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+		glm::mat4 proj = camera->getProjectionMatrix(aspect);
+		uiManager->renderLightGizmo(lights, uiManager->getSelectedLight(),view,proj);
 		drawFrame();
 	}
 	
@@ -917,7 +923,7 @@ void VulkanApplication::initComputePipeline() {
 	computePipeline->createDescriptorSetLayout(device);
 	computePipeline->createDescriptorPool(device, MAX_FRAMES_IN_FLIGHT);
 	computePipeline->createDescriptorSets(device, computeOutputImageView);
-	computePipeline->createComputePipeline(device, "comp.spv");
+	computePipeline->createComputePipeline(device, "compute.comp.spv");
 
 }
 void VulkanApplication::createComputeOutputImage() {
@@ -1222,7 +1228,7 @@ void VulkanApplication::createDescriptorSetLayout()
 	uboLayoutBinding.binding = 0;
 	uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	uboLayoutBinding.descriptorCount = 1;
-	uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+	uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 	uboLayoutBinding.pImmutableSamplers = nullptr;
 
 	// Sampler binding (binding = 1)
@@ -1271,8 +1277,8 @@ void VulkanApplication::createGraphicsPipeline()
 	VulkanPipeline::enableAlphaBlending(pipelineConfig);
 	graphicsPipeline = new VulkanPipeline(
 		device,
-		"vert.spv",
-		"frag.spv",
+		"shader.vert.spv",
+		"shader.frag.spv",
 		pipelineConfig
 	);
 	PipelineConfigInfo additiveConfig{};
@@ -1282,8 +1288,8 @@ void VulkanApplication::createGraphicsPipeline()
 	VulkanPipeline::enableAdditiveBlending(additiveConfig);
 	additivePipeline = new VulkanPipeline(
 		device,
-		"vert.spv",
-		"frag.spv",
+		"shader.vert.spv",
+		"shader.frag.spv",
 		additiveConfig
 	);
 }

@@ -16,7 +16,10 @@
 - [x] skybox
 - [x] render cubmaps
 - [ ] create scene loader
+    - [ ] SceneObject
+    - [ ] Shader hot reloading
 - [ ] looking into SIMD 
+- [ ] raytracing
 - [ ] multithreading for rendering and resource loading
 - [ ] Adding Fragment Lighting 
 - [ ] Raytracing
@@ -30,13 +33,25 @@
 flowchart TD
   vulkan--> renderer
   subgraph renderer
-	   render
-	   Texture
-	   shader
-	   renderpass
-	   pipeline
-	   commandbuffer
-	   commandpool
+	   subgraph core
+	   		commandPool[Command Pool]
+		swapchain[Swapchain]
+		renderPass[Render Pass]
+		framebuffers[Framebuffers]
+		syncObjects[Synchronization Objects]
+	   end
+	   subgraph resources
+		models[Models]
+		textures[Textures]
+		shaders[Shaders]
+	   end
+	   subgraph scene
+		sceneLoader[Scene Loader]
+		entities[Entities]
+	   end
+	   subgraph ui
+		uiRenderer[UI Renderer]
+	   end
   end
 ```
 ## Progress
