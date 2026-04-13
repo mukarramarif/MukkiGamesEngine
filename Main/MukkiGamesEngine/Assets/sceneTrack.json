@@ -1,0 +1,25 @@
+{
+  "sceneName": "Track",
+  "skyboxPath": "autumn_field_puresky_4k.hdr",
+  "ambientStrenght": 0.2,
+  "cameraSpawnPos": [ 0.0, 2.0, 5.0 ],
+  "Lights": [
+    {
+      "name": "Sun",
+      "type": "Directional",
+      "direction": [ -0.5, -1.0, -0.3 ],
+      "color": [ 1.0, 0.95, 0.8 ],
+      "intensity": 1.0,
+      "enabled": true
+    }
+  ],
+  "Objects": [
+    {
+      "name": "Track",
+      "modelPath": "Race_Track/scene.gltf",
+      "position": [ 0.0, 0.0, 0.0 ],
+      "rotation": [ 0.0, 0.0, 0.0 ],
+      "scale": [ 0.2, 0.2, 0.2 ]
+    }
+  ]
+}

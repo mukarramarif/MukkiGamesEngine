@@ -115,7 +115,7 @@ void VulkanApplication::initVulkan()
 
 	sceneLoader = new SceneLoader();
 	sceneLoader->init(device, textureManager, bufferManager, objectLoader);
-	sceneLoader->loadScene(ASSETS_PATH "scene.json");
+	sceneLoader->loadScene(ASSETS_PATH "sceneTrack.json" );
 
 	skybox = new SkyBox();
 	std::string skyboxFileName = sceneLoader->getConfig().skyboxPath;
