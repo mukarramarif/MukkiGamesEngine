@@ -109,11 +109,24 @@ void VulkanApplication::initVulkan()
 
 	textureManager = new TextureManager();
 	textureManager->init(*device, *commandBufferManager, *bufferManager);
+
+	objectLoader = new ObjectLoader();
+	objectLoader->init(device, textureManager, bufferManager);		
+
+	sceneLoader = new SceneLoader();
+	sceneLoader->init(device, textureManager, bufferManager, objectLoader);
+	sceneLoader->loadScene(ASSETS_PATH "scene.json");
+
 	skybox = new SkyBox();
+	std::string skyboxFileName = sceneLoader->getConfig().skyboxPath;
+	if(skyboxFileName.empty()) skyboxFileName = "studio_small.hdr";
+	std::string fullSkyboxPath = std::string(ASSETS_PATH) + skyboxFileName;
+
 	skybox->init(device, textureManager, bufferManager,
-		renderPass, ASSETS_PATH "studio_small.hdr",
+		renderPass, fullSkyboxPath,
 		CubemapLayout::VerticalCross, MAX_FRAMES_IN_FLIGHT);
-	// 9. Create depth resources using TextureManager
+
+	// 9. Create depth resources using TextureManager	
 	VkExtent2D extent = swapChain->getSwapChainExtent();
 	textureManager->createdepthResources(depthImage, depthImageMemory, depthImageView,
 		extent.width, extent.height);
@@ -136,7 +149,13 @@ void VulkanApplication::initVulkan()
 	createIndexBuffer();
 	createTextureResources();
 	createUniformBuffers();
-	setupDefaultLights();
+	
+	lights = sceneLoader->getLights();
+	ambientStrength = sceneLoader->getConfig().ambientStrenght;
+	if(lights.empty()) {
+		setupDefaultLights();
+	}
+
 	// 14. Create descriptor sets (for uniforms, textures, etc.)
 	descriptorBoss = new VkDescriptorBoss(device, MAX_FRAMES_IN_FLIGHT);
 	descriptorBoss->createDescriptorPool(MAX_FRAMES_IN_FLIGHT);
@@ -152,12 +171,21 @@ void VulkanApplication::initVulkan()
 		textureImageView,
 		textureSampler
 	);
-	loadModel(ASSETS_PATH "Car_Model/scene.gltf");
+	
+	auto sceneObjects = sceneLoader->getObjects();
+	if (!sceneObjects.empty()) {
+		loadModel(ASSETS_PATH + sceneObjects[0].modelPath);
+	}
+	else {
+		loadModel(ASSETS_PATH "Car_Model/scene.gltf");
+	}
+
 	// 15. Create synchronization objects (semaphores and fences)
 	createSyncObjects();
 	
 	// Initialize camera
-	camera = new Camera(glm::vec3(0.0f, 0.0f, 3.0f));
+	glm::vec3 camPos = sceneLoader->hasCameraSettings() ? sceneLoader->getInitialCameraPosition() : glm::vec3(0.0f, 0.0f, 3.0f);
+	camera = new Camera(camPos);
 	
 	// Setup mouse callback
 	glfwSetInputMode(window->getGLFWwindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);

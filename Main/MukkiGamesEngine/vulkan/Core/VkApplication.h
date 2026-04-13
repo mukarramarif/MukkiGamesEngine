@@ -14,6 +14,7 @@
 #include "../Resources/Camera.h"
 #include "../Resources/ObjectLoader.h"
 #include "../Resources/SkyBox.h"
+#include "../Resources/Sceneloader.h"
 #include "../uiManager/uiManager.h"
 #include "../pipeline/ComputePipeline.h"	
 #include "../objects/lights.h"
@@ -146,6 +147,9 @@ private:
 	Model loadedModel;
 	bool modelLoaded = false;
 	void createModelDescriptorSets();
+
+	//Scene Loader
+	SceneLoader* sceneLoader = nullptr;
 
 	//Skybox
 	SkyBox* skybox = nullptr;
