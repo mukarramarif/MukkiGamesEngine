@@ -54,6 +54,7 @@ private:
 	VkDescriptorPool imguiPool = VK_NULL_HANDLE;
 	bool initialized = false;
 	int selectedLightIndex = -1;
+	int selectedSceneIndex = 0;
 	ImGuizmo::OPERATION currentGizmoOperation = ImGuizmo::TRANSLATE;
 	ImGuizmo::MODE currentGizmoMode = ImGuizmo::WORLD;
 	void createDescriptorPool(const UIRenderData& renderData);

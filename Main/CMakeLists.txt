@@ -7,8 +7,8 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(imguizmo CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 find_path(TINYGLTF_INCLUDE_DIRS "tiny_gltf.h")
-
 file(GLOB ENGINE_SOURCES
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/*.cpp"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/*.h"
@@ -35,7 +35,7 @@ add_executable(MukkiGamesEngine ${ENGINE_SOURCES})
 set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD 20)
 set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD_REQUIRED ON)
 #libraries
-target_link_libraries(MukkiGamesEngine PRIVATE Vulkan::Vulkan glfw imgui::imgui glm::glm imguizmo::imguizmo)
+target_link_libraries(MukkiGamesEngine PRIVATE Vulkan::Vulkan glfw imgui::imgui glm::glm imguizmo::imguizmo nlohmann_json::nlohmann_json)
 #header libraries
 target_include_directories(MukkiGamesEngine PRIVATE ${TINYGLTF_INCLUDE_DIRS})
 # Helper to compile GLSL to SPIR-V. Usage: add_shaders(<target> Shaders/foo.vert Shaders/bar.frag)
