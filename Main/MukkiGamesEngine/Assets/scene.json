@@ -1,0 +1,36 @@
+{
+  "sceneName": "Main Level",
+  "skyboxPath": "studio_small.hdr",
+  "ambientStrenght": 0.2,
+  "cameraSpawnPos": [0.0, 2.0, 5.0],
+  "Lights": [
+    {
+      "name": "Sun",
+      "type": "Directional",
+      "direction": [-0.5, -1.0, -0.3],
+      "color": [1.0, 0.95, 0.8],
+      "intensity": 1.0,
+      "enabled": true
+    },
+    {
+      "name": "PointLight",
+      "type": "Point",
+      "position": [2.0, 3.0, 2.0],
+      "color": [0.8, 0.8, 1.0],
+      "intensity": 2.0,
+      "constant": 1.0,
+      "linear": 0.09,
+      "quadratic": 0.032,
+      "enabled": true
+    }
+  ],
+  "Objects": [
+    {
+      "name": "Car",
+      "modelPath": "Car_Model/scene.gltf",
+      "position": [0.0, 0.0, 0.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [1.0, 1.0, 1.0]
+    }
+  ]
+}

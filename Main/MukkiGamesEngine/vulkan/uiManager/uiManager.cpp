@@ -1,11 +1,13 @@
 #include "uiManager.h"
 #include "uiThemes.h"
 #include <stdexcept>
+#include <glm/gtc/type_ptr.hpp>
 
 UIManager::UIManager()
 	: device(VK_NULL_HANDLE)
 	, imguiPool(VK_NULL_HANDLE)
 	, initialized(false)
+	, selectedSceneIndex(0)
 {
 }
 
@@ -138,6 +140,7 @@ void UIManager::newFrame()
 	ImGui_ImplVulkan_NewFrame();
 	ImGui_ImplGlfw_NewFrame();
 	ImGui::NewFrame();
+
 }
 
 void UIManager::render(VkCommandBuffer commandBuffer)
@@ -194,11 +197,39 @@ void UIManager::renderLightingWindow(std::vector<Light>& lights, float& ambientS
 	ImGui::SliderFloat("Ambient", &ambientStrength, 0.0f, 1.0f);
 	ImGui::Separator();
 
+	// Gizmo operation selector
+	ImGui::Text("Gizmo Mode:");
+	if (ImGui::RadioButton("Translate", currentGizmoOperation == ImGuizmo::TRANSLATE))
+		currentGizmoOperation = ImGuizmo::TRANSLATE;
+	ImGui::SameLine();
+	if (ImGui::RadioButton("Rotate", currentGizmoOperation == ImGuizmo::ROTATE))
+		currentGizmoOperation = ImGuizmo::ROTATE;
+
+	if (ImGui::RadioButton("Local", currentGizmoMode == ImGuizmo::LOCAL))
+		currentGizmoMode = ImGuizmo::LOCAL;
+	ImGui::SameLine();
+	if (ImGui::RadioButton("World", currentGizmoMode == ImGuizmo::WORLD))
+		currentGizmoMode = ImGuizmo::WORLD;
+
+	ImGui::Separator();
+
 	for (size_t i = 0; i < lights.size(); i++) {
 		ImGui::PushID(static_cast<int>(i));
 
+		// Make the header selectable for gizmo control
+		bool isSelected = (selectedLightIndex == static_cast<int>(i));
 		std::string header = "Light " + std::to_string(i);
+
+		if (isSelected) {
+			ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
+		}
+
 		if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+			// Selection button
+			if (ImGui::Button(isSelected ? "Deselect Gizmo" : "Select for Gizmo")) {
+				selectedLightIndex = isSelected ? -1 : static_cast<int>(i);
+			}
+
 			ImGui::Checkbox("Enabled", &lights[i].enabled);
 
 			const char* types[] = { "Directional", "Point", "Spot" };
@@ -232,6 +263,10 @@ void UIManager::renderLightingWindow(std::vector<Light>& lights, float& ambientS
 			}
 		}
 
+		if (isSelected) {
+			ImGui::PopStyleColor();
+		}
+
 		ImGui::PopID();
 	}
 
@@ -245,6 +280,124 @@ void UIManager::renderLightingWindow(std::vector<Light>& lights, float& ambientS
 
 	ImGui::End();
 }
+
+
+void UIManager::renderLightGizmo(std::vector<Light>& lights, int selectedIndex,
+                                  const glm::mat4& view, const glm::mat4& projection)
+{
+	if (selectedIndex < 0 || selectedIndex >= static_cast<int>(lights.size())) {
+		return;
+	}
+
+	Light& light = lights[selectedIndex];
+
+	// ImGuizmo setup for full viewport
+	ImGuiIO& io = ImGui::GetIO();
+	ImGuizmo::SetOrthographic(false);
+	ImGuizmo::BeginFrame();
+	
+	ImGuizmo::SetRect(ImGui::GetWindowPos().x, ImGui::GetWindowPos().y, io.DisplaySize.x, io.DisplaySize.y);
+
+	// Build transformation matrix from light position/direction
+	glm::mat4 lightMatrix = glm::mat4(1.0f);
+	
+	if (light.type == LightType::Directional) {
+		// For directional lights, use direction as rotation
+		// Place gizmo at origin or a fixed distance for visibility
+		glm::vec3 gizmoPos = glm::vec3(0.0f, 5.0f, 0.0f);
+		lightMatrix = glm::translate(glm::mat4(1.0f), gizmoPos);
+		
+		// Calculate rotation from direction
+		glm::vec3 dir = glm::normalize(light.direction);
+		glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+		if (glm::abs(glm::dot(dir, up)) > 0.99f) {
+			up = glm::vec3(1.0f, 0.0f, 0.0f);
+		}
+		glm::vec3 right = glm::normalize(glm::cross(up, dir));
+		up = glm::cross(dir, right);
+		
+		lightMatrix[0] = glm::vec4(right, 0.0f);
+		lightMatrix[1] = glm::vec4(up, 0.0f);
+		lightMatrix[2] = glm::vec4(dir, 0.0f);
+		lightMatrix[3] = glm::vec4(gizmoPos, 1.0f);
+	}
+	else {
+		// For point/spot lights, use position
+		lightMatrix = glm::translate(glm::mat4(1.0f), light.position);
+		
+		if (light.type == LightType::Spot) {
+			// Include direction as rotation for spot lights
+			glm::vec3 dir = glm::normalize(light.direction);
+			glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+			if (glm::abs(glm::dot(dir, up)) > 0.99f) {
+				up = glm::vec3(1.0f, 0.0f, 0.0f);
+			}
+			glm::vec3 right = glm::normalize(glm::cross(up, dir));
+			up = glm::cross(dir, right);
+			
+			glm::mat4 rotation = glm::mat4(1.0f);
+			rotation[0] = glm::vec4(right, 0.0f);
+			rotation[1] = glm::vec4(up, 0.0f);
+			rotation[2] = glm::vec4(dir, 0.0f);
+			
+			lightMatrix = glm::translate(glm::mat4(1.0f), light.position) * rotation;
+		}
+	}
+
+	// Manipulate the gizmo
+	glm::mat4 deltaMatrix;
+	if (ImGuizmo::Manipulate(
+			glm::value_ptr(view),
+			glm::value_ptr(projection),
+			currentGizmoOperation,
+			currentGizmoMode,
+			glm::value_ptr(lightMatrix),
+			glm::value_ptr(deltaMatrix)))
+	{
+		// Extract new position
+		if (light.type != LightType::Directional) {
+			light.position = glm::vec3(lightMatrix[3]);
+		}
+		
+		// Extract new direction for directional/spot lights
+		if (light.type == LightType::Directional || light.type == LightType::Spot) {
+			light.direction = glm::normalize(glm::vec3(lightMatrix[2]));
+		}
+	}
+}
+
+void UIManager::renderSceneLoader(bool& loadSceneFlag, const std::vector<std::string>& scenes, int sceneNum, const std::function<void(int)>& onLoad)
+{
+	ImGui::Begin("Scene Switcher", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+
+	if (scenes.empty()) {
+		ImGui::Text("No scenes available.");
+		ImGui::End();
+		return;
+	}
+
+	if (sceneNum >= 0 && sceneNum < static_cast<int>(scenes.size())) {
+		selectedSceneIndex = sceneNum;
+	}
+
+	std::vector<const char*> sceneItems;
+	sceneItems.reserve(scenes.size());
+	for (const auto& scene : scenes) {
+		sceneItems.push_back(scene.c_str());
+	}
+
+	ImGui::Combo("Scene", &selectedSceneIndex, sceneItems.data(), static_cast<int>(sceneItems.size()));
+
+	if (ImGui::Button("Load Selected Scene")) {
+		loadSceneFlag = true;
+		onLoad(selectedSceneIndex);
+		loadSceneFlag = false;
+	}
+
+	ImGui::End();
+
+}
+
 void UIManager::renderModelTransformWindow(ModelTransform& transform, float deltaTime)
 {
 	ImGui::Begin("Model Transform", nullptr, ImGuiWindowFlags_AlwaysAutoResize);

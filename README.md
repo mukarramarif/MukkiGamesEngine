@@ -13,12 +13,16 @@
 - [x] create synchronization objects
 - [x] basic rendering loop to clear screen with a color
 - [x] render 3d objects
-- [ ] skybox
-- [ ] render cubmaps
+- [x] skybox
+- [x] render cubmaps
 - [ ] create scene loader
+    - [ ] SceneObject
+    - [ ] Shader hot reloading
 - [ ] looking into SIMD 
+- [ ] raytracing
 - [ ] multithreading for rendering and resource loading
-- [ ] 
+- [ ] Adding Fragment Lighting 
+- [ ] Raytracing
 ## Fixes
 - [x] recreating swapchain on window resize
 - [x] validation layers errors when switching from compute to graphics and back
@@ -29,13 +33,25 @@
 flowchart TD
   vulkan--> renderer
   subgraph renderer
-	   render
-	   Texture
-	   shader
-	   renderpass
-	   pipeline
-	   commandbuffer
-	   commandpool
+	   subgraph core
+	   		commandPool[Command Pool]
+		swapchain[Swapchain]
+		renderPass[Render Pass]
+		framebuffers[Framebuffers]
+		syncObjects[Synchronization Objects]
+	   end
+	   subgraph resources
+		models[Models]
+		textures[Textures]
+		shaders[Shaders]
+	   end
+	   subgraph scene
+		sceneLoader[Scene Loader]
+		entities[Entities]
+	   end
+	   subgraph ui
+		uiRenderer[UI Renderer]
+	   end
   end
 ```
 ## Progress

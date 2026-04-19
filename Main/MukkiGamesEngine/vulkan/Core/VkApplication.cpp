@@ -7,6 +7,7 @@
 #include <iostream>
 #include "../pipeline/computePipeline.h"
 
+
 // Example vertices (triangle)
 const std::vector<Vertex> vertices = {
 	{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
@@ -108,11 +109,24 @@ void VulkanApplication::initVulkan()
 
 	textureManager = new TextureManager();
 	textureManager->init(*device, *commandBufferManager, *bufferManager);
+
+	objectLoader = new ObjectLoader();
+	objectLoader->init(device, textureManager, bufferManager);		
+
+	sceneLoader = new SceneLoader();
+	sceneLoader->init(device, textureManager, bufferManager, objectLoader);
+	sceneLoader->loadScene(ASSETS_PATH "sceneTrack.json" );
+
 	skybox = new SkyBox();
+	std::string skyboxFileName = sceneLoader->getConfig().skyboxPath;
+	if(skyboxFileName.empty()) skyboxFileName = "studio_small.hdr";
+	std::string fullSkyboxPath = std::string(ASSETS_PATH) + skyboxFileName;
+
 	skybox->init(device, textureManager, bufferManager,
-		renderPass, ASSETS_PATH "studio_small.hdr",
+		renderPass, fullSkyboxPath,
 		CubemapLayout::VerticalCross, MAX_FRAMES_IN_FLIGHT);
-	// 9. Create depth resources using TextureManager
+
+	// 9. Create depth resources using TextureManager	
 	VkExtent2D extent = swapChain->getSwapChainExtent();
 	textureManager->createdepthResources(depthImage, depthImageMemory, depthImageView,
 		extent.width, extent.height);
@@ -135,7 +149,13 @@ void VulkanApplication::initVulkan()
 	createIndexBuffer();
 	createTextureResources();
 	createUniformBuffers();
-	setupDefaultLights();
+	
+	lights = sceneLoader->getLights();
+	ambientStrength = sceneLoader->getConfig().ambientStrenght;
+	if(lights.empty()) {
+		setupDefaultLights();
+	}
+
 	// 14. Create descriptor sets (for uniforms, textures, etc.)
 	descriptorBoss = new VkDescriptorBoss(device, MAX_FRAMES_IN_FLIGHT);
 	descriptorBoss->createDescriptorPool(MAX_FRAMES_IN_FLIGHT);
@@ -151,12 +171,21 @@ void VulkanApplication::initVulkan()
 		textureImageView,
 		textureSampler
 	);
-	loadModel(ASSETS_PATH "Car_Model/scene.gltf");
+	
+	auto sceneObjects = sceneLoader->getObjects();
+	if (!sceneObjects.empty()) {
+		loadModel(ASSETS_PATH + sceneObjects[0].modelPath);
+	}
+	else {
+		loadModel(ASSETS_PATH "Car_Model/scene.gltf");
+	}
+
 	// 15. Create synchronization objects (semaphores and fences)
 	createSyncObjects();
 	
 	// Initialize camera
-	camera = new Camera(glm::vec3(0.0f, 0.0f, 3.0f));
+	glm::vec3 camPos = sceneLoader->hasCameraSettings() ? sceneLoader->getInitialCameraPosition() : glm::vec3(0.0f, 0.0f, 3.0f);
+	camera = new Camera(camPos);
 	
 	// Setup mouse callback
 	glfwSetInputMode(window->getGLFWwindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -411,7 +440,7 @@ void VulkanApplication::drawFrame()
 				swapChain->getSwapChainExtent(),
 				graphicsPipeline->getGraphicsPipeline(),
 				additivePipeline ? additivePipeline->getGraphicsPipeline() : VK_NULL_HANDLE,
-				pipelineLayout,  // Changed from graphicsPipeline->getPipelineLayout()
+				pipelineLayout,  
 				loadedModel,
 				skybox,
 				modelDescriptorSets,
@@ -605,6 +634,51 @@ void VulkanApplication::mainLoop()
 		uiManager->renderCameraInfo(camera->position, camera->front);
 		uiManager->renderModelTransformWindow(modelTransform, deltaTime);
 		uiManager->renderLightingWindow(lights, ambientStrength);
+		bool loadSceneFlag = false;
+		uiManager->renderSceneLoader(
+			loadSceneFlag,
+			availableScenes,
+			currentSceneIndex,
+			[this](int sceneIndex) {
+				if (sceneIndex < 0 || sceneIndex >= static_cast<int>(availableScenes.size())) {
+					return;
+				}
+
+				if (!sceneLoader->loadScene(ASSETS_PATH + availableScenes[sceneIndex])) {
+					return;
+				}
+
+				currentSceneIndex = sceneIndex;
+				lights = sceneLoader->getLights();
+				ambientStrength = sceneLoader->getConfig().ambientStrenght;
+				if (lights.empty()) {
+					setupDefaultLights();
+				}
+
+				const auto& sceneObjects = sceneLoader->getObjects();
+				if (!sceneObjects.empty()) {
+					if (modelLoaded) {
+						vkDeviceWaitIdle(device->getDevice());
+						
+						objectLoader->destroyModel(loadedModel);
+						modelLoaded = false;
+						modelDescriptorSets.clear();
+					}
+
+					loadModel(ASSETS_PATH + sceneObjects[0].modelPath);
+					
+				}
+
+				if (sceneLoader->hasCameraSettings()) {
+					camera->position = sceneLoader->getInitialCameraPosition();
+				}
+			}
+		);
+		glm::mat4 view = camera->getViewMatrix();
+		VkExtent2D extent = swapChain->getSwapChainExtent();
+		float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+		glm::mat4 proj = camera->getProjectionMatrix(aspect);
+		uiManager->renderLightGizmo(lights, uiManager->getSelectedLight(),view,proj);
 		drawFrame();
 	}
 	
@@ -917,7 +991,7 @@ void VulkanApplication::initComputePipeline() {
 	computePipeline->createDescriptorSetLayout(device);
 	computePipeline->createDescriptorPool(device, MAX_FRAMES_IN_FLIGHT);
 	computePipeline->createDescriptorSets(device, computeOutputImageView);
-	computePipeline->createComputePipeline(device, "comp.spv");
+	computePipeline->createComputePipeline(device, "compute.comp.spv");
 
 }
 void VulkanApplication::createComputeOutputImage() {
@@ -1075,7 +1149,7 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 	// Transition swapchain image for transfer destination
 	VkImageMemoryBarrier swapBarrier{};
 	swapBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-	swapBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	swapBarrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 	swapBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	swapBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 	swapBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -1115,7 +1189,7 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 		1, &copyRegion
 	);
 
-	// Transition swapchain image for presentation
+	// Transition swapchain image for color attachment rendering (UI)
 	swapBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	swapBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 	swapBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -1146,6 +1220,7 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 		0, nullptr,
 		1, &barrier
 	);
+
 	VkRenderPassBeginInfo renderPassInfo{};
 	renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 	renderPassInfo.renderPass = renderPass;
@@ -1159,7 +1234,24 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 	renderPassInfo.pClearValues = clearValues.data();
 	vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 	uiManager->render(commandBuffer);
-	/*vkCmdEndRenderPass(commandBuffer);*/
+	vkCmdEndRenderPass(commandBuffer);
+
+	// Transition swapchain image for presentation
+	swapBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	swapBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	swapBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	swapBarrier.dstAccessMask = 0;
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &swapBarrier
+	);
+
 	if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 		throw std::runtime_error("failed to record compute command buffer!");
 	}
@@ -1210,6 +1302,7 @@ void VulkanApplication::cleanupComputeResources()
         vkFreeMemory(device->getDevice(), computeOutputImageMemory, nullptr);
     }
 	if(objectLoader) {
+		vkDeviceWaitIdle(device->getDevice());
 		objectLoader->destroyModel(loadedModel);
 		delete objectLoader;
 	}
@@ -1222,7 +1315,7 @@ void VulkanApplication::createDescriptorSetLayout()
 	uboLayoutBinding.binding = 0;
 	uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	uboLayoutBinding.descriptorCount = 1;
-	uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+	uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 	uboLayoutBinding.pImmutableSamplers = nullptr;
 
 	// Sampler binding (binding = 1)
@@ -1271,8 +1364,8 @@ void VulkanApplication::createGraphicsPipeline()
 	VulkanPipeline::enableAlphaBlending(pipelineConfig);
 	graphicsPipeline = new VulkanPipeline(
 		device,
-		"vert.spv",
-		"frag.spv",
+		"shader.vert.spv",
+		"shader.frag.spv",
 		pipelineConfig
 	);
 	PipelineConfigInfo additiveConfig{};
@@ -1282,8 +1375,8 @@ void VulkanApplication::createGraphicsPipeline()
 	VulkanPipeline::enableAdditiveBlending(additiveConfig);
 	additivePipeline = new VulkanPipeline(
 		device,
-		"vert.spv",
-		"frag.spv",
+		"shader.vert.spv",
+		"shader.frag.spv",
 		additiveConfig
 	);
 }
