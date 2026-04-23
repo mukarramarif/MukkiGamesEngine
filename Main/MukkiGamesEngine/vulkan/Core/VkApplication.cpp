@@ -46,6 +46,7 @@ VulkanApplication::VulkanApplication()
 	, textureSampler(VK_NULL_HANDLE)
 	, computePipeline(nullptr)
 {
+	threadPool = std::make_unique<ThreadPool>();
 }
 
 VulkanApplication::~VulkanApplication()
@@ -174,10 +175,16 @@ void VulkanApplication::initVulkan()
 	
 	auto sceneObjects = sceneLoader->getObjects();
 	if (!sceneObjects.empty()) {
-		loadModel(ASSETS_PATH + sceneObjects[0].modelPath);
+		threadPool->enqueue([this, sceneObjects]() {
+			for (const auto& obj : sceneObjects) {
+				loadModel(obj.modelPath);
+			}
+			});
 	}
 	else {
-		loadModel(ASSETS_PATH "Car_Model/scene.gltf");
+		threadPool->enqueue([this]() {
+			loadModel(ASSETS_PATH "models/cerberus/cerberus.gltf");
+			});
 	}
 
 	// 15. Create synchronization objects (semaphores and fences)
@@ -1259,6 +1266,7 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 
 void VulkanApplication::loadModel(const std::string& filepath)
 {
+	
 	if (objectLoader->loadGLTF(filepath, loadedModel)) {
 		objectLoader->createModelBuffers(loadedModel);
 		modelLoaded = true;

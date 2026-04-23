@@ -2,6 +2,9 @@
 
 project(MukkiGamesEngine LANGUAGES CXX)
 
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
@@ -35,7 +38,7 @@ add_executable(MukkiGamesEngine ${ENGINE_SOURCES})
 set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD 20)
 set_property(TARGET MukkiGamesEngine PROPERTY CXX_STANDARD_REQUIRED ON)
 #libraries
-target_link_libraries(MukkiGamesEngine PRIVATE Vulkan::Vulkan glfw imgui::imgui glm::glm imguizmo::imguizmo nlohmann_json::nlohmann_json)
+target_link_libraries(MukkiGamesEngine PRIVATE Vulkan::Vulkan glfw imgui::imgui glm::glm imguizmo::imguizmo nlohmann_json::nlohmann_json Threads::Threads)
 #header libraries
 target_include_directories(MukkiGamesEngine PRIVATE ${TINYGLTF_INCLUDE_DIRS})
 # Helper to compile GLSL to SPIR-V. Usage: add_shaders(<target> Shaders/foo.vert Shaders/bar.frag)

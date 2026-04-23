@@ -18,6 +18,7 @@
 #include "../uiManager/uiManager.h"
 #include "../pipeline/ComputePipeline.h"	
 #include "../objects/lights.h"
+#include "../Resources/ThreadPool.h"
 #include <vector>
 #include <string>
 #include "ShaderCompiler.h"
@@ -92,6 +93,9 @@ private:
 	std::vector<VkDeviceMemory> uniformBuffersMemory;
 	std::vector<void*> uniformBuffersMapped;
 
+
+	//Threading
+	std::unique_ptr<ThreadPool> threadPool;
 	// Camera
 	Camera* camera = nullptr;
 	
