@@ -55,7 +55,9 @@ function(add_shaders TARGET_NAME)
     get_filename_component(SHADER_NAME "${SHADER_SOURCE}" NAME)
     
     # Output name will be <build-dir>/<name>.spv -> shader.vert.spv, skybox.vert.spv
-    set(OUT "${CMAKE_CURRENT_BINARY_DIR}/${SHADER_NAME}.spv")
+    set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/Shaders")
+    file(MAKE_DIRECTORY "${SHADER_OUTPUT_DIR}")
+    set(OUT "${SHADER_OUTPUT_DIR}/${SHADER_NAME}.spv")
     add_custom_command(
       OUTPUT "${OUT}"
       COMMAND Vulkan::glslc "${CMAKE_SOURCE_DIR}/${SHADER_SOURCE}" -o "${OUT}"
