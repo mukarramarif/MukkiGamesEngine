@@ -15,11 +15,10 @@
 - [x] render 3d objects
 - [x] skybox
 - [x] render cubmaps
-- [ ] create scene loader
-    - [ ] SceneObject
+- [x] create scene loader
+    - [x] SceneObject
     - [ ] Shader hot reloading
 - [ ] looking into SIMD 
-- [ ] raytracing
 - [ ] multithreading for rendering and resource loading
 - [ ] Adding Fragment Lighting 
 - [ ] Raytracing
