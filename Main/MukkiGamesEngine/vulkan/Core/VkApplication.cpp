@@ -110,6 +110,9 @@ void VulkanApplication::initVulkan()
 	textureManager = new TextureManager();
 	textureManager->init(*device, *commandBufferManager, *bufferManager);
 
+	rayTracingAS = new RayTracingAS();
+	rayTracingAS->init(device, commandBufferManager);
+
 	objectLoader = new ObjectLoader();
 	objectLoader->init(device, textureManager, bufferManager);		
 
@@ -1261,6 +1264,10 @@ void VulkanApplication::loadModel(const std::string& filepath)
 {
 	if (objectLoader->loadGLTF(filepath, loadedModel)) {
 		objectLoader->createModelBuffers(loadedModel);
+     if (rayTracingAS) {
+			rayTracingAS->buildBLAS(loadedModel);
+			rayTracingAS->buildTLAS(loadedModel);
+		}
 		modelLoaded = true;
 		indexCount = static_cast<uint32_t>(loadedModel.indices.size());
 		if(!loadedModel.textures.empty() && loadedModel.textures[0].imageView != VK_NULL_HANDLE) {

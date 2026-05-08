@@ -21,6 +21,7 @@
 #include <vector>
 #include <string>
 #include "ShaderCompiler.h"
+#include "../raytracing/RayTracingAS.h"
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -154,6 +155,7 @@ private:
 
 	//Skybox
 	SkyBox* skybox = nullptr;
+	RayTracingAS* rayTracingAS = nullptr;
 
 	std::vector<Light> lights;
 	float ambientStrength = 0.1f;

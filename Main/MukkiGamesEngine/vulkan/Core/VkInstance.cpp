@@ -28,7 +28,7 @@ void Instance::createInstance() {
 	appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
 	appInfo.pEngineName = "No Engine";
 	appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-	appInfo.apiVersion = VK_API_VERSION_1_0;
+	appInfo.apiVersion = VK_API_VERSION_1_2;
 
 	auto extensions = getRequiredExtensions();
 	const bool enablePortability = (std::getenv("ENABLE_PORTABILITY_ENUM") != nullptr);
