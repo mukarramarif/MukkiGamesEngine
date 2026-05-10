@@ -23,7 +23,7 @@ public:
 		VkRenderPass renderPass, VkFramebuffer framebuffer,
 		VkExtent2D extent, VkPipeline graphicsPipeline,
 		VkPipelineLayout pipelineLayout, VkBuffer vertexBuffer,
-		VkBuffer indexBuffer, const std::vector<VkDescriptorSet>& descriptorSets,
+        VkBuffer indexBuffer, VkImage swapChainImage, VkImageLayout swapChainOldLayout, const std::vector<VkDescriptorSet>& descriptorSets,
 		uint32_t currentFrame, uint32_t indexCount, UIManager& uiManager);
 	void recordModelCommandBuffer(
 		VkCommandBuffer commandBuffer,
@@ -36,6 +36,8 @@ public:
 		VkPipelineLayout pipelineLayout,
 		const Model& model,
 		SkyBox* skybox,
+     VkImage swapChainImage,
+		VkImageLayout swapChainOldLayout,
 		const std::vector<std::vector<VkDescriptorSet>>& materialDescriptorSets,
 		uint32_t currentFrame,
 		UIManager& uiManager);

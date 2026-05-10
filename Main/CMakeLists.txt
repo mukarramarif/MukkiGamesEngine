@@ -60,9 +60,19 @@ function(add_shaders TARGET_NAME)
     set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/Shaders")
     file(MAKE_DIRECTORY "${SHADER_OUTPUT_DIR}")
     set(OUT "${SHADER_OUTPUT_DIR}/${SHADER_NAME}.spv")
+    set(SHADER_ARGS "${CMAKE_SOURCE_DIR}/${SHADER_SOURCE}" -o "${OUT}")
+
+    if(SHADER_NAME MATCHES "\\.rgen$")
+      list(APPEND SHADER_ARGS -fshader-stage=rgen --target-env=vulkan1.2 --target-spv=spv1.4)
+    elseif(SHADER_NAME MATCHES "\\.rmiss$")
+      list(APPEND SHADER_ARGS -fshader-stage=rmiss --target-env=vulkan1.2 --target-spv=spv1.4)
+    elseif(SHADER_NAME MATCHES "\\.rchit$")
+      list(APPEND SHADER_ARGS -fshader-stage=rchit --target-env=vulkan1.2 --target-spv=spv1.4)
+    endif()
+
     add_custom_command(
       OUTPUT "${OUT}"
-      COMMAND Vulkan::glslc "${CMAKE_SOURCE_DIR}/${SHADER_SOURCE}" -o "${OUT}"
+      COMMAND Vulkan::glslc ${SHADER_ARGS}
       DEPENDS "${CMAKE_SOURCE_DIR}/${SHADER_SOURCE}"
       COMMENT "Compiling shader ${SHADER_SOURCE} -> ${OUT}"
       VERBATIM
@@ -82,6 +92,9 @@ add_shaders(MukkiGamesEngine
     ../Main/MukkiGamesEngine/Shaders/compute.comp 
     ../Main/MukkiGamesEngine/Shaders/skybox.vert 
     ../Main/MukkiGamesEngine/Shaders/skybox.frag
+    ../Main/MukkiGamesEngine/Shaders/rt.rgen
+    ../Main/MukkiGamesEngine/Shaders/rt.rmiss
+    ../Main/MukkiGamesEngine/Shaders/rt.rchit
 )
 
 

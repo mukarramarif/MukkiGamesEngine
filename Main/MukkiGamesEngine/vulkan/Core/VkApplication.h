@@ -22,6 +22,7 @@
 #include <string>
 #include "ShaderCompiler.h"
 #include "../raytracing/RayTracingAS.h"
+#include "../raytracing/RayTracingPipeline.h"
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -37,7 +38,8 @@ private:
 	vk::raii::Context context;
 	enum class RenderMode {
 		GRAPHICS,
-		COMPUTE
+     COMPUTE,
+		RAYTRACING
 	};
 	RenderMode currentRenderMode = RenderMode::GRAPHICS;
 	// Core components
@@ -63,6 +65,7 @@ private:
 	std::vector<VkSemaphore> renderFinishedSemaphores;
 	std::vector<VkFence> inFlightFences;
 	std::vector<VkFence> imagesInFlight;
+  std::vector<VkImageLayout> swapChainImageLayouts;
 	uint32_t currentFrame = 0;
 	
 	// Vertex/Index buffers 
@@ -75,6 +78,12 @@ private:
 	// Descriptors
 	VkDescriptorBoss* descriptorBoss = nullptr;
 	std::vector<VkDescriptorSet> descriptorSets;
+	VkDescriptorSetLayout rayTracingDescriptorSetLayout = VK_NULL_HANDLE;
+	VkDescriptorPool rayTracingDescriptorPool = VK_NULL_HANDLE;
+	VkDescriptorSet rayTracingDescriptorSet = VK_NULL_HANDLE;
+	VkBuffer rayTracingUniformBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory rayTracingUniformBufferMemory = VK_NULL_HANDLE;
+	void* rayTracingUniformBufferMapped = nullptr;
 
 	//Texture Handler and Buffer Manager
 	TextureManager* textureManager = nullptr;
@@ -112,20 +121,27 @@ private:
 	void createVertexBuffer();
 	void createIndexBuffer();
 	void createUniformBuffers();
+    void createRayTracingUniformBuffer();
 	void updateUniformBuffer(uint32_t currentImage);
+  void updateRayTracingUniformBuffer();
 	void createTextureResources();
 	void drawFrame();
 	void recreateSwapChain();
 	void SetupUIManager();
 	void initComputePipeline();
+    void initRayTracingPipeline();
 	void createComputeOutputImage();
 	void recordComputeCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
+    void recordRayTracingCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 	void loadModel(const std::string& filepath);
 	void setupDefaultLights();
 	void cleanupComputeResources();
 	
 	// New methods for pipeline setup
 	void createDescriptorSetLayout();
+    void createRayTracingDescriptorSetLayout();
+	void createRayTracingDescriptorPool();
+	void createRayTracingDescriptorSet();
 	void createPipelineLayout();
 	void createGraphicsPipeline();
 	
@@ -142,6 +158,7 @@ private:
 	VkDeviceMemory computeOutputImageMemory = VK_NULL_HANDLE;
 	VkImageView computeOutputImageView = VK_NULL_HANDLE;
 	VkExtent2D computeOutputImageExtent{};
+	RayTracingPipeline* rayTracingPipeline = nullptr;
 
 	//Object-Loader
 	std::vector<std::vector<VkDescriptorSet>> modelDescriptorSets; // set for each model and each frame
