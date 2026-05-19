@@ -1,5 +1,5 @@
 #pragma once
-#include <vulkan/vulkan.h>	
+#include <vulkan/vulkan.h>
 #include <vulkan/vulkan_raii.hpp>
 #include "VkInstance.h"
 #include "VkDevice.h"
@@ -16,7 +16,7 @@
 #include "../Resources/SkyBox.h"
 #include "../Resources/Sceneloader.h"
 #include "../uiManager/uiManager.h"
-#include "../pipeline/ComputePipeline.h"	
+#include "../pipeline/computePipeline.h"
 #include "../objects/lights.h"
 #include <vector>
 #include <string>
@@ -44,7 +44,7 @@ private:
 	EngineWindow* window = nullptr;
 	Device* device = nullptr;
 	VulkanSwap* swapChain = nullptr;
-	
+
 	// Rendering components
 	VulkanRenderPass* renderPassObj = nullptr;
 	VkRenderPass renderPass = VK_NULL_HANDLE;
@@ -53,24 +53,24 @@ private:
 	// Pipeline layout and descriptor set layout (now managed here)
 	VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 	VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
-	
+
 	// Command buffers
 	CommandBufferManager* commandBufferManager = nullptr;
-	
+
 	// Synchronization objects
 	std::vector<VkSemaphore> imageAvailableSemaphores;
 	std::vector<VkSemaphore> renderFinishedSemaphores;
 	std::vector<VkFence> inFlightFences;
 	std::vector<VkFence> imagesInFlight;
 	uint32_t currentFrame = 0;
-	
-	// Vertex/Index buffers 
+
+	// Vertex/Index buffers
 	VkBuffer vertexBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
 	VkBuffer indexBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
 	uint32_t indexCount = 0;
-	
+
 	// Descriptors
 	VkDescriptorBoss* descriptorBoss = nullptr;
 	std::vector<VkDescriptorSet> descriptorSets;
@@ -94,7 +94,7 @@ private:
 
 	// Camera
 	Camera* camera = nullptr;
-	
+
 	// Input tracking
 	float lastX = 400.0f;
 	float lastY = 300.0f;
@@ -122,12 +122,12 @@ private:
 	void loadModel(const std::string& filepath);
 	void setupDefaultLights();
 	void cleanupComputeResources();
-	
+
 	// New methods for pipeline setup
 	void createDescriptorSetLayout();
 	void createPipelineLayout();
 	void createGraphicsPipeline();
-	
+
 	// Input handling methods
 	void processInput();
 	static void mouseCallback(GLFWwindow* window, double xpos, double ypos);

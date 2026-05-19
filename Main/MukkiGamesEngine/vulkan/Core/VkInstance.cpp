@@ -1,6 +1,7 @@
 #include "VkInstance.h"
 #include <iostream>
 #include <GLFW/glfw3.h>
+#include <cstring>
 Instance* Instance::instancePtr = nullptr;
 Instance::Instance() : instance(VK_NULL_HANDLE), validEnabled(false) {
 

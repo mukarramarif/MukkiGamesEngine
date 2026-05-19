@@ -2,7 +2,7 @@
 //
 
 #include "MukkiGamesEngine.h"
-#include "Vulkan/Core/VkApplication.h"
+#include "vulkan/Core/VkApplication.h"
 using namespace std;
 
 int main()
