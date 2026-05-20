@@ -32,6 +32,14 @@ if (NOT GLSLC_EXECUTABLE)
   message(FATAL_ERROR "glslc not found. Install the Vulkan SDK or shaderc and ensure glslc is on PATH.")
 endif()
 
+find_program(SLANGC_EXECUTABLE slangc
+  HINTS ENV SLANG_ROOT
+  PATH_SUFFIXES Bin bin
+)
+
+if (NOT SLANGC_EXECUTABLE)
+  message(FATAL_ERROR "slangc not found. Install Slang and ensure slangc is on PATH or SLANG_ROOT is set.")
+endif()
 find_path(TINYGLTF_INCLUDE_DIRS "tiny_gltf.h")
 if (NOT TINYGLTF_INCLUDE_DIRS)
   message(FATAL_ERROR "tiny_gltf.h not found. Install tinygltf or set TINYGLTF_INCLUDE_DIRS.")
@@ -108,17 +116,46 @@ function(add_shaders TARGET_NAME)
   # Create a target that builds all shader products and make the main target depend on it
   add_custom_target(${TARGET_NAME}_shaders ALL DEPENDS ${SHADER_PRODUCTS})
   add_dependencies(${TARGET_NAME} ${TARGET_NAME}_shaders)
+endfunction()
 
+function(add_slang_fragment_shaders TARGET_NAME)
+  set(SHADER_SOURCE_FILES ${ARGN})
+  list(LENGTH SHADER_SOURCE_FILES FILE_COUNT)
+  if(FILE_COUNT EQUAL 0)
+    message(FATAL_ERROR "Cannot create a Slang shaders target without any source files")
+  endif()
 
+  set(SHADER_PRODUCTS)
+  foreach(SHADER_SOURCE IN LISTS SHADER_SOURCE_FILES)
+    get_filename_component(SHADER_BASE "${SHADER_SOURCE}" NAME_WE)
+
+    # Output name will be <build-dir>/<basename>.frag.spv -> brdf.frag.spv
+    set(OUT "${CMAKE_CURRENT_BINARY_DIR}/${SHADER_BASE}.frag.spv")
+    add_custom_command(
+      OUTPUT "${OUT}"
+      COMMAND "${SLANGC_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/${SHADER_SOURCE}"
+        -target spirv -profile spirv_1_5 -entry main -stage fragment -o "${OUT}"
+      DEPENDS "${CMAKE_SOURCE_DIR}/${SHADER_SOURCE}"
+      COMMENT "Compiling Slang shader ${SHADER_SOURCE} -> ${OUT}"
+      VERBATIM
+    )
+    list(APPEND SHADER_PRODUCTS "${OUT}")
+  endforeach()
+
+  add_custom_target(${TARGET_NAME}_slang_shaders ALL DEPENDS ${SHADER_PRODUCTS})
+  add_dependencies(${TARGET_NAME} ${TARGET_NAME}_slang_shaders)
 endfunction()
 
 # Compile all shaders
 add_shaders(MukkiGamesEngine
     MukkiGamesEngine/Shaders/shader.vert
-    MukkiGamesEngine/Shaders/shader.frag
     MukkiGamesEngine/Shaders/compute.comp
     MukkiGamesEngine/Shaders/skybox.vert
     MukkiGamesEngine/Shaders/skybox.frag
+)
+
+add_slang_fragment_shaders(MukkiGamesEngine
+    MukkiGamesEngine/Shaders/brdf.slang
 )
 
 # TODO: Add tests and install targets if needed.

@@ -73,7 +73,7 @@ static fs::path locateCompiledShaders()
 
         // Ensure the directory actually contains the required compiled SPIR-V
         fs::path vert = c / "shader.vert.spv";
-        fs::path frag = c / "shader.frag.spv";
+        fs::path frag = c / "brdf.frag.spv";
         if (fs::exists(vert, ec) && !ec && fs::exists(frag, ec) && !ec) {
             return fs::canonical(c, ec);
         }
