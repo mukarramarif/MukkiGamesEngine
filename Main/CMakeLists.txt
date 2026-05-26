@@ -63,11 +63,11 @@ function(add_shaders TARGET_NAME)
     set(SHADER_ARGS "${CMAKE_SOURCE_DIR}/${SHADER_SOURCE}" -o "${OUT}")
 
     if(SHADER_NAME MATCHES "\\.rgen$")
-      list(APPEND SHADER_ARGS -fshader-stage=rgen --target-env=vulkan1.2 --target-spv=spv1.4)
+      list(APPEND SHADER_ARGS -fshader-stage=rgen --target-env=vulkan1.4 --target-spv=spv1.4)
     elseif(SHADER_NAME MATCHES "\\.rmiss$")
-      list(APPEND SHADER_ARGS -fshader-stage=rmiss --target-env=vulkan1.2 --target-spv=spv1.4)
+      list(APPEND SHADER_ARGS -fshader-stage=rmiss --target-env=vulkan1.4 --target-spv=spv1.4)
     elseif(SHADER_NAME MATCHES "\\.rchit$")
-      list(APPEND SHADER_ARGS -fshader-stage=rchit --target-env=vulkan1.2 --target-spv=spv1.4)
+      list(APPEND SHADER_ARGS -fshader-stage=rchit --target-env=vulkan1.4 --target-spv=spv1.4)
     endif()
 
     add_custom_command(

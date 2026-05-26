@@ -50,7 +50,7 @@ VulkanApplication::VulkanApplication()
 
 void VulkanApplication::createRayTracingUniformBuffer()
 {
-	VkDeviceSize bufferSize = sizeof(glm::mat4) * 2 + sizeof(glm::vec4);
+    VkDeviceSize bufferSize = sizeof(glm::mat4) * 2 + sizeof(glm::vec4) + sizeof(GPULight) * MAX_LIGHTS + sizeof(glm::vec4);
 	bufferManager->createBuffer(
 		bufferSize,
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -79,12 +79,27 @@ void VulkanApplication::updateRayTracingUniformBuffer()
 		glm::mat4 invView;
 		glm::mat4 invProj;
 		glm::vec4 cameraPos;
+      GPULight lights[MAX_LIGHTS];
+		glm::vec4 lightParams;
 	};
 
 	RayTracingCameraUBO ubo{};
 	ubo.invView = invView;
 	ubo.invProj = invProj;
 	ubo.cameraPos = camPos;
+	ubo.lightParams = glm::vec4(0.0f);
+	ubo.lightParams.y = ambientStrength;
+	ubo.lightParams.z = static_cast<float>(lights.size());
+	ubo.lightParams.w = 0.0f;
+
+	int lightCount = 0;
+	for (size_t i = 0; i < lights.size() && lightCount < MAX_LIGHTS; ++i) {
+		if (lights[i].enabled) {
+			ubo.lights[lightCount] = lights[i].toGPU();
+			++lightCount;
+		}
+	}
+	ubo.lightParams.x = static_cast<float>(lightCount);
 
 	memcpy(rayTracingUniformBufferMapped, &ubo, sizeof(ubo));
 }
@@ -482,7 +497,7 @@ void VulkanApplication::drawFrame()
 	}
 	else if (currentRenderMode == RenderMode::RAYTRACING) {
 		recordRayTracingCommandBuffer(commandBuffer, imageIndex);
-       swapChainImageLayouts[imageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+		swapChainImageLayouts[imageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 	}
 	else {
 		if (modelLoaded && !modelDescriptorSets.empty()) {
@@ -1069,7 +1084,7 @@ void VulkanApplication::initComputePipeline() {
 	computePipeline->createDescriptorSetLayout(device);
 	computePipeline->createDescriptorPool(device, MAX_FRAMES_IN_FLIGHT);
 	computePipeline->createDescriptorSets(device, computeOutputImageView);
-	computePipeline->createComputePipeline(device, "compute.comp.spv");
+	computePipeline->createComputePipeline(device, "Shaders/compute.comp.spv");
 
 }
 
@@ -1410,7 +1425,7 @@ void VulkanApplication::recordRayTracingCommandBuffer(VkCommandBuffer commandBuf
 
 	VkImageMemoryBarrier swapBarrier{};
 	swapBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  swapBarrier.oldLayout = swapChainImageLayouts[imageIndex];
+	swapBarrier.oldLayout = swapChainImageLayouts[imageIndex];
 	swapBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	swapBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 	swapBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -1748,7 +1763,7 @@ void VulkanApplication::createRayTracingDescriptorSet()
 	VkDescriptorBufferInfo cameraBufferInfo{};
 	cameraBufferInfo.buffer = rayTracingUniformBuffer;
 	cameraBufferInfo.offset = 0;
-	cameraBufferInfo.range = sizeof(glm::mat4) * 2 + sizeof(glm::vec4);
+	cameraBufferInfo.range = sizeof(glm::mat4) * 2 + sizeof(glm::vec4) + sizeof(GPULight) * MAX_LIGHTS + sizeof(glm::vec4);
 
 	VkWriteDescriptorSet imageWrite{};
 	imageWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1826,8 +1841,8 @@ void VulkanApplication::createGraphicsPipeline()
 	VulkanPipeline::enableAlphaBlending(pipelineConfig);
 	graphicsPipeline = new VulkanPipeline(
 		device,
-		"shader.vert.spv",
-		"shader.frag.spv",
+		"Shaders/shader.vert.spv",
+		"Shaders/shader.frag.spv",
 		pipelineConfig
 	);
 	PipelineConfigInfo additiveConfig{};
@@ -1837,8 +1852,8 @@ void VulkanApplication::createGraphicsPipeline()
 	VulkanPipeline::enableAdditiveBlending(additiveConfig);
 	additivePipeline = new VulkanPipeline(
 		device,
-		"shader.vert.spv",
-		"shader.frag.spv",
+		"Shaders/shader.vert.spv",
+		"Shaders/shader.frag.spv",
 		additiveConfig
 	);
 }

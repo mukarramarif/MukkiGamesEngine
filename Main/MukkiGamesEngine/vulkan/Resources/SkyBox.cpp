@@ -112,7 +112,7 @@ void SkyBox::createPipeline(VkRenderPass renderPass)
 	configInfo.pipelineLayout = pipelineLayout;
 	configInfo.renderPass = renderPass;
 
-	skyboxPipeline = new VulkanPipeline(device, "skybox.vert.spv", "skybox.frag.spv", configInfo);
+	skyboxPipeline = new VulkanPipeline(device, "Shaders/skybox.vert.spv", "Shaders/skybox.frag.spv", configInfo);
 }
 
 void SkyBox::createDescriptorPool()
