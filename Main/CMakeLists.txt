@@ -1,8 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.16)
-
-if (CMAKE_VERSION VERSION_LESS 3.31.4)
-  message(FATAL_ERROR "MukkiGamesEngine requires CMake 3.31.4 or newer.")
-endif()
+cmake_minimum_required(VERSION 3.31.4)
 
 if (NOT CMAKE_GENERATOR STREQUAL "Ninja")
   message(FATAL_ERROR "MukkiGamesEngine requires the Ninja generator. Re-run CMake with -G Ninja.")
