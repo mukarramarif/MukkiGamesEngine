@@ -68,3 +68,6 @@ https://github.com/user-attachments/assets/0c19a22d-971b-4ff4-b9d8-ecf9d9b7e023
 
 https://github.com/user-attachments/assets/ff565553-97be-4b4f-b2da-1129d42001f7
 
+## BRDF Basic Shine
+<img width="1558" height="1348" alt="image" src="https://github.com/user-attachments/assets/32bfceeb-bcfc-42e4-bcdb-bc2d0bddc939" />
+
