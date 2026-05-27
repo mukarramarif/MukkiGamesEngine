@@ -236,7 +236,12 @@ void TextureManager::createDebugTextureImage(VkImage& textureImage, VkDeviceMemo
 	const uint32_t texWidth = 2;
 	const uint32_t texHeight = 2;
 	VkDeviceSize imageSize = static_cast<VkDeviceSize>(texWidth * texHeight) * 4;
-	unsigned char pixels[4] = { 4,60,255,255 };
+	unsigned char pixels[16] = {
+		4,60,255,255,
+		4,60,255,255,
+		4,60,255,255,
+		4,60,255,255
+	};
 	VkBuffer stagingBuffer;
 	VkDeviceMemory stagingBufferMemory;
 	bufferManager->createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,

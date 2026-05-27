@@ -1365,7 +1365,7 @@ void VulkanApplication::createGraphicsPipeline()
 	graphicsPipeline = new VulkanPipeline(
 		device,
 		"shader.vert.spv",
-		"shader.frag.spv",
+		"brdf.frag.spv",
 		pipelineConfig
 	);
 	PipelineConfigInfo additiveConfig{};
@@ -1376,7 +1376,7 @@ void VulkanApplication::createGraphicsPipeline()
 	additivePipeline = new VulkanPipeline(
 		device,
 		"shader.vert.spv",
-		"shader.frag.spv",
+		"brdf.frag.spv",
 		additiveConfig
 	);
 }
