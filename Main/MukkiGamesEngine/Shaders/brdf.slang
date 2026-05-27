@@ -1,6 +1,6 @@
 // Slang BRDF Shader - Cook-Torrance PBR with GGX microfacet model
 // Matches the existing GLSL interface for drop-in replacement
-
+// Inspo from Sasha Williams Slang for PBR Example: https://github.com/SaschaWillems/Vulkan/blob/master/shaders/slang/pbrbasic/pbr.slang
 struct GPULight {
     float4 position;
     float4 color;
