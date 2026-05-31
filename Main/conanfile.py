@@ -5,7 +5,7 @@ class MukkiGamesEngine(ConanFile):
     settings = "os", "arch", "compiler", "build_type"
     requires = [
         "glfw/3.4",
-        "imguizmo/1.83",
+        "imguizmo/cci.20231114",
         "glm/1.0.1",
         "nlohmann_json/3.12.0",
         "tinygltf/2.8.23",

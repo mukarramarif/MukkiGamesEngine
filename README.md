@@ -1,5 +1,47 @@
 # MukkiGamesEngine
 
+## Build (Windows)
+### Prerequisites
+- **CMake 3.31.4+** (3.16 minimum) and **Ninja**
+- **Conan 2.x**
+- **Vulkan SDK** (LunarG) for headers/loader + `glslc`
+- **Slang** compiler for `slangc` (or `SLANG_ROOT` set)
+- **Visual Studio** with MSVC toolchain + Windows SDK
+
+### Configure & build (Release)
+> Run these commands from the **x64 Native Tools Command Prompt for VS** so `cl.exe` is available.
+
+```sh
+cd Main
+
+conan profile detect --force
+
+# Recommended: use Conan preset with Ninja
+conan install . -of build --build=missing -s build_type=Release -s compiler.cppstd=20 -c tools.cmake.cmaketoolchain:generator=Ninja
+cmake --preset conan-release
+cmake --build --preset conan-release
+```
+
+If you prefer not to use presets, configure directly:
+
+```sh
+cmake -S . -B build -G Ninja "-DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake" -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+### Debug build
+Use a separate build folder for Debug to avoid mixing configs:
+
+```sh
+cd Main
+
+conan install . -of build-debug --build=missing -s build_type=Debug -s compiler.cppstd=20 -c tools.cmake.cmaketoolchain:generator=Ninja
+cmake --preset conan-debug
+cmake --build --preset conan-debug
+```
+
+
+
 ## Current Progress
 - [x] abstract code from tracer rounds for basic instance and device setup
 - [x] setup Vulkan instance and device
