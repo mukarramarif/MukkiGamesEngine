@@ -1,0 +1,202 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
+layout(set = 0, binding = 1, rgba8) uniform image2D outputImage;
+const int MAX_LIGHTS = 4;
+const int LIGHT_TYPE_DIRECTIONAL = 0;
+const int LIGHT_TYPE_POINT = 1;
+const int LIGHT_TYPE_SPOT = 2;
+
+struct Light
+{
+    vec4 position;
+    vec4 color;
+    vec4 direction;
+    vec4 attenuation;
+};
+
+layout(set = 0, binding = 2) uniform RayTracingScene {
+    mat4 invView;
+    mat4 invProj;
+    vec4 cameraPos;
+    Light lights[MAX_LIGHTS];
+    vec4 lightParams;
+} sceneData;
+
+struct Payload
+{
+    vec3 color;
+    vec3 position;
+    vec3 normal;
+    int hit;
+    int shadowRay;
+};
+
+layout(location = 0) rayPayloadEXT Payload payload;
+
+const float kPi = 3.14159265359;
+
+uint pcgHash(uint v)
+{
+    v = v * 747796405u + 2891336453u;
+    v = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;
+    v = (v >> 22u) ^ v;
+    return v;
+}
+
+float rand(inout uint state)
+{
+    state = pcgHash(state);
+    return float(state) / 4294967296.0;
+}
+
+vec3 randomInHemisphere(vec3 normal, inout uint state)
+{
+    float r1 = rand(state);
+    float r2 = rand(state);
+    float phi = 2.0 * kPi * r1;
+    float cosTheta = sqrt(1.0 - r2);
+    float sinTheta = sqrt(r2);
+
+    vec3 tangent = normalize(abs(normal.y) < 0.999 ? cross(normal, vec3(0.0, 1.0, 0.0)) : cross(normal, vec3(1.0, 0.0, 0.0)));
+    vec3 bitangent = cross(normal, tangent);
+    return normalize(tangent * cos(phi) * sinTheta + bitangent * sin(phi) * sinTheta + normal * cosTheta);
+}
+
+void main()
+{
+    const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
+    const vec2 uv = pixelCenter / vec2(gl_LaunchSizeEXT.xy);
+
+    vec2 ndc = uv * 2.0 - 1.0;
+    vec4 clip = vec4(ndc, 1.0, 1.0);
+    vec4 view = sceneData.invProj * clip;
+    view /= view.w;
+    vec3 origin = sceneData.cameraPos.xyz;
+    vec3 direction = normalize((sceneData.invView * vec4(view.xyz, 0.0)).xyz);
+
+    vec3 result = vec3(0.0);
+    vec3 throughput = vec3(1.0);
+    const int maxBounces = 3;
+    uint rngState = gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * 4096u + 1u;
+
+    for (int bounce = 0; bounce < maxBounces; ++bounce)
+    {
+        payload.hit = 0;
+        payload.shadowRay = 0;
+        traceRayEXT(
+            topLevelAS,
+            gl_RayFlagsOpaqueEXT,
+            0xFF,
+            0,
+            0,
+            0,
+            origin,
+            0.001,
+            direction,
+            10000.0,
+            0
+        );
+
+        if (payload.hit == 0)
+        {
+            result += throughput * payload.color;
+            break;
+        }
+
+        vec3 albedo = payload.color;
+        vec3 hitPos = payload.position;
+        vec3 normal = normalize(payload.normal);
+        vec3 viewDir = normalize(sceneData.cameraPos.xyz - hitPos);
+        int lightCount = int(sceneData.lightParams.x + 0.5);
+        float ambientStrength = sceneData.lightParams.y;
+
+        vec3 lighting = vec3(0.0);
+        for (int i = 0; i < lightCount && i < MAX_LIGHTS; ++i)
+        {
+            Light light = sceneData.lights[i];
+            int lightType = int(light.attenuation.w + 0.5);
+            vec3 lightDir = vec3(0.0);
+            float attenuation = 1.0;
+            float maxDistance = 10000.0;
+            float intensity = 1.0;
+
+            if (lightType == LIGHT_TYPE_DIRECTIONAL)
+            {
+                lightDir = normalize(-light.direction.xyz);
+            }
+            else
+            {
+                vec3 toLight = light.position.xyz - hitPos;
+                float distance = length(toLight);
+                if (distance > 0.0)
+                {
+                    lightDir = toLight / distance;
+                    maxDistance = distance;
+                }
+                float constantAtt = light.attenuation.x;
+                float linearAtt = light.attenuation.y;
+                float quadraticAtt = light.attenuation.z;
+                attenuation = 1.0 / (constantAtt + linearAtt * distance + quadraticAtt * distance * distance);
+
+                if (lightType == LIGHT_TYPE_SPOT)
+                {
+                    float theta = dot(lightDir, normalize(-light.direction.xyz));
+                    float cutoff = light.direction.w;
+                    float outerCutoff = cutoff - 0.1;
+                    float epsilon = cutoff - outerCutoff;
+                    intensity = clamp((theta - outerCutoff) / epsilon, 0.0, 1.0);
+                }
+            }
+
+            if (intensity <= 0.0)
+            {
+                continue;
+            }
+
+            payload.hit = 0;
+            payload.shadowRay = 1;
+            traceRayEXT(
+                topLevelAS,
+                gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT,
+                0xFF,
+                0,
+                0,
+                0,
+                hitPos + normal * 0.01,
+                0.001,
+                lightDir,
+                maxDistance,
+                0
+            );
+
+            float shadow = payload.hit == 1 ? 0.0 : 1.0;
+            if (shadow <= 0.0)
+            {
+                continue;
+            }
+
+            float nDotL = max(dot(normal, lightDir), 0.0);
+            if (nDotL <= 0.0)
+            {
+                continue;
+            }
+
+            vec3 diffuse = nDotL * light.color.rgb * light.color.a;
+            vec3 halfwayDir = normalize(lightDir + viewDir);
+            float spec = pow(max(dot(normal, halfwayDir), 0.0), 32.0);
+            vec3 specular = spec * light.color.rgb * light.color.a * 0.5;
+            lighting += (diffuse + specular) * attenuation * intensity * shadow * albedo;
+        }
+
+        vec3 ambient = ambientStrength * albedo;
+        result += throughput * (ambient + lighting);
+
+        throughput *= albedo;
+        origin = hitPos + normal * 0.01;
+        direction = randomInHemisphere(normal, rngState);
+    }
+
+    imageStore(outputImage, ivec2(gl_LaunchIDEXT.xy), vec4(result, 1.0));
+}

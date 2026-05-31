@@ -586,7 +586,7 @@ void ObjectLoader::createModelBuffers(Model& model)
 	vkUnmapMemory(device->getDevice(), stagingBufferMemory);
 	
 	device->createBuffer(vertexBufferSize,
-		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, model.vertexBuffer, model.vertexBufferMemory);
 	
 	device->copyBuffer(stagingBuffer, model.vertexBuffer, vertexBufferSize);
@@ -605,7 +605,7 @@ void ObjectLoader::createModelBuffers(Model& model)
 	vkUnmapMemory(device->getDevice(), stagingBufferMemory);
 	
 	device->createBuffer(indexBufferSize,
-		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, model.indexBuffer, model.indexBufferMemory);
 	
 	device->copyBuffer(stagingBuffer, model.indexBuffer, indexBufferSize);

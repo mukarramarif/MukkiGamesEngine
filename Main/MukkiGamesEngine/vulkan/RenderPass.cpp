@@ -26,11 +26,11 @@ void VulkanRenderPass::createRenderPass(VkFormat swapChainImageFormat)
     VkAttachmentDescription colorAttachment{};
     colorAttachment.format = swapChainImageFormat;
     colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;  // Clear at start
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;  // Preserve contents for UI overlays
     colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE; // Store result
     colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;  // Don't care about initial layout
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;  // Swapchain image is transitioned before UI pass
     colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;  // Ready for presentation
 
     // Depth attachment

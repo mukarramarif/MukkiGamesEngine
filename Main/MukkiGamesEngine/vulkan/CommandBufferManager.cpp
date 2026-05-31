@@ -64,6 +64,8 @@ void CommandBufferManager::recordCommandBuffer(
 	VkPipelineLayout pipelineLayout,
 	VkBuffer vertexBuffer,
 	VkBuffer indexBuffer,
+ VkImage swapChainImage,
+ VkImageLayout swapChainOldLayout,
 	const std::vector<VkDescriptorSet>& descriptorSets,
 	uint32_t currentFrame,
 	uint32_t indexCount,
@@ -86,6 +88,33 @@ void CommandBufferManager::recordCommandBuffer(
 	if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
 		throw std::runtime_error("failed to begin recording command buffer!");
 	}
+
+	VkImageMemoryBarrier swapBarrier{};
+	swapBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    swapBarrier.oldLayout = swapChainOldLayout;
+	swapBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	swapBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	swapBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	swapBarrier.image = swapChainImage;
+	swapBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	swapBarrier.subresourceRange.baseMipLevel = 0;
+	swapBarrier.subresourceRange.levelCount = 1;
+	swapBarrier.subresourceRange.baseArrayLayer = 0;
+	swapBarrier.subresourceRange.layerCount = 1;
+	swapBarrier.srcAccessMask = 0;
+	swapBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &swapBarrier
+	);
+
+ 
 
 	VkRenderPassBeginInfo renderPassInfo{};
 	renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -166,6 +195,8 @@ void CommandBufferManager::recordModelCommandBuffer(
 	VkPipelineLayout pipelineLayout,
 	const Model& model,
 	SkyBox* skybox,
+    VkImage swapChainImage,
+    VkImageLayout swapChainOldLayout,
 	const std::vector<std::vector<VkDescriptorSet>>& materialDescriptorSets,
 	uint32_t currentFrame,
 	UIManager& uiManager)
@@ -176,6 +207,31 @@ void CommandBufferManager::recordModelCommandBuffer(
 	if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
 		throw std::runtime_error("failed to begin recording command buffer!");
 	}
+
+	VkImageMemoryBarrier swapBarrier{};
+	swapBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    swapBarrier.oldLayout = swapChainOldLayout;
+	swapBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	swapBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	swapBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	swapBarrier.image = swapChainImage;
+	swapBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	swapBarrier.subresourceRange.baseMipLevel = 0;
+	swapBarrier.subresourceRange.levelCount = 1;
+	swapBarrier.subresourceRange.baseArrayLayer = 0;
+	swapBarrier.subresourceRange.layerCount = 1;
+	swapBarrier.srcAccessMask = 0;
+	swapBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &swapBarrier
+	);
 
 	VkRenderPassBeginInfo renderPassInfo{};
 	renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;

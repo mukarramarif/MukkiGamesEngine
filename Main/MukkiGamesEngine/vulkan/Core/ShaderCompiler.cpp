@@ -41,11 +41,11 @@ static fs::path locateCompiledShaders()
     // Candidate locations to search for compiled SPIR-V files at runtime.
     std::vector<fs::path> candidates;
 
-    // 1) Working directory /shaders
-    candidates.push_back(fs::current_path() / "shaders");
+    // 1) Working directory /Shaders
+    candidates.push_back(fs::current_path() / "Shaders");
 
-    // 2) Executable dir /shaders
-    candidates.push_back(getExecutableDir() / "shaders");
+    // 2) Executable dir /Shaders
+    candidates.push_back(getExecutableDir() / "Shaders");
 
     // 3) Parent directories from executable (up to 5 levels) looking for build tree shaders
     fs::path exeDir = getExecutableDir();
