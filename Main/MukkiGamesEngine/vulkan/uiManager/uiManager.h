@@ -3,8 +3,8 @@
 #include <imgui.h>
 #include "ImGuizmo.h"
 #include <glm/glm.hpp>
-#include <imgui_impl_vulkan.h>
-#include <imgui_impl_glfw.h>
+#include <bindings/imgui_impl_vulkan.h>
+#include <bindings/imgui_impl_glfw.h>
 #include "../Core/VkDevice.h"
 #include "../Core/EngineWindow.h"
 #include "../objects/lights.h"
@@ -33,13 +33,13 @@ class UIManager {
 public:
 	UIManager();
 	~UIManager();
-	
+
 	void init(const UIRenderData& renderData, EngineWindow* window);
 	void newFrame();
 	void render(VkCommandBuffer commandBuffer);
 	void cleanup();
-	
-	
+
+
 	void renderDebugWindow(float fps, float deltaTime);
 	void renderCameraInfo(const glm::vec3& position, const glm::vec3& front);
 	void renderModelTransformWindow(ModelTransform& transform, float deltaTime);

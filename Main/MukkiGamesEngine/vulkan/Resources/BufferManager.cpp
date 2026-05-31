@@ -1,6 +1,7 @@
 #include "BufferManager.h"
 #include "../CommandBufferManager.h"
 #include <stdexcept>
+#include <cstring>
 
 BufferManager::BufferManager() : device(nullptr), commandBufferManager(nullptr) {}
 BufferManager::~BufferManager() {

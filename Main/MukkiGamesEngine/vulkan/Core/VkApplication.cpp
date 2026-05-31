@@ -1841,8 +1841,8 @@ void VulkanApplication::createGraphicsPipeline()
 	VulkanPipeline::enableAlphaBlending(pipelineConfig);
 	graphicsPipeline = new VulkanPipeline(
 		device,
-		"Shaders/shader.vert.spv",
-		"Shaders/shader.frag.spv",
+		"shader.vert.spv",
+		"brdf.frag.spv",
 		pipelineConfig
 	);
 	PipelineConfigInfo additiveConfig{};
@@ -1852,8 +1852,8 @@ void VulkanApplication::createGraphicsPipeline()
 	VulkanPipeline::enableAdditiveBlending(additiveConfig);
 	additivePipeline = new VulkanPipeline(
 		device,
-		"Shaders/shader.vert.spv",
-		"Shaders/shader.frag.spv",
+		"shader.vert.spv",
+		"brdf.frag.spv",
 		additiveConfig
 	);
 }

@@ -50,8 +50,8 @@ static fs::path locateCompiledShaders()
     // 3) Parent directories from executable (up to 5 levels) looking for build tree shaders
     fs::path exeDir = getExecutableDir();
     fs::path p = exeDir;
-    for (int i = 0; i < 6; ++i) {       
-        candidates.push_back(p / "Shaders");
+    for (int i = 0; i < 6; ++i) {
+        candidates.push_back(p / "shaders");
         if (p.has_parent_path()) p = p.parent_path();
         else break;
     }
@@ -73,7 +73,7 @@ static fs::path locateCompiledShaders()
 
         // Ensure the directory actually contains the required compiled SPIR-V
         fs::path vert = c / "shader.vert.spv";
-        fs::path frag = c / "shader.frag.spv";
+        fs::path frag = c / "brdf.frag.spv";
         if (fs::exists(vert, ec) && !ec && fs::exists(frag, ec) && !ec) {
             return fs::canonical(c, ec);
         }

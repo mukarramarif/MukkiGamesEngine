@@ -1,4 +1,5 @@
 #include "SkyBox.h"
+#include <cstring>
 #include <array>
 #include <stdexcept>
 
@@ -187,7 +188,7 @@ void SkyBox::createDescriptorSets()
 void SkyBox::updateUniformBuffer(uint32_t currentFrame, const glm::mat4& view)
 {
 	SkyboxUBO ubo{};
-	
+
 	ubo.VP =  view;
 
 	memcpy(uniformBuffersMapped[currentFrame], &ubo, sizeof(ubo));
