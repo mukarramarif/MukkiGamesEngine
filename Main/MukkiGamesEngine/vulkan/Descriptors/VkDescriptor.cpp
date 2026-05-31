@@ -1,4 +1,5 @@
 #include "VkDescriptor.h"
+#include "../objects/UBO.h"
 #include <stdexcept>
 #include <array>
 
@@ -45,7 +46,12 @@ void VkDescriptorBoss::createDescriptorSets(VkDescriptorSetLayout descriptorSetL
 	}
 }
 
-void VkDescriptorBoss::updateDescriptorSets(const std::vector<VkDescriptorSet>& descriptorSets, const std::vector<VkBuffer>& uniformBuffers, VkImageView textureImageView, VkSampler textureSampler)
+void VkDescriptorBoss::updateDescriptorSets(
+	const std::vector<VkDescriptorSet>& descriptorSets,
+	const std::vector<VkBuffer>& uniformBuffers,
+	const std::vector<VkBuffer>& materialBuffers,
+	VkImageView textureImageView,
+	VkSampler textureSampler)
 {
 	for (size_t i = 0; i < descriptorSets.size(); i++) {
 		std::vector<VkWriteDescriptorSet> descriptorWrites;
@@ -53,7 +59,7 @@ void VkDescriptorBoss::updateDescriptorSets(const std::vector<VkDescriptorSet>& 
 		VkDescriptorBufferInfo bufferInfo{};
 		bufferInfo.buffer = uniformBuffers[i];
 		bufferInfo.offset = 0;
-		bufferInfo.range = sizeof(uniformBufferObject);
+		bufferInfo.range = sizeof(UniformBufferObject);
 
 		VkWriteDescriptorSet uboWrite{};
 		uboWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -64,6 +70,22 @@ void VkDescriptorBoss::updateDescriptorSets(const std::vector<VkDescriptorSet>& 
 		uboWrite.descriptorCount = 1;
 		uboWrite.pBufferInfo = &bufferInfo;
 		descriptorWrites.push_back(uboWrite);
+		// Material buffer (binding = 2)
+		VkDescriptorBufferInfo materialInfo{};
+		materialInfo.buffer = materialBuffers[i];
+		materialInfo.offset = 0;
+		materialInfo.range = sizeof(MaterialUBO);
+
+		VkWriteDescriptorSet materialWrite{};
+		materialWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		materialWrite.dstSet = descriptorSets[i];
+		materialWrite.dstBinding = 2;
+		materialWrite.dstArrayElement = 0;
+		materialWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		materialWrite.descriptorCount = 1;
+		materialWrite.pBufferInfo = &materialInfo;
+		descriptorWrites.push_back(materialWrite);
+
 		VkDescriptorImageInfo imageInfo{};
 		// Update texture sampler (binding = 1)
 		if (textureImageView != VK_NULL_HANDLE && textureSampler != VK_NULL_HANDLE) {

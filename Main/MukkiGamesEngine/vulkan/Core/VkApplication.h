@@ -102,6 +102,14 @@ private:
 	std::vector<VkDeviceMemory> uniformBuffersMemory;
 	std::vector<void*> uniformBuffersMapped;
 
+	std::vector<VkBuffer> defaultMaterialUniformBuffers;
+	std::vector<VkDeviceMemory> defaultMaterialUniformBuffersMemory;
+	std::vector<void*> defaultMaterialUniformBuffersMapped;
+
+	std::vector<std::vector<VkBuffer>> materialUniformBuffers;
+	std::vector<std::vector<VkDeviceMemory>> materialUniformBuffersMemory;
+	std::vector<std::vector<void*>> materialUniformBuffersMapped;
+
 	// Camera
 	Camera* camera = nullptr;
 
@@ -121,6 +129,9 @@ private:
 	void createVertexBuffer();
 	void createIndexBuffer();
 	void createUniformBuffers();
+	void createDefaultMaterialUniformBuffers();
+	void createMaterialUniformBuffers();
+	void cleanupMaterialUniformBuffers();
     void createRayTracingUniformBuffer();
 	void updateUniformBuffer(uint32_t currentImage);
   void updateRayTracingUniformBuffer();

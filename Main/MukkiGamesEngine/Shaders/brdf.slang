@@ -17,12 +17,18 @@ struct UniformBufferObject {
     GPULight lights[4];
     int numLights;
     float ambientStrength;
-    float padding[2];
+    float2 padding;
+};
+
+struct MaterialUBO {
+    float metallicFactor;
+    float roughnessFactor;
+    float2 padding;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<UniformBufferObject> ubo;
-
 [[vk::binding(1, 0)]] Sampler2D<float4> texSampler;
+[[vk::binding(2, 0)]] ConstantBuffer<MaterialUBO> material;
 
 struct PSInput {
     [[vk::location(0)]] float3 fragColor : COLOR;
@@ -117,8 +123,9 @@ PSOutput main(PSInput input) {
     float3 viewDir = normalize(ubo.viewPos.xyz - input.fragWorldPos);
 
     // Material properties from UBO or constants
-    float metallic = 0.5;
-    float roughness = 0.3;
+    float metallic = material.metallicFactor;
+    float roughness = material.roughnessFactor;
+
 
     float3 ambient = ubo.ambientStrength * albedo;
     float3 lighting = float3(0.0, 0.0, 0.0);
