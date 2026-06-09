@@ -118,7 +118,9 @@ void RayTracingAS::buildBLASForModel(const Model& model)
     blases.clear();
     blases.resize(model.meshes.size());
 
-    VkDeviceAddress vertexAddress = getBufferDeviceAddress(model.vertexBuffer);
+    VkDeviceAddress vertexAddress = getBufferDeviceAddress(model.rtVertexBuffer != VK_NULL_HANDLE
+		? model.rtVertexBuffer
+		: model.vertexBuffer);
     VkDeviceAddress indexAddress = getBufferDeviceAddress(model.indexBuffer);
 
     for (size_t meshIndex = 0; meshIndex < model.meshes.size(); ++meshIndex) {
@@ -136,9 +138,13 @@ void RayTracingAS::buildBLASForModel(const Model& model)
             VkAccelerationStructureGeometryTrianglesDataKHR triangles{};
             triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
             triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-            triangles.vertexData.deviceAddress = vertexAddress + static_cast<VkDeviceAddress>(primitive.firstVertex) * sizeof(Vertex);
-            triangles.vertexStride = sizeof(Vertex);
-            triangles.maxVertex = primitive.vertexCount;
+            triangles.vertexData.deviceAddress = vertexAddress;
+            triangles.vertexStride = model.rtVertexBuffer != VK_NULL_HANDLE
+				? sizeof(RayTracingVertex)
+				: sizeof(Vertex);
+            triangles.maxVertex = primitive.vertexCount > 0
+                ? (primitive.firstVertex + primitive.vertexCount - 1)
+                : primitive.firstVertex;
             triangles.indexType = VK_INDEX_TYPE_UINT32;
             triangles.indexData.deviceAddress = indexAddress + static_cast<VkDeviceAddress>(primitive.firstIndex) * sizeof(uint32_t);
             triangles.transformData.deviceAddress = 0;
@@ -264,7 +270,7 @@ void RayTracingAS::buildTLASFromModel(const Model& model)
 
         VkAccelerationStructureInstanceKHR instance{};
         instance.transform = transform;
-        instance.instanceCustomIndex = 0;
+		instance.instanceCustomIndex = static_cast<uint32_t>(node.meshIndex);
         instance.mask = 0xFF;
         instance.instanceShaderBindingTableRecordOffset = 0;
         instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;

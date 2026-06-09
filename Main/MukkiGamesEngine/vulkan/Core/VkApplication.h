@@ -85,6 +85,23 @@ private:
 	VkDeviceMemory rayTracingUniformBufferMemory = VK_NULL_HANDLE;
 	void* rayTracingUniformBufferMapped = nullptr;
 
+	struct RayTracingPrimitiveInfo {
+		uint32_t firstIndex;
+		uint32_t indexCount;
+		uint32_t pad0;
+		uint32_t pad1;
+	};
+	struct RayTracingMeshInfo {
+		uint32_t primitiveOffset;
+		uint32_t primitiveCount;
+		uint32_t pad0;
+		uint32_t pad1;
+	};
+	VkBuffer rayTracingPrimitiveBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory rayTracingPrimitiveBufferMemory = VK_NULL_HANDLE;
+	VkBuffer rayTracingMeshBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory rayTracingMeshBufferMemory = VK_NULL_HANDLE;
+
 	//Texture Handler and Buffer Manager
 	TextureManager* textureManager = nullptr;
 	BufferManager* bufferManager = nullptr;
@@ -142,6 +159,8 @@ private:
 	void initComputePipeline();
     void initRayTracingPipeline();
 	void createComputeOutputImage();
+	void createRayTracingGeometryBuffers();
+	void cleanupRayTracingGeometryBuffers();
 	void recordComputeCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
     void recordRayTracingCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 	void loadModel(const std::string& filepath);

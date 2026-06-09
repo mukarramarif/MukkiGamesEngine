@@ -24,6 +24,8 @@ layout(set = 0, binding = 2) uniform RayTracingScene {
     vec4 lightParams;
 } sceneData;
 
+layout(set = 0, binding = 7) uniform samplerCube cubemapSampler;
+
 struct Payload
 {
     vec3 color;
@@ -101,7 +103,8 @@ void main()
 
         if (payload.hit == 0)
         {
-            result += throughput * payload.color;
+            vec3 cubemapColor = texture(cubemapSampler, direction).rgb;
+            result += throughput * cubemapColor;
             break;
         }
 
@@ -193,9 +196,13 @@ void main()
         vec3 ambient = ambientStrength * albedo;
         result += throughput * (ambient + lighting);
 
-        throughput *= albedo;
+        float reflectivity = 0.9;
+        float roughness = 0.05;
+        vec3 reflectDir = normalize(reflect(direction, normal));
+        vec3 diffuseDir = randomInHemisphere(normal, rngState);
+        direction = normalize(mix(reflectDir, diffuseDir, roughness));
+        throughput *= mix(albedo, vec3(1.0), reflectivity);
         origin = hitPos + normal * 0.01;
-        direction = randomInHemisphere(normal, rngState);
     }
 
     imageStore(outputImage, ivec2(gl_LaunchIDEXT.xy), vec4(result, 1.0));

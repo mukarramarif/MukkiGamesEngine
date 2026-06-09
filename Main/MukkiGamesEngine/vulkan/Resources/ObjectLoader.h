@@ -14,6 +14,12 @@
 
 class TextureManager;
 class BufferManager;
+// Ray tracing vertex (std430-friendly layout)
+struct RayTracingVertex {
+	glm::vec4 position;
+	glm::vec4 normal;
+};
+
 // Material data for PBR rendering
 struct Material {
 	glm::vec4 baseColorFactor = glm::vec4(1.0f);
@@ -67,6 +73,7 @@ struct LoadedTexture {
 // Complete loaded model
 struct Model {
 	std::vector<Vertex> vertices;
+	std::vector<RayTracingVertex> rtVertices;
 	std::vector<uint32_t> indices;
 	std::vector<Mesh> meshes;
 	std::vector<Node> nodes;
@@ -81,6 +88,8 @@ struct Model {
 	VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
 	VkBuffer indexBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
+	VkBuffer rtVertexBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory rtVertexBufferMemory = VK_NULL_HANDLE;
 };
 
 class ObjectLoader {

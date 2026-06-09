@@ -436,19 +436,19 @@ void ObjectLoader::loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Me
 			colorComponentCount = (accessor.type == TINYGLTF_TYPE_VEC4) ? 4 : 3;
 		}
 
-		// Build vertices with world transform applied
+		// Build vertices with world transform applied (raster) and keep local for ray tracing
 		for (uint32_t v = 0; v < vertexCount; v++) {
 			Vertex vertex{};
+			RayTracingVertex rtVertex{};
 
-			// Position - apply world transform
-			glm::vec4 localPos = glm::vec4(
+			glm::vec3 localPos = glm::vec3(
 				positionBuffer[v * 3 + 0],
 				positionBuffer[v * 3 + 1],
-				positionBuffer[v * 3 + 2],
-				1.0f
+				positionBuffer[v * 3 + 2]
 			);
-			glm::vec4 worldPos = worldTransform * localPos;
+			glm::vec4 worldPos = worldTransform * glm::vec4(localPos, 1.0f);
 			vertex.pos = glm::vec3(worldPos);
+			rtVertex.position = glm::vec4(localPos, 1.0f);
 
 			// Vertex color - use actual vertex colors if available, otherwise white
 			// White ensures texture is displayed at full brightness
@@ -474,17 +474,21 @@ void ObjectLoader::loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Me
 			else {
 				vertex.texCoord = glm::vec2(0.0f);
 			}
+
+			glm::vec3 localNormal = glm::vec3(0.0f, 0.0f, 1.0f);
 			if (normalBuffer) {
-				vertex.normal = normalMatrix * glm::vec3(
+				localNormal = glm::vec3(
 					normalBuffer[v * 3 + 0],
 					normalBuffer[v * 3 + 1],
 					normalBuffer[v * 3 + 2]
 				);
 			}
-			else {
-				vertex.normal = glm::vec3(0.0f, 0.0f, 1.0f);
-			}
+
+			vertex.normal = normalMatrix * localNormal;
+			rtVertex.normal = glm::vec4(glm::normalize(localNormal), 0.0f);
+
 			model.vertices.push_back(vertex);
+			model.rtVertices.push_back(rtVertex);
 		}
 
 		// Load indices
@@ -589,6 +593,31 @@ void ObjectLoader::createModelBuffers(Model& model)
        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, model.vertexBuffer, model.vertexBufferMemory);
 
+	// Ray tracing vertex buffer (local positions/normals)
+	VkDeviceSize rtVertexBufferSize = sizeof(RayTracingVertex) * model.rtVertices.size();
+	if (rtVertexBufferSize > 0) {
+		VkBuffer rtStagingBuffer = VK_NULL_HANDLE;
+		VkDeviceMemory rtStagingMemory = VK_NULL_HANDLE;
+		device->createBuffer(rtVertexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			rtStagingBuffer, rtStagingMemory);
+
+		vkMapMemory(device->getDevice(), rtStagingMemory, 0, rtVertexBufferSize, 0, &data);
+		memcpy(data, model.rtVertices.data(), rtVertexBufferSize);
+		vkUnmapMemory(device->getDevice(), rtStagingMemory);
+
+		device->createBuffer(rtVertexBufferSize,
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+			VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+			VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, model.rtVertexBuffer, model.rtVertexBufferMemory);
+
+		device->copyBuffer(rtStagingBuffer, model.rtVertexBuffer, rtVertexBufferSize);
+		vkDestroyBuffer(device->getDevice(), rtStagingBuffer, nullptr);
+		vkFreeMemory(device->getDevice(), rtStagingMemory, nullptr);
+	}
+
 	device->copyBuffer(stagingBuffer, model.vertexBuffer, vertexBufferSize);
 	vkDestroyBuffer(device->getDevice(), stagingBuffer, nullptr);
 	vkFreeMemory(device->getDevice(), stagingBufferMemory, nullptr);
@@ -605,7 +634,7 @@ void ObjectLoader::createModelBuffers(Model& model)
 	vkUnmapMemory(device->getDevice(), stagingBufferMemory);
 
 	device->createBuffer(indexBufferSize,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, model.indexBuffer, model.indexBufferMemory);
 
 	device->copyBuffer(stagingBuffer, model.indexBuffer, indexBufferSize);
@@ -632,6 +661,16 @@ void ObjectLoader::destroyModel(Model& model)
 		vkFreeMemory(device->getDevice(), model.indexBufferMemory, nullptr);
 	}
 
+	// Destroy ray tracing vertex buffer
+	if (model.rtVertexBuffer != VK_NULL_HANDLE) {
+		vkDestroyBuffer(device->getDevice(), model.rtVertexBuffer, nullptr);
+		model.rtVertexBuffer = VK_NULL_HANDLE;
+	}
+	if (model.rtVertexBufferMemory != VK_NULL_HANDLE) {
+		vkFreeMemory(device->getDevice(), model.rtVertexBufferMemory, nullptr);
+		model.rtVertexBufferMemory = VK_NULL_HANDLE;
+	}
+
 	// Destroy textures
 	for (auto& texture : model.textures) {
 		if (texture.sampler != VK_NULL_HANDLE) {
@@ -649,6 +688,7 @@ void ObjectLoader::destroyModel(Model& model)
 	}
 
 	model.vertices.clear();
+	model.rtVertices.clear();
 	model.indices.clear();
 	model.meshes.clear();
 	model.nodes.clear();
