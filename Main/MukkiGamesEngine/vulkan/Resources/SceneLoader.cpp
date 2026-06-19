@@ -1,4 +1,5 @@
 #include "Sceneloader.h"
+#include "SkyBox.h"
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -30,6 +31,9 @@ bool SceneLoader::loadScene(const std::string& filepath)
 	try {
 		nlohmann::json j;
 		file >> j;
+		//@TODO clear skybox
+		objects.clear();
+		lights.clear();
 
 		parseConfig(j);
 		parseCamera(j);
@@ -86,19 +90,19 @@ void SceneLoader::parseLights(const nlohmann::json& j)
 			else {
 				light.type = LightType::Point;
 			}
-			
+
 			if (lightJson.contains("position") && lightJson["position"].is_array() && lightJson["position"].size() == 3) {
 				light.position.x = lightJson["position"][0].get<float>();
 				light.position.y = lightJson["position"][1].get<float>();
 				light.position.z = lightJson["position"][2].get<float>();
 			}
-			
+
 			if (lightJson.contains("direction") && lightJson["direction"].is_array() && lightJson["direction"].size() == 3) {
 				light.direction.x = lightJson["direction"][0].get<float>();
 				light.direction.y = lightJson["direction"][1].get<float>();
 				light.direction.z = lightJson["direction"][2].get<float>();
 			}
-			
+
 			lights.push_back(light);
 		}
 	}
@@ -111,25 +115,25 @@ void SceneLoader::parseObjects(const nlohmann::json& j)
 			SceneObject obj;
 			obj.name = objJson.value("name", "Unnamed Object");
 			obj.modelPath = objJson.value("modelPath", "");
-			
+
 			if (objJson.contains("position") && objJson["position"].is_array() && objJson["position"].size() == 3) {
 				obj.modelTransform.position.x = objJson["position"][0].get<float>();
 				obj.modelTransform.position.y = objJson["position"][1].get<float>();
 				obj.modelTransform.position.z = objJson["position"][2].get<float>();
 			}
-			
+
 			if (objJson.contains("rotation") && objJson["rotation"].is_array() && objJson["rotation"].size() == 3) {
 				obj.modelTransform.rotation.x = objJson["rotation"][0].get<float>();
 				obj.modelTransform.rotation.y = objJson["rotation"][1].get<float>();
 				obj.modelTransform.rotation.z = objJson["rotation"][2].get<float>();
 			}
-			
+
 			if (objJson.contains("scale") && objJson["scale"].is_array() && objJson["scale"].size() == 3) {
 				obj.modelTransform.scale.x = objJson["scale"][0].get<float>();
 				obj.modelTransform.scale.y = objJson["scale"][1].get<float>();
 				obj.modelTransform.scale.z = objJson["scale"][2].get<float>();
 			}
-			
+
 			objects.push_back(obj);
 		}
 	}
