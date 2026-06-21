@@ -27,13 +27,14 @@ public:
 	void updateUniformBuffer(uint32_t currentFrame, const glm::mat4& view);
 	void s_recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t currentFrame);
 	void cleanup();
-
+	VkImageView getCubemapImageView() const { return cubemapImageView; }
+	VkSampler getCubemapSampler() const { return cubemapSampler; }
 private:
 	void createUniformBuffers();
 	void createDescriptorSetLayout();
 	void createDescriptorPool();
 	void createDescriptorSets();
-	
+
 	void createPipelineLayout();
 	void createPipeline(VkRenderPass renderPass);
 
@@ -41,7 +42,9 @@ private:
 	TextureManager* textureManager = nullptr;
 	BufferManager* bufferManager = nullptr;
 
-	
+
+
+
 
 	// Cubemap texture
 	VkImage cubemapImage = VK_NULL_HANDLE;
@@ -49,7 +52,7 @@ private:
 	VkImageView cubemapImageView = VK_NULL_HANDLE;
 	VkSampler cubemapSampler = VK_NULL_HANDLE;
 
-	// Uniform buffers	
+	// Uniform buffers
 	std::vector<VkBuffer> uniformBuffers;
 	std::vector<VkDeviceMemory> uniformBuffersMemory;
 	std::vector<void*> uniformBuffersMapped;

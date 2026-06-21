@@ -85,6 +85,27 @@ private:
 	VkDeviceMemory rayTracingUniformBufferMemory = VK_NULL_HANDLE;
 	void* rayTracingUniformBufferMapped = nullptr;
 
+	struct RayTracingPrimitiveInfo {
+		uint32_t firstIndex;
+		uint32_t indexCount;
+		int32_t textureIndex;
+		float metallicFactor;
+		float roughnessFactor;
+		float pad0;
+		float pad1;
+		float pad2;
+	};
+	struct RayTracingMeshInfo {
+		uint32_t primitiveOffset;
+		uint32_t primitiveCount;
+		uint32_t pad0;
+		uint32_t pad1;
+	};
+	VkBuffer rayTracingPrimitiveBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory rayTracingPrimitiveBufferMemory = VK_NULL_HANDLE;
+	VkBuffer rayTracingMeshBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory rayTracingMeshBufferMemory = VK_NULL_HANDLE;
+
 	//Texture Handler and Buffer Manager
 	TextureManager* textureManager = nullptr;
 	BufferManager* bufferManager = nullptr;
@@ -101,6 +122,14 @@ private:
 	std::vector<VkBuffer> uniformBuffers;
 	std::vector<VkDeviceMemory> uniformBuffersMemory;
 	std::vector<void*> uniformBuffersMapped;
+
+	std::vector<VkBuffer> defaultMaterialUniformBuffers;
+	std::vector<VkDeviceMemory> defaultMaterialUniformBuffersMemory;
+	std::vector<void*> defaultMaterialUniformBuffersMapped;
+
+	std::vector<std::vector<VkBuffer>> materialUniformBuffers;
+	std::vector<std::vector<VkDeviceMemory>> materialUniformBuffersMemory;
+	std::vector<std::vector<void*>> materialUniformBuffersMapped;
 
 	// Camera
 	Camera* camera = nullptr;
@@ -121,6 +150,9 @@ private:
 	void createVertexBuffer();
 	void createIndexBuffer();
 	void createUniformBuffers();
+	void createDefaultMaterialUniformBuffers();
+	void createMaterialUniformBuffers();
+	void cleanupMaterialUniformBuffers();
     void createRayTracingUniformBuffer();
 	void updateUniformBuffer(uint32_t currentImage);
   void updateRayTracingUniformBuffer();
@@ -131,6 +163,8 @@ private:
 	void initComputePipeline();
     void initRayTracingPipeline();
 	void createComputeOutputImage();
+	void createRayTracingGeometryBuffers();
+	void cleanupRayTracingGeometryBuffers();
 	void recordComputeCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
     void recordRayTracingCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 	void loadModel(const std::string& filepath);

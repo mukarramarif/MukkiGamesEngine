@@ -61,6 +61,8 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/uiManager/backends/*.h"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/pipeline/*.cpp"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/pipeline/*.h"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/raytracing/*.cpp"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/raytracing/*.h"
 )
 
 message(STATUS "Engine sources: ${ENGINE_SOURCES}")
@@ -113,7 +115,7 @@ function(add_shaders TARGET_NAME)
 
     add_custom_command(
       OUTPUT "${OUT}"
-      COMMAND "${GLSLC_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/${SHADER_SOURCE}" -o "${OUT}"
+      COMMAND "${GLSLC_EXECUTABLE}" ${SHADER_ARGS}
       DEPENDS "${CMAKE_SOURCE_DIR}/${SHADER_SOURCE}"
       COMMENT "Compiling shader ${SHADER_SOURCE} -> ${OUT}"
       VERBATIM
@@ -160,6 +162,9 @@ add_shaders(MukkiGamesEngine
     MukkiGamesEngine/Shaders/compute.comp
     MukkiGamesEngine/Shaders/skybox.vert
     MukkiGamesEngine/Shaders/skybox.frag
+    MukkiGamesEngine/Shaders/rt.rgen
+    MukkiGamesEngine/Shaders/rt.rmiss
+    MukkiGamesEngine/Shaders/rt.rchit
 )
 
 add_slang_fragment_shaders(MukkiGamesEngine

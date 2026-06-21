@@ -31,60 +31,60 @@ bool ObjectLoader::loadGLTF(const std::string& filepath, Model& outModel)
 	tinygltf::Model gltfModel;
 	tinygltf::TinyGLTF loader;
 	std::string err, warn;
-	
+
 	// Store base path for texture loading
 	basePath = std::filesystem::path(filepath).parent_path().string();
 	if (!basePath.empty() && basePath.back() != '/' && basePath.back() != '\\') {
 		basePath += '/';
 	}
-	
+
 	bool result = false;
-	
+
 	// Check file extension to determine binary or ASCII format
 	if (filepath.find(".glb") != std::string::npos) {
 		result = loader.LoadBinaryFromFile(&gltfModel, &err, &warn, filepath);
 	} else {
 		result = loader.LoadASCIIFromFile(&gltfModel, &err, &warn, filepath);
 	}
-	
+
 	if (!warn.empty()) {
 		std::cout << "glTF Warning: " << warn << std::endl;
 	}
-	
+
 	if (!err.empty()) {
 		std::cerr << "glTF Error: " << err << std::endl;
 		return false;
 	}
-	
+
 	if (!result) {
 		std::cerr << "Failed to load glTF file: " << filepath << std::endl;
 		return false;
 	}
-	
+
 	std::cout << "Loading glTF: " << filepath << std::endl;
 	std::cout << "  Meshes: " << gltfModel.meshes.size() << std::endl;
 	std::cout << "  Materials: " << gltfModel.materials.size() << std::endl;
 	std::cout << "  Textures: " << gltfModel.textures.size() << std::endl;
 	std::cout << "  Images: " << gltfModel.images.size() << std::endl;
 	std::cout << "  Nodes: " << gltfModel.nodes.size() << std::endl;
-	
+
 	// Load textures first (materials reference them)
 	loadTextures(gltfModel, outModel);
-	
+
 	// Load materials
 	loadMaterials(gltfModel, outModel);
-	
+
 	// Initialize nodes
 	outModel.nodes.resize(gltfModel.nodes.size());
-	
+
 	// Process the default scene
 	const tinygltf::Scene& scene = gltfModel.scenes[gltfModel.defaultScene > -1 ? gltfModel.defaultScene : 0];
-	
+
 	for (int nodeIndex : scene.nodes) {
 		outModel.rootNodes.push_back(nodeIndex);
 		loadNode(gltfModel, gltfModel.nodes[nodeIndex], nodeIndex, outModel, glm::mat4(1.0f));
 	}
-	
+
 	std::cout << "  Loaded vertices: " << outModel.vertices.size() << std::endl;
 	std::cout << "  Loaded indices: " << outModel.indices.size() << std::endl;
 	std::cout << "  Loaded textures: " << outModel.textures.size() << std::endl;
@@ -112,39 +112,39 @@ bool ObjectLoader::loadGLTF(const std::string& filepath, Model& outModel)
 void ObjectLoader::loadTextures(const tinygltf::Model& gltfModel, Model& model)
 {
 	model.textures.resize(gltfModel.textures.size());
-	
+
 	for (size_t i = 0; i < gltfModel.textures.size(); i++) {
 		std::cout << "  Loading texture " << i << "..." << std::endl;
 		loadTextureFromGLTF(gltfModel, static_cast<int>(i), model.textures[i]);
 	}
 }
 
-void ObjectLoader::loadTextureFromGLTF(const tinygltf::Model& gltfModel, int textureIndex, 
+void ObjectLoader::loadTextureFromGLTF(const tinygltf::Model& gltfModel, int textureIndex,
                                         LoadedTexture& outTexture)
 {
 	const tinygltf::Texture& gltfTexture = gltfModel.textures[textureIndex];
 	const tinygltf::Image& gltfImage = gltfModel.images[gltfTexture.source];
-	
+
 	// Get image data - tinygltf already decodes the image
 	const unsigned char* buffer = gltfImage.image.data();
 	int width = gltfImage.width;
 	int height = gltfImage.height;
 	int channels = gltfImage.component;
-	
+
 	if (buffer == nullptr || width == 0 || height == 0) {
 		std::cerr << "Invalid image data for texture " << textureIndex << std::endl;
 		return;
 	}
-	
+
 	std::cout << "    Image: " << width << "x" << height << ", " << channels << " channels" << std::endl;
-	
+
 	// Create the texture
 	createTextureFromBuffer(buffer, width, height, channels, outTexture);
-	
+
 	// Create sampler based on glTF sampler settings
 	VkSamplerCreateInfo samplerInfo{};
 	samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-	
+
 	if (gltfTexture.sampler >= 0 && gltfTexture.sampler < static_cast<int>(gltfModel.samplers.size())) {
 		const tinygltf::Sampler& gltfSampler = gltfModel.samplers[gltfTexture.sampler];
 		samplerInfo.magFilter = getVkFilterMode(gltfSampler.magFilter);
@@ -158,14 +158,14 @@ void ObjectLoader::loadTextureFromGLTF(const tinygltf::Model& gltfModel, int tex
 		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 	}
-	
+
 	samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 	samplerInfo.anisotropyEnable = VK_TRUE;
-	
+
 	VkPhysicalDeviceProperties properties{};
 	vkGetPhysicalDeviceProperties(device->getPhysicalDevice(), &properties);
 	samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
-	
+
 	samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
 	samplerInfo.unnormalizedCoordinates = VK_FALSE;
 	samplerInfo.compareEnable = VK_FALSE;
@@ -174,24 +174,24 @@ void ObjectLoader::loadTextureFromGLTF(const tinygltf::Model& gltfModel, int tex
 	samplerInfo.mipLodBias = 0.0f;
 	samplerInfo.minLod = 0.0f;
 	samplerInfo.maxLod = 0.0f;
-	
+
 	if (vkCreateSampler(device->getDevice(), &samplerInfo, nullptr, &outTexture.sampler) != VK_SUCCESS) {
 		throw std::runtime_error("failed to create texture sampler!");
 	}
 }
 
-void ObjectLoader::createTextureFromBuffer(const unsigned char* buffer, int width, int height, 
+void ObjectLoader::createTextureFromBuffer(const unsigned char* buffer, int width, int height,
                                             int channels, LoadedTexture& outTexture)
 {
 	outTexture.width = static_cast<uint32_t>(width);
 	outTexture.height = static_cast<uint32_t>(height);
-	
+
 	// Always use RGBA format - convert if necessary
 	VkDeviceSize imageSize = static_cast<VkDeviceSize>(width) * height * 4;
 	std::vector<unsigned char> rgbaBuffer;
-	
+
 	const unsigned char* pixelData = buffer;
-	
+
 	// Convert to RGBA if not already
 	if (channels == 3) {
 		rgbaBuffer.resize(width * height * 4);
@@ -213,11 +213,11 @@ void ObjectLoader::createTextureFromBuffer(const unsigned char* buffer, int widt
 		}
 		pixelData = rgbaBuffer.data();
 	}
-	
+
 	// Create staging buffer
 	VkBuffer stagingBuffer;
 	VkDeviceMemory stagingBufferMemory;
-	
+
 	bufferManager->createBuffer(
 		imageSize,
 		VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -225,13 +225,13 @@ void ObjectLoader::createTextureFromBuffer(const unsigned char* buffer, int widt
 		stagingBuffer,
 		stagingBufferMemory
 	);
-	
+
 	// Copy pixel data to staging buffer
 	void* data;
 	vkMapMemory(device->getDevice(), stagingBufferMemory, 0, imageSize, 0, &data);
 	memcpy(data, pixelData, static_cast<size_t>(imageSize));
 	vkUnmapMemory(device->getDevice(), stagingBufferMemory);
-	
+
 	// Create image using TextureManager
 	textureManager->createImage(
 		static_cast<uint32_t>(width),
@@ -243,7 +243,7 @@ void ObjectLoader::createTextureFromBuffer(const unsigned char* buffer, int widt
 		outTexture.image,
 		outTexture.memory
 	);
-	
+
 	// Transition and copy
 	textureManager->transitionImageLayout(
 		outTexture.image,
@@ -251,28 +251,28 @@ void ObjectLoader::createTextureFromBuffer(const unsigned char* buffer, int widt
 		VK_IMAGE_LAYOUT_UNDEFINED,
 		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
 	);
-	
+
 	textureManager->copyBufferToImage(
 		stagingBuffer,
 		outTexture.image,
 		static_cast<uint32_t>(width),
 		static_cast<uint32_t>(height)
 	);
-	
+
 	textureManager->transitionImageLayout(
 		outTexture.image,
 		VK_FORMAT_R8G8B8A8_SRGB,
 		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
 	);
-	
+
 	// Create image view
 	outTexture.imageView = textureManager->createImageView(
 		outTexture.image,
 		VK_FORMAT_R8G8B8A8_SRGB,
 		VK_IMAGE_ASPECT_COLOR_BIT
 	);
-	
+
 	// Cleanup staging buffer
 	bufferManager->destroyBuffer(stagingBuffer, stagingBufferMemory);
 }
@@ -312,7 +312,7 @@ void ObjectLoader::loadMaterials(const tinygltf::Model& gltfModel, Model& model)
 	for (const auto& gltfMaterial : gltfModel.materials) {
 		Material material;
 		material.isTransparent = (gltfMaterial.alphaMode == "BLEND");
-		
+
 		if(gltfMaterial.alphaMode == "MASK") {
 			material.alphaCutoff = static_cast<float>(gltfMaterial.alphaCutoff);
 		}
@@ -329,7 +329,7 @@ void ObjectLoader::loadMaterials(const tinygltf::Model& gltfModel, Model& model)
 		if (gltfMaterial.values.find("baseColorTexture") != gltfMaterial.values.end()) {
 			material.baseColorTextureIndex = gltfMaterial.values.at("baseColorTexture").TextureIndex();
 		}
-		
+
 		model.materials.push_back(material);
 	}
 	// Process emissive properties
@@ -370,13 +370,13 @@ void ObjectLoader::loadNode(const tinygltf::Model& gltfModel, const tinygltf::No
 	node.name = gltfNode.name;
 	node.localTransform = getNodeTransform(gltfNode);
 	node.worldTransform = parentTransform * node.localTransform;
-	
+
 	// Load mesh if present - pass the world transform to apply to vertices
 	if (gltfNode.mesh > -1) {
 		node.meshIndex = static_cast<int32_t>(model.meshes.size());
 		loadMesh(gltfModel, gltfModel.meshes[gltfNode.mesh], model, node.worldTransform);
 	}
-	
+
 	// Process children
 	for (int childIndex : gltfNode.children) {
 		node.children.push_back(childIndex);
@@ -436,19 +436,19 @@ void ObjectLoader::loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Me
 			colorComponentCount = (accessor.type == TINYGLTF_TYPE_VEC4) ? 4 : 3;
 		}
 
-		// Build vertices with world transform applied
+		// Build vertices with world transform applied (raster) and keep local for ray tracing
 		for (uint32_t v = 0; v < vertexCount; v++) {
 			Vertex vertex{};
+			RayTracingVertex rtVertex{};
 
-			// Position - apply world transform
-			glm::vec4 localPos = glm::vec4(
+			glm::vec3 localPos = glm::vec3(
 				positionBuffer[v * 3 + 0],
 				positionBuffer[v * 3 + 1],
-				positionBuffer[v * 3 + 2],
-				1.0f
+				positionBuffer[v * 3 + 2]
 			);
-			glm::vec4 worldPos = worldTransform * localPos;
+			glm::vec4 worldPos = worldTransform * glm::vec4(localPos, 1.0f);
 			vertex.pos = glm::vec3(worldPos);
+			rtVertex.position = glm::vec4(localPos, 1.0f);
 
 			// Vertex color - use actual vertex colors if available, otherwise white
 			// White ensures texture is displayed at full brightness
@@ -474,17 +474,22 @@ void ObjectLoader::loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Me
 			else {
 				vertex.texCoord = glm::vec2(0.0f);
 			}
+			rtVertex.texCoord = vertex.texCoord;
+
+			glm::vec3 localNormal = glm::vec3(0.0f, 0.0f, 1.0f);
 			if (normalBuffer) {
-				vertex.normal = normalMatrix * glm::vec3(
+				localNormal = glm::vec3(
 					normalBuffer[v * 3 + 0],
 					normalBuffer[v * 3 + 1],
 					normalBuffer[v * 3 + 2]
 				);
 			}
-			else {
-				vertex.normal = glm::vec3(0.0f, 0.0f, 1.0f);
-			}
+
+			vertex.normal = normalMatrix * localNormal;
+			rtVertex.normal = glm::vec4(glm::normalize(localNormal), 0.0f);
+
 			model.vertices.push_back(vertex);
+			model.rtVertices.push_back(rtVertex);
 		}
 
 		// Load indices
@@ -534,7 +539,7 @@ void ObjectLoader::loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Me
 glm::mat4 ObjectLoader::getNodeTransform(const tinygltf::Node& node)
 {
 	glm::mat4 transform = glm::mat4(1.0f);
-	
+
 	if (node.matrix.size() == 16) {
 		// Use matrix directly
 		transform = glm::make_mat4(node.matrix.data());
@@ -560,7 +565,7 @@ glm::mat4 ObjectLoader::getNodeTransform(const tinygltf::Node& node)
 			));
 		}
 	}
-	
+
 	return transform;
 }
 
@@ -570,49 +575,74 @@ void ObjectLoader::createModelBuffers(Model& model)
 		std::cerr << "Cannot create buffers for empty model!" << std::endl;
 		return;
 	}
-	
+
 	// Vertex buffer
 	VkDeviceSize vertexBufferSize = sizeof(Vertex) * model.vertices.size();
 	VkBuffer stagingBuffer;
 	VkDeviceMemory stagingBufferMemory;
-	
+
 	device->createBuffer(vertexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 		stagingBuffer, stagingBufferMemory);
-	
+
 	void* data;
 	vkMapMemory(device->getDevice(), stagingBufferMemory, 0, vertexBufferSize, 0, &data);
 	memcpy(data, model.vertices.data(), vertexBufferSize);
 	vkUnmapMemory(device->getDevice(), stagingBufferMemory);
-	
+
 	device->createBuffer(vertexBufferSize,
        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, model.vertexBuffer, model.vertexBufferMemory);
-	
+
+	// Ray tracing vertex buffer (local positions/normals)
+	VkDeviceSize rtVertexBufferSize = sizeof(RayTracingVertex) * model.rtVertices.size();
+	if (rtVertexBufferSize > 0) {
+		VkBuffer rtStagingBuffer = VK_NULL_HANDLE;
+		VkDeviceMemory rtStagingMemory = VK_NULL_HANDLE;
+		device->createBuffer(rtVertexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			rtStagingBuffer, rtStagingMemory);
+
+		vkMapMemory(device->getDevice(), rtStagingMemory, 0, rtVertexBufferSize, 0, &data);
+		memcpy(data, model.rtVertices.data(), rtVertexBufferSize);
+		vkUnmapMemory(device->getDevice(), rtStagingMemory);
+
+		device->createBuffer(rtVertexBufferSize,
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+			VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+			VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, model.rtVertexBuffer, model.rtVertexBufferMemory);
+
+		device->copyBuffer(rtStagingBuffer, model.rtVertexBuffer, rtVertexBufferSize);
+		vkDestroyBuffer(device->getDevice(), rtStagingBuffer, nullptr);
+		vkFreeMemory(device->getDevice(), rtStagingMemory, nullptr);
+	}
+
 	device->copyBuffer(stagingBuffer, model.vertexBuffer, vertexBufferSize);
 	vkDestroyBuffer(device->getDevice(), stagingBuffer, nullptr);
 	vkFreeMemory(device->getDevice(), stagingBufferMemory, nullptr);
-	
+
 	// Index buffer
 	VkDeviceSize indexBufferSize = sizeof(uint32_t) * model.indices.size();
-	
+
 	device->createBuffer(indexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 		stagingBuffer, stagingBufferMemory);
-	
+
 	vkMapMemory(device->getDevice(), stagingBufferMemory, 0, indexBufferSize, 0, &data);
 	memcpy(data, model.indices.data(), indexBufferSize);
 	vkUnmapMemory(device->getDevice(), stagingBufferMemory);
-	
+
 	device->createBuffer(indexBufferSize,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, model.indexBuffer, model.indexBufferMemory);
-	
+
 	device->copyBuffer(stagingBuffer, model.indexBuffer, indexBufferSize);
 	vkDestroyBuffer(device->getDevice(), stagingBuffer, nullptr);
 	vkFreeMemory(device->getDevice(), stagingBufferMemory, nullptr);
-	
-	std::cout << "Created GPU buffers - Vertices: " << vertexBufferSize 
+
+	std::cout << "Created GPU buffers - Vertices: " << vertexBufferSize
 	          << " bytes, Indices: " << indexBufferSize << " bytes" << std::endl;
 }
 
@@ -631,7 +661,17 @@ void ObjectLoader::destroyModel(Model& model)
 	if (model.indexBufferMemory != VK_NULL_HANDLE) {
 		vkFreeMemory(device->getDevice(), model.indexBufferMemory, nullptr);
 	}
-	
+
+	// Destroy ray tracing vertex buffer
+	if (model.rtVertexBuffer != VK_NULL_HANDLE) {
+		vkDestroyBuffer(device->getDevice(), model.rtVertexBuffer, nullptr);
+		model.rtVertexBuffer = VK_NULL_HANDLE;
+	}
+	if (model.rtVertexBufferMemory != VK_NULL_HANDLE) {
+		vkFreeMemory(device->getDevice(), model.rtVertexBufferMemory, nullptr);
+		model.rtVertexBufferMemory = VK_NULL_HANDLE;
+	}
+
 	// Destroy textures
 	for (auto& texture : model.textures) {
 		if (texture.sampler != VK_NULL_HANDLE) {
@@ -647,8 +687,9 @@ void ObjectLoader::destroyModel(Model& model)
 			vkFreeMemory(device->getDevice(), texture.memory, nullptr);
 		}
 	}
-	
+
 	model.vertices.clear();
+	model.rtVertices.clear();
 	model.indices.clear();
 	model.meshes.clear();
 	model.nodes.clear();

@@ -13,3 +13,10 @@ struct UniformBufferObject {
     float ambientStrength;
     float padding[2];          // alignment to 16 bytes
 };
+
+
+struct MaterialUBO {
+    alignas(4) float metallicFactor;
+    alignas(4) float roughnessFactor;
+    alignas(8) glm::vec2 padding;
+};

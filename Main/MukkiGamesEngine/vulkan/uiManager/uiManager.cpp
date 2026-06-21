@@ -376,16 +376,13 @@ void UIManager::renderSceneLoader(bool& loadSceneFlag, const std::vector<std::st
 		return;
 	}
 
-	if (sceneNum >= 0 && sceneNum < static_cast<int>(scenes.size())) {
-		selectedSceneIndex = sceneNum;
-	}
-
 	std::vector<const char*> sceneItems;
 	sceneItems.reserve(scenes.size());
 	for (const auto& scene : scenes) {
 		sceneItems.push_back(scene.c_str());
 	}
 
+	// Scene selection
 	ImGui::Combo("Scene", &selectedSceneIndex, sceneItems.data(), static_cast<int>(sceneItems.size()));
 
 	if (ImGui::Button("Load Selected Scene")) {
