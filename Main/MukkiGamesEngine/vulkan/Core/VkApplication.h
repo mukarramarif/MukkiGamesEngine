@@ -88,8 +88,12 @@ private:
 	struct RayTracingPrimitiveInfo {
 		uint32_t firstIndex;
 		uint32_t indexCount;
-		uint32_t pad0;
-		uint32_t pad1;
+		int32_t textureIndex;
+		float metallicFactor;
+		float roughnessFactor;
+		float pad0;
+		float pad1;
+		float pad2;
 	};
 	struct RayTracingMeshInfo {
 		uint32_t primitiveOffset;

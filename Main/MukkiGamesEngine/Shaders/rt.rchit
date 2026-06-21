@@ -8,6 +8,8 @@ struct Payload
     vec3 normal;
     int hit;
     int shadowRay;
+    float metallic;
+    float roughness;
 };
 
 layout(location = 0) rayPayloadInEXT Payload payload;
@@ -16,14 +18,21 @@ struct RayTracingVertex
 {
     vec4 position;
     vec4 normal;
+    vec2 texCoord;
+    float pad0;
+    float pad1;
 };
 
 struct PrimitiveInfo
 {
     uint firstIndex;
     uint indexCount;
-    uint pad0;
-    uint pad1;
+    int textureIndex;
+    float metallicFactor;
+    float roughnessFactor;
+    float pad0;
+    float pad1;
+    float pad2;
 };
 
 struct MeshInfo
@@ -53,6 +62,8 @@ layout(set = 0, binding = 6, std430) readonly buffer MeshBuffer
 {
     MeshInfo meshes[];
 } meshBuffer;
+
+layout(set = 0, binding = 8) uniform sampler2D textures[16];
 
 hitAttributeEXT vec2 attribs;
 
@@ -84,6 +95,13 @@ void main()
         normal = -normal;
     }
 
+    vec2 uv = v0.texCoord * bary.x + v1.texCoord * bary.y + v2.texCoord * bary.z;
+    int texIdx = primInfo.textureIndex;
+    if (texIdx < 0) texIdx = 0;
+    vec3 albedo = texture(textures[texIdx], uv).rgb;
+
     payload.normal = normal;
-    payload.color = vec3(0.9);
+    payload.color = albedo;
+    payload.metallic = primInfo.metallicFactor;
+    payload.roughness = primInfo.roughnessFactor;
 }

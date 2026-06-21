@@ -474,6 +474,7 @@ void ObjectLoader::loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Me
 			else {
 				vertex.texCoord = glm::vec2(0.0f);
 			}
+			rtVertex.texCoord = vertex.texCoord;
 
 			glm::vec3 localNormal = glm::vec3(0.0f, 0.0f, 1.0f);
 			if (normalBuffer) {

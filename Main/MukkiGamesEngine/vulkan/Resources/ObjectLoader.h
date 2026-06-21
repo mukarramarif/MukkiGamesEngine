@@ -18,12 +18,15 @@ class BufferManager;
 struct RayTracingVertex {
 	glm::vec4 position;
 	glm::vec4 normal;
+	glm::vec2 texCoord;
+	float _pad0;
+	float _pad1;
 };
 
 // Material data for PBR rendering
 struct Material {
 	glm::vec4 baseColorFactor = glm::vec4(1.0f);
-	float metallicFactor = 1.0f;
+	float metallicFactor = 0.0f;
 	float roughnessFactor = 1.0f;
 	int32_t baseColorTextureIndex = -1;
 	int32_t normalTextureIndex = -1;

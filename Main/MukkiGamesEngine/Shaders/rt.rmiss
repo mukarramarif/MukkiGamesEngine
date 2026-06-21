@@ -8,6 +8,8 @@ struct Payload
     vec3 normal;
     int hit;
     int shadowRay;
+    float metallic;
+    float roughness;
 };
 
 layout(location = 0) rayPayloadInEXT Payload payload;

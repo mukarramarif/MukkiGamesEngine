@@ -50,7 +50,7 @@ VulkanApplication::VulkanApplication()
 
 void VulkanApplication::createRayTracingUniformBuffer()
 {
-    VkDeviceSize bufferSize = sizeof(glm::mat4) * 2 + sizeof(glm::vec4) + sizeof(GPULight) * MAX_LIGHTS + sizeof(glm::vec4);
+    VkDeviceSize bufferSize = sizeof(glm::mat4) * 5 + sizeof(glm::vec4) + sizeof(GPULight) * MAX_LIGHTS + sizeof(glm::vec4);
 	bufferManager->createBuffer(
 		bufferSize,
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -87,8 +87,22 @@ void VulkanApplication::createRayTracingGeometryBuffers()
 			RayTracingPrimitiveInfo primInfo{};
 			primInfo.firstIndex = primitive.firstIndex;
 			primInfo.indexCount = primitive.indexCount;
-			primInfo.pad0 = 0;
-			primInfo.pad1 = 0;
+			int32_t texIdx = -1;
+			float metallic = 0.0f;
+			float roughness = 1.0f;
+			if (primitive.materialIndex >= 0 &&
+				primitive.materialIndex < static_cast<int32_t>(loadedModel.materials.size())) {
+				const auto& mat = loadedModel.materials[primitive.materialIndex];
+				texIdx = mat.baseColorTextureIndex;
+				metallic = mat.metallicFactor;
+				roughness = mat.roughnessFactor;
+			}
+			primInfo.textureIndex = texIdx;
+			primInfo.metallicFactor = metallic;
+			primInfo.roughnessFactor = roughness;
+			primInfo.pad0 = 0.0f;
+			primInfo.pad1 = 0.0f;
+			primInfo.pad2 = 0.0f;
 			primitiveInfos.push_back(primInfo);
 		}
 
@@ -164,6 +178,9 @@ void VulkanApplication::updateRayTracingUniformBuffer()
 		glm::mat4 invView;
 		glm::mat4 invProj;
 		glm::vec4 cameraPos;
+		glm::mat4 model;
+		glm::mat4 invModel;
+		glm::mat4 normalMatrix;
       GPULight lights[MAX_LIGHTS];
 		glm::vec4 lightParams;
 	};
@@ -172,6 +189,17 @@ void VulkanApplication::updateRayTracingUniformBuffer()
 	ubo.invView = invView;
 	ubo.invProj = invProj;
 	ubo.cameraPos = camPos;
+
+	glm::mat4 model = glm::mat4(1.0f);
+	model = glm::translate(model, modelTransform.position);
+	model = glm::rotate(model, glm::radians(modelTransform.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+	model = glm::rotate(model, glm::radians(modelTransform.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+	model = glm::rotate(model, glm::radians(modelTransform.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+	model = glm::scale(model, glm::vec3(modelTransform.scale));
+	ubo.model = model;
+	ubo.invModel = glm::inverse(model);
+	ubo.normalMatrix = glm::transpose(ubo.invModel);
+
 	ubo.lightParams = glm::vec4(0.0f);
 	ubo.lightParams.y = ambientStrength;
 	ubo.lightParams.z = static_cast<float>(lights.size());
@@ -497,7 +525,7 @@ void VulkanApplication::createDefaultMaterialUniformBuffers()
 	defaultMaterialUniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
 
 	MaterialUBO defaultMaterial{};
-	defaultMaterial.metallicFactor = 1.0f;
+	defaultMaterial.metallicFactor = 0.0f;
 	defaultMaterial.roughnessFactor = 1.0f;
 
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -908,7 +936,7 @@ void VulkanApplication::mainLoop()
 						cleanupMaterialUniformBuffers();
 					}
 
-					loadModel(ASSETS_PATH + sceneObjects[sceneIndex].modelPath);
+					loadModel(ASSETS_PATH + sceneObjects[0].modelPath);
 
 				}
 
@@ -1714,7 +1742,45 @@ void VulkanApplication::recordRayTracingCommandBuffer(VkCommandBuffer commandBuf
 	vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 	vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
+	if (modelLoaded && !modelDescriptorSets.empty() && additivePipeline) {
+		VkBuffer vertexBuffers[] = { loadedModel.vertexBuffer };
+		VkDeviceSize offsets[] = { 0 };
+		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+		vkCmdBindIndexBuffer(commandBuffer, loadedModel.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+		VkPipeline currentPipeline = VK_NULL_HANDLE;
 
+		// Emissive pass with additive blending over ray-traced image
+		for (const auto& mesh : loadedModel.transparentMeshIndices) {
+			const auto& meshRef = loadedModel.meshes[mesh];
+			for (const auto& primitive : meshRef.primitives) {
+				int32_t matIndex = primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
+				if (matIndex >= static_cast<int32_t>(loadedModel.materials.size()) ||
+					!loadedModel.materials[matIndex].isEmissive) {
+					continue;
+				}
+
+				if (currentPipeline != additivePipeline->getGraphicsPipeline()) {
+					vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, additivePipeline->getGraphicsPipeline());
+					currentPipeline = additivePipeline->getGraphicsPipeline();
+				}
+
+				if (matIndex < static_cast<int32_t>(modelDescriptorSets.size())) {
+					vkCmdBindDescriptorSets(
+						commandBuffer,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						pipelineLayout,
+						0,
+						1,
+						&modelDescriptorSets[matIndex][currentFrame],
+						0,
+						nullptr
+					);
+				}
+
+				vkCmdDrawIndexed(commandBuffer, primitive.indexCount, 1, primitive.firstIndex, 0, 0);
+			}
+		}
+	}
 
 	uiManager->render(commandBuffer);
 	vkCmdEndRenderPass(commandBuffer);
@@ -1794,7 +1860,7 @@ void VulkanApplication::cleanupComputeResources()
 
 void VulkanApplication::createRayTracingDescriptorSetLayout()
 {
- std::array<VkDescriptorSetLayoutBinding, 8> bindings{};
+ std::array<VkDescriptorSetLayoutBinding, 9> bindings{};
 
 	bindings[0].binding = 0;
 	bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -1844,6 +1910,12 @@ void VulkanApplication::createRayTracingDescriptorSetLayout()
 	bindings[7].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 	bindings[7].pImmutableSamplers = nullptr;
 
+	bindings[8].binding = 8;
+	bindings[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	bindings[8].descriptorCount = 16;
+	bindings[8].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+	bindings[8].pImmutableSamplers = nullptr;
+
 	VkDescriptorSetLayoutCreateInfo layoutInfo{};
 	layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 	layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -1866,7 +1938,7 @@ void VulkanApplication::createRayTracingDescriptorPool()
 	poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	poolSizes[3].descriptorCount = 4;
 	poolSizes[4].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	poolSizes[4].descriptorCount = 1;
+	poolSizes[4].descriptorCount = 17;
 
 	VkDescriptorPoolCreateInfo poolInfo{};
 	poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1923,7 +1995,7 @@ void VulkanApplication::createRayTracingDescriptorSet()
 	VkDescriptorBufferInfo cameraBufferInfo{};
 	cameraBufferInfo.buffer = rayTracingUniformBuffer;
 	cameraBufferInfo.offset = 0;
-	cameraBufferInfo.range = sizeof(glm::mat4) * 2 + sizeof(glm::vec4) + sizeof(GPULight) * MAX_LIGHTS + sizeof(glm::vec4);
+	cameraBufferInfo.range = sizeof(glm::mat4) * 5 + sizeof(glm::vec4) + sizeof(GPULight) * MAX_LIGHTS + sizeof(glm::vec4);
 
 	VkWriteDescriptorSet imageWrite{};
 	imageWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1994,11 +2066,15 @@ void VulkanApplication::createRayTracingDescriptorSet()
 	meshWrite.pBufferInfo = &meshBufferInfo;
 
 	VkWriteDescriptorSet cubemapWrite{};
-	if (skybox && skybox->getCubemapImageView() != VK_NULL_HANDLE) {
+	{
 		VkDescriptorImageInfo cubemapImageInfo{};
 		cubemapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		cubemapImageInfo.imageView = skybox->getCubemapImageView();
-		cubemapImageInfo.sampler = skybox->getCubemapSampler();
+		cubemapImageInfo.imageView = textureImageView;
+		cubemapImageInfo.sampler = textureSampler;
+		if (skybox && skybox->getCubemapImageView() != VK_NULL_HANDLE) {
+			cubemapImageInfo.imageView = skybox->getCubemapImageView();
+			cubemapImageInfo.sampler = skybox->getCubemapSampler();
+		}
 		cubemapWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		cubemapWrite.dstSet = rayTracingDescriptorSet;
 		cubemapWrite.dstBinding = 7;
@@ -2007,7 +2083,28 @@ void VulkanApplication::createRayTracingDescriptorSet()
 		cubemapWrite.pImageInfo = &cubemapImageInfo;
 	}
 
-    std::array<VkWriteDescriptorSet, 8> writes{ asWrite, imageWrite, cameraWrite, indexWrite, vertexWrite, primitiveWrite, meshWrite, cubemapWrite };
+	VkWriteDescriptorSet textureWrite{};
+	std::vector<VkDescriptorImageInfo> texImageInfos(16);
+	for (size_t i = 0; i < 16; i++) {
+		texImageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		texImageInfos[i].imageView = textureImageView;
+		texImageInfos[i].sampler = textureSampler;
+	}
+	for (size_t i = 0; i < loadedModel.textures.size() && i < 16; i++) {
+		if (loadedModel.textures[i].imageView != VK_NULL_HANDLE) {
+			texImageInfos[i].imageView = loadedModel.textures[i].imageView;
+			texImageInfos[i].sampler = loadedModel.textures[i].sampler;
+		}
+	}
+	textureWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+	textureWrite.dstSet = rayTracingDescriptorSet;
+	textureWrite.dstBinding = 8;
+	textureWrite.dstArrayElement = 0;
+	textureWrite.descriptorCount = 16;
+	textureWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	textureWrite.pImageInfo = texImageInfos.data();
+
+    std::array<VkWriteDescriptorSet, 9> writes{ asWrite, imageWrite, cameraWrite, indexWrite, vertexWrite, primitiveWrite, meshWrite, cubemapWrite, textureWrite };
 	vkUpdateDescriptorSets(device->getDevice(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
 
