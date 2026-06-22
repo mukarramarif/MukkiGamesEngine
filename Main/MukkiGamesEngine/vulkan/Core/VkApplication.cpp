@@ -90,19 +90,21 @@ void VulkanApplication::createRayTracingGeometryBuffers()
 			int32_t texIdx = -1;
 			float metallic = 0.0f;
 			float roughness = 1.0f;
+			glm::vec3 baseColor = glm::vec3(1.0f);
 			if (primitive.materialIndex >= 0 &&
 				primitive.materialIndex < static_cast<int32_t>(loadedModel.materials.size())) {
 				const auto& mat = loadedModel.materials[primitive.materialIndex];
 				texIdx = mat.baseColorTextureIndex;
 				metallic = mat.metallicFactor;
 				roughness = mat.roughnessFactor;
+				baseColor = glm::vec3(mat.baseColorFactor);
 			}
 			primInfo.textureIndex = texIdx;
 			primInfo.metallicFactor = metallic;
 			primInfo.roughnessFactor = roughness;
-			primInfo.pad0 = 0.0f;
-			primInfo.pad1 = 0.0f;
-			primInfo.pad2 = 0.0f;
+			primInfo.baseColorR = baseColor.r;
+			primInfo.baseColorG = baseColor.g;
+			primInfo.baseColorB = baseColor.b;
 			primitiveInfos.push_back(primInfo);
 		}
 
