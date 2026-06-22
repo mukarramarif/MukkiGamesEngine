@@ -91,9 +91,9 @@ private:
 		int32_t textureIndex;
 		float metallicFactor;
 		float roughnessFactor;
-		float pad0;
-		float pad1;
-		float pad2;
+		float baseColorR;
+		float baseColorG;
+		float baseColorB;
 	};
 	struct RayTracingMeshInfo {
 		uint32_t primitiveOffset;

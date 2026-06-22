@@ -30,9 +30,9 @@ struct PrimitiveInfo
     int textureIndex;
     float metallicFactor;
     float roughnessFactor;
-    float pad0;
-    float pad1;
-    float pad2;
+    float baseColorR;
+    float baseColorG;
+    float baseColorB;
 };
 
 struct MeshInfo
@@ -97,8 +97,13 @@ void main()
 
     vec2 uv = v0.texCoord * bary.x + v1.texCoord * bary.y + v2.texCoord * bary.z;
     int texIdx = primInfo.textureIndex;
-    if (texIdx < 0) texIdx = 0;
-    vec3 albedo = texture(textures[texIdx], uv).rgb;
+    vec3 albedo;
+    vec3 baseColor = vec3(primInfo.baseColorR, primInfo.baseColorG, primInfo.baseColorB);
+    if (texIdx >= 0) {
+        albedo = texture(textures[texIdx], uv).rgb * baseColor;
+    } else {
+        albedo = baseColor;
+    }
 
     payload.normal = normal;
     payload.color = albedo;
