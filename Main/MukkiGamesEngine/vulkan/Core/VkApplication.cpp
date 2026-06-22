@@ -248,6 +248,10 @@ void VulkanApplication::initVulkan()
 	window = new EngineWindow();
 	window->init(800, 600, "Mukki Games Engine");
 	glfwSetWindowUserPointer(window->getGLFWwindow(), this);
+	m_deletionQueue.push([this]() {
+		if (window) { window->cleanup(); delete window; window = nullptr; }
+	});
+
 	// 2. Create instance (Vulkan context)
 	instance.createInstance();
 
@@ -256,6 +260,9 @@ void VulkanApplication::initVulkan()
 
 	// 4. Create device (select GPU and create logical device)
 	device = new Device(instance, surface);
+	m_deletionQueue.push([this]() {
+		if (device) { device->cleanup(); delete device; device = nullptr; }
+	});
 
 	// 5. Create swap chain (manages images for presentation)
 	swapChain = new VulkanSwap();
@@ -265,27 +272,43 @@ void VulkanApplication::initVulkan()
 	// 6. Create render pass (defines how rendering operations are performed)
 	renderPassObj = new VulkanRenderPass(device, swapChain->getSwapChainImageFormat());
 	renderPass = renderPassObj->getRenderPass();
+	m_deletionQueue.pushRawDelete(renderPassObj);
 
 	// 7. Create command buffers FIRST (required by BufferManager and TextureManager)
 	commandBufferManager = new CommandBufferManager();
 	commandBufferManager->init(device, MAX_FRAMES_IN_FLIGHT);
+	m_deletionQueue.pushObject(commandBufferManager);
 
 	// 8. Initialize BufferManager and TextureManager (they depend on CommandBufferManager)
 	bufferManager = new BufferManager();
 	bufferManager->init(*device, *commandBufferManager);
+	m_deletionQueue.pushObject(bufferManager);
 
 	textureManager = new TextureManager();
 	textureManager->init(*device, *commandBufferManager, *bufferManager);
+	m_deletionQueue.pushRawDelete(textureManager);
 
 	rayTracingAS = new RayTracingAS();
 	rayTracingAS->init(device, commandBufferManager);
+	m_deletionQueue.pushObject(rayTracingAS);
 
 	objectLoader = new ObjectLoader();
 	objectLoader->init(device, textureManager, bufferManager);
+	m_deletionQueue.push([this]() {
+		if (objectLoader) {
+			vkDeviceWaitIdle(device->getDevice());
+			objectLoader->destroyModel(loadedModel);
+			cleanupMaterialUniformBuffers();
+			cleanupRayTracingGeometryBuffers();
+			delete objectLoader;
+			objectLoader = nullptr;
+		}
+	});
 
 	sceneLoader = new SceneLoader();
 	sceneLoader->init(device, textureManager, bufferManager, objectLoader);
 	sceneLoader->loadScene(ASSETS_PATH + availableScenes[0] );
+	m_deletionQueue.pushRawDelete(sceneLoader);
 
 	skybox = new SkyBox();
 	std::string skyboxFileName = sceneLoader->getConfig().skyboxPath;
@@ -295,6 +318,7 @@ void VulkanApplication::initVulkan()
 	skybox->init(device, textureManager, bufferManager,
 		renderPass, fullSkyboxPath,
 		CubemapLayout::VerticalCross, MAX_FRAMES_IN_FLIGHT);
+	m_deletionQueue.pushObject(skybox);
 
 	// 9. Create depth resources using TextureManager
 	VkExtent2D extent = swapChain->getSwapChainExtent();
@@ -311,18 +335,61 @@ void VulkanApplication::initVulkan()
  createRayTracingDescriptorSetLayout();
 	createPipelineLayout();
 
+	m_deletionQueue.pushDescriptorSetLayout(device->getDevice(), descriptorSetLayout);
+	m_deletionQueue.pushDescriptorSetLayout(device->getDevice(), rayTracingDescriptorSetLayout);
+	m_deletionQueue.pushPipelineLayout(device->getDevice(), pipelineLayout);
+
 	// 12. Create graphics pipeline (shaders and rendering configuration)
 	createGraphicsPipeline();
 
 	initComputePipeline();
+	m_deletionQueue.push([this]() {
+		if (computePipeline) {
+			computePipeline->cleanup(device);
+			delete computePipeline;
+			computePipeline = nullptr;
+		}
+	});
+
   initRayTracingPipeline();
+	m_deletionQueue.push([this]() {
+		if (rayTracingPipeline) {
+			rayTracingPipeline->cleanup();
+			delete rayTracingPipeline;
+			rayTracingPipeline = nullptr;
+		}
+	});
 	// 13. Create vertex and index buffers
 	createVertexBuffer();
+	m_deletionQueue.pushBuffer(device->getDevice(), vertexBuffer, vertexBufferMemory);
 	createIndexBuffer();
+	m_deletionQueue.pushBuffer(device->getDevice(), indexBuffer, indexBufferMemory);
 	createTextureResources();
+	m_deletionQueue.push([this]() {
+		if (textureSampler != VK_NULL_HANDLE) textureManager->destroySampler(textureSampler);
+		if (textureImageView != VK_NULL_HANDLE) textureManager->destroyImageView(textureImageView);
+		if (textureImage != VK_NULL_HANDLE) textureManager->destroyImage(textureImage, textureImageMemory);
+	});
 	createUniformBuffers();
+	m_deletionQueue.push([this]() {
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			if (uniformBuffers[i] != VK_NULL_HANDLE)
+				vkDestroyBuffer(device->getDevice(), uniformBuffers[i], nullptr);
+			if (uniformBuffersMemory[i] != VK_NULL_HANDLE)
+				vkFreeMemory(device->getDevice(), uniformBuffersMemory[i], nullptr);
+		}
+	});
 	createDefaultMaterialUniformBuffers();
+	m_deletionQueue.push([this]() {
+		for (size_t i = 0; i < defaultMaterialUniformBuffers.size(); i++) {
+			if (defaultMaterialUniformBuffers[i] != VK_NULL_HANDLE)
+				vkDestroyBuffer(device->getDevice(), defaultMaterialUniformBuffers[i], nullptr);
+			if (i < defaultMaterialUniformBuffersMemory.size() && defaultMaterialUniformBuffersMemory[i] != VK_NULL_HANDLE)
+				vkFreeMemory(device->getDevice(), defaultMaterialUniformBuffersMemory[i], nullptr);
+		}
+	});
 	createRayTracingUniformBuffer();
+	m_deletionQueue.pushBuffer(device->getDevice(), rayTracingUniformBuffer, rayTracingUniformBufferMemory);
 
 	lights = sceneLoader->getLights();
 	ambientStrength = sceneLoader->getConfig().ambientStrenght;
@@ -348,7 +415,9 @@ void VulkanApplication::initVulkan()
 	);
 
 	createRayTracingDescriptorPool();
+	m_deletionQueue.pushDescriptorPool(device->getDevice(), rayTracingDescriptorPool);
 	createRayTracingDescriptorSet();
+	m_deletionQueue.pushObject(descriptorBoss);
 
 	auto sceneObjects = sceneLoader->getObjects();
 	if (!sceneObjects.empty()) {
@@ -360,15 +429,23 @@ void VulkanApplication::initVulkan()
 
 	// 15. Create synchronization objects (semaphores and fences)
 	createSyncObjects();
+	m_deletionQueue.push([this]() {
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			vkDestroySemaphore(device->getDevice(), imageAvailableSemaphores[i], nullptr);
+			vkDestroyFence(device->getDevice(), inFlightFences[i], nullptr);
+		}
+	});
 
 	// Initialize camera
 	glm::vec3 camPos = sceneLoader->hasCameraSettings() ? sceneLoader->getInitialCameraPosition() : glm::vec3(0.0f, 0.0f, 3.0f);
 	camera = new Camera(camPos);
+	m_deletionQueue.pushRawDelete(camera);
 
 	// Setup mouse callback
 	glfwSetInputMode(window->getGLFWwindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	glfwSetCursorPosCallback(window->getGLFWwindow(), mouseCallback);
 	SetupUIManager();
+	m_deletionQueue.pushObject(uiManager);
 }
 
 void VulkanApplication::createSyncObjects()
@@ -960,140 +1037,68 @@ void VulkanApplication::mainLoop()
 
 void VulkanApplication::cleanup()
 {
-	// Cleanup in reverse order of creation
-	cleanupComputeResources();
-	//cleanup uniform buffers
-	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		if (uniformBuffers[i] != VK_NULL_HANDLE) {
-			vkDestroyBuffer(device->getDevice(), uniformBuffers[i], nullptr);
-		}
-		if (uniformBuffersMemory[i] != VK_NULL_HANDLE) {
-			vkFreeMemory(device->getDevice(), uniformBuffersMemory[i], nullptr);
-		}
+	// Ensure GPU is idle before destroying any resources
+	if (device) {
+		vkDeviceWaitIdle(device->getDevice());
 	}
 
-	cleanupMaterialUniformBuffers();
-	for (size_t i = 0; i < defaultMaterialUniformBuffers.size(); i++) {
-		if (defaultMaterialUniformBuffers[i] != VK_NULL_HANDLE) {
-			vkDestroyBuffer(device->getDevice(), defaultMaterialUniformBuffers[i], nullptr);
-		}
-		if (i < defaultMaterialUniformBuffersMemory.size() &&
-			defaultMaterialUniformBuffersMemory[i] != VK_NULL_HANDLE) {
-			vkFreeMemory(device->getDevice(), defaultMaterialUniformBuffersMemory[i], nullptr);
-		}
-	}
-	// Cleanup per-frame synchronization objects
-	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		vkDestroySemaphore(device->getDevice(), imageAvailableSemaphores[i], nullptr);
-		vkDestroyFence(device->getDevice(), inFlightFences[i], nullptr);
-	}
+	// --- Swapchain-dependent resources (managed manually, recreated in recreateSwapChain) ---
 
-	// Cleanup per-image synchronization objects
-	for (size_t i = 0; i < renderFinishedSemaphores.size(); i++) {
-		vkDestroySemaphore(device->getDevice(), renderFinishedSemaphores[i], nullptr);
+	// Cleanup compute output resources
+	if (computeOutputImageView != VK_NULL_HANDLE) {
+		vkDestroyImageView(device->getDevice(), computeOutputImageView, nullptr);
+		computeOutputImageView = VK_NULL_HANDLE;
 	}
-
-	// Cleanup texture resources
-	if (textureSampler != VK_NULL_HANDLE) {
-		textureManager->destroySampler(textureSampler);
+	if (computeOutputImage != VK_NULL_HANDLE) {
+		vkDestroyImage(device->getDevice(), computeOutputImage, nullptr);
+		computeOutputImage = VK_NULL_HANDLE;
 	}
-	if (textureImageView != VK_NULL_HANDLE) {
-		textureManager->destroyImageView(textureImageView);
-	}
-	if (textureImage != VK_NULL_HANDLE) {
-		textureManager->destroyImage(textureImage, textureImageMemory);
+	if (computeOutputImageMemory != VK_NULL_HANDLE) {
+		vkFreeMemory(device->getDevice(), computeOutputImageMemory, nullptr);
+		computeOutputImageMemory = VK_NULL_HANDLE;
 	}
 
 	// Cleanup depth resources
 	if (textureManager) {
 		if (depthImageView != VK_NULL_HANDLE) {
 			textureManager->destroyImageView(depthImageView);
+			depthImageView = VK_NULL_HANDLE;
 		}
 		if (depthImage != VK_NULL_HANDLE) {
 			textureManager->destroyImage(depthImage, depthImageMemory);
+			depthImage = VK_NULL_HANDLE;
+			depthImageMemory = VK_NULL_HANDLE;
 		}
 	}
 
-	vkDestroyBuffer(device->getDevice(), indexBuffer, nullptr);
-	vkFreeMemory(device->getDevice(), indexBufferMemory, nullptr);
-	vkDestroyBuffer(device->getDevice(), vertexBuffer, nullptr);
-	vkFreeMemory(device->getDevice(), vertexBufferMemory, nullptr);
-
-	if (descriptorBoss) {
-		descriptorBoss->cleanup();
-		delete descriptorBoss;
-	}
-   if (rayTracingUniformBuffer != VK_NULL_HANDLE) {
-		vkDestroyBuffer(device->getDevice(), rayTracingUniformBuffer, nullptr);
-		rayTracingUniformBuffer = VK_NULL_HANDLE;
-	}
-	if (rayTracingUniformBufferMemory != VK_NULL_HANDLE) {
-		vkFreeMemory(device->getDevice(), rayTracingUniformBufferMemory, nullptr);
-		rayTracingUniformBufferMemory = VK_NULL_HANDLE;
-	}
-	rayTracingUniformBufferMapped = nullptr;
-	if (rayTracingDescriptorPool != VK_NULL_HANDLE) {
-		vkDestroyDescriptorPool(device->getDevice(), rayTracingDescriptorPool, nullptr);
-		rayTracingDescriptorPool = VK_NULL_HANDLE;
-	}
-	if (rayTracingDescriptorSetLayout != VK_NULL_HANDLE) {
-		vkDestroyDescriptorSetLayout(device->getDevice(), rayTracingDescriptorSetLayout, nullptr);
-		rayTracingDescriptorSetLayout = VK_NULL_HANDLE;
+	// Cleanup per-image synchronization objects (swapchain-dependent)
+	for (size_t i = 0; i < renderFinishedSemaphores.size(); i++) {
+		if (renderFinishedSemaphores[i] != VK_NULL_HANDLE)
+			vkDestroySemaphore(device->getDevice(), renderFinishedSemaphores[i], nullptr);
 	}
 
-	if (commandBufferManager) {
-		commandBufferManager->cleanup();
-		delete commandBufferManager;
-	}
-	if(skybox) {
-		skybox->cleanup();
-		delete skybox;
-	}
+	// Cleanup graphics pipelines (swapchain-dependent)
 	if (graphicsPipeline) {
 		delete graphicsPipeline;
+		graphicsPipeline = nullptr;
 	}
-	if(additivePipeline) {
+	if (additivePipeline) {
 		delete additivePipeline;
+		additivePipeline = nullptr;
 	}
-	if(pipelineLayout != VK_NULL_HANDLE) {
-		vkDestroyPipelineLayout(device->getDevice(), pipelineLayout, nullptr);
-	}
-	if(descriptorSetLayout != VK_NULL_HANDLE) {
-		vkDestroyDescriptorSetLayout(device->getDevice(), descriptorSetLayout, nullptr);
-	}
+
+	// Cleanup swap chain
 	if (swapChain) {
 		swapChain->cleanup();
 		delete swapChain;
+		swapChain = nullptr;
 	}
 
-	if (renderPassObj) {
-		delete renderPassObj;
-	}
+	// --- Flush the deletion queue for all lifetime resources ---
+	// Resources are destroyed in reverse creation order (LIFO)
+	m_deletionQueue.flush();
 
-	if (textureManager) {
-		delete textureManager;
-	}
-
-	if (bufferManager) {
-		delete bufferManager;
-	}
-	if(uiManager) {
-		uiManager->cleanup();
-		delete uiManager;
-	}
-	if(camera) {
-		delete camera;
-	}
-	if (device) {
-		device->cleanup();
-		delete device;
-	}
-
-	if (window) {
-		window->cleanup();
-		delete window;
-	}
-
+	// Instance cleanup (stack-allocated, not managed by queue)
 	instance.cleanup();
 }
 
