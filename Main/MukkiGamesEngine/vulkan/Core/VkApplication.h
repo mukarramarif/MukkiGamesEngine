@@ -15,6 +15,7 @@
 #include "../Resources/ObjectLoader.h"
 #include "../Resources/SkyBox.h"
 #include "../Resources/Sceneloader.h"
+#include "../Resources/DeletionQueue.h"
 #include "../uiManager/uiManager.h"
 #include "../pipeline/computePipeline.h"
 #include "../objects/lights.h"
@@ -212,4 +213,7 @@ private:
 	float ambientStrength = 0.1f;
 	std::vector<std::string> availableScenes{ "scene.json", "sceneTrack.json" };
 	int currentSceneIndex = 0;
+
+	// Deletion queue for deferred resource cleanup
+	DeletionQueue m_deletionQueue;
 };
