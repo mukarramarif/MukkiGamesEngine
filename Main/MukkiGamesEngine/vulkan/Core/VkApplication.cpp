@@ -1867,7 +1867,7 @@ void VulkanApplication::cleanupComputeResources()
 
 void VulkanApplication::createRayTracingDescriptorSetLayout()
 {
- std::array<VkDescriptorSetLayoutBinding, 9> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 9> bindings{};
 
 	bindings[0].binding = 0;
 	bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -1914,13 +1914,13 @@ void VulkanApplication::createRayTracingDescriptorSetLayout()
 	bindings[7].binding = 7;
 	bindings[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	bindings[7].descriptorCount = 1;
-	bindings[7].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+	bindings[7].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 	bindings[7].pImmutableSamplers = nullptr;
 
 	bindings[8].binding = 8;
 	bindings[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	bindings[8].descriptorCount = 16;
-	bindings[8].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+	bindings[8].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 	bindings[8].pImmutableSamplers = nullptr;
 
 	VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -2092,22 +2092,24 @@ void VulkanApplication::createRayTracingDescriptorSet()
 
 	VkWriteDescriptorSet textureWrite{};
 	std::vector<VkDescriptorImageInfo> texImageInfos(16);
-	for (size_t i = 0; i < 16; i++) {
+	for (size_t i = 0; i < texImageInfos.size(); i++) {
 		texImageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		texImageInfos[i].imageView = textureImageView;
 		texImageInfos[i].sampler = textureSampler;
 	}
-	for (size_t i = 0; i < loadedModel.textures.size() && i < 16; i++) {
+	for (size_t i = 0; i < loadedModel.textures.size() && i < texImageInfos.size(); i++) {
 		if (loadedModel.textures[i].imageView != VK_NULL_HANDLE) {
+		    texImageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			texImageInfos[i].imageView = loadedModel.textures[i].imageView;
 			texImageInfos[i].sampler = loadedModel.textures[i].sampler;
 		}
 	}
+
 	textureWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 	textureWrite.dstSet = rayTracingDescriptorSet;
 	textureWrite.dstBinding = 8;
 	textureWrite.dstArrayElement = 0;
-	textureWrite.descriptorCount = 16;
+	textureWrite.descriptorCount = static_cast<uint32_t>(texImageInfos.size());
 	textureWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	textureWrite.pImageInfo = texImageInfos.data();
 
