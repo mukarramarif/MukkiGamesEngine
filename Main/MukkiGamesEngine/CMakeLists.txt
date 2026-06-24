@@ -127,6 +127,7 @@ endfunction()
 add_shaders(MukkiGamesEngine
     Shaders/shader.vert
     Shaders/compute.comp
+    Shaders/taa.comp
     Shaders/skybox.vert
     Shaders/skybox.frag
 )

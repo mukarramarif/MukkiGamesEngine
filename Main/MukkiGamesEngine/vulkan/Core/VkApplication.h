@@ -171,6 +171,11 @@ private:
 	void loadModel(const std::string& filepath);
 	void setupDefaultLights();
 	void cleanupComputeResources();
+	void createTAAPipeline();
+	void createTAAImages();
+	void cleanupTAAImages();
+	void cleanupTAAPipeline();
+	void updateTAADescriptorSets();
 
 	// New methods for pipeline setup
 	void createDescriptorSetLayout();
@@ -193,6 +198,24 @@ private:
 	VkDeviceMemory computeOutputImageMemory = VK_NULL_HANDLE;
 	VkImageView computeOutputImageView = VK_NULL_HANDLE;
 	VkExtent2D computeOutputImageExtent{};
+
+	// TAA resources
+	VkPipeline taaPipeline = VK_NULL_HANDLE;
+	VkPipelineLayout taaPipelineLayout = VK_NULL_HANDLE;
+	VkDescriptorSetLayout taaDescriptorSetLayout = VK_NULL_HANDLE;
+	VkDescriptorPool taaDescriptorPool = VK_NULL_HANDLE;
+	VkDescriptorSet taaDescriptorSet = VK_NULL_HANDLE;
+	VkImage taaHistoryImage = VK_NULL_HANDLE;
+	VkDeviceMemory taaHistoryImageMemory = VK_NULL_HANDLE;
+	VkImageView taaHistoryImageView = VK_NULL_HANDLE;
+	VkImage taaOutputImage = VK_NULL_HANDLE;
+	VkDeviceMemory taaOutputImageMemory = VK_NULL_HANDLE;
+	VkImageView taaOutputImageView = VK_NULL_HANDLE;
+	VkExtent2D taaImageExtent{};
+	bool taaFirstFrame = true;
+	uint64_t rtFrameCounter = 0;
+	glm::vec2 taaJitter = glm::vec2(0.0f);
+
 	RayTracingPipeline* rayTracingPipeline = nullptr;
 
 	//Object-Loader

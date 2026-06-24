@@ -25,6 +25,7 @@ layout(set = 0, binding = 2) uniform RayTracingScene {
     mat4 normalMatrix;
     Light lights[MAX_LIGHTS];
     vec4 lightParams;
+    vec4 jitter;
 } sceneData;
 
 layout(set = 0, binding = 7) uniform samplerCube cubemapSampler;
@@ -73,9 +74,8 @@ vec3 randomInHemisphere(vec3 normal, inout uint state)
 
 void main()
 {
-    const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
-    const vec2 uv = pixelCenter / vec2(gl_LaunchSizeEXT.xy);
-
+    vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5) + sceneData.jitter.xy;
+    vec2 uv = pixelCenter / vec2(gl_LaunchSizeEXT.xy);
     vec2 ndc = uv * 2.0 - 1.0;
     vec4 clip = vec4(ndc, 1.0, 1.0);
     vec4 view = sceneData.invProj * clip;

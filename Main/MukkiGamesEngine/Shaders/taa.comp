@@ -1,0 +1,68 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, rgba8) uniform readonly image2D currentImage;
+layout(set = 0, binding = 1, rgba8) uniform readonly image2D historyImage;
+layout(set = 0, binding = 2, rgba8) uniform writeonly image2D outputImage;
+
+layout(push_constant) uniform PushConstants {
+    vec2 resolution;
+    float blendFactor;
+    uint isFirstFrame;
+} pc;
+
+vec3 sampleCurrent(ivec2 coord) {
+    return imageLoad(currentImage, coord).rgb;
+}
+
+vec3 sampleHistory(ivec2 coord) {
+    return imageLoad(historyImage, coord).rgb;
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+
+    if (pixel.x >= int(pc.resolution.x) || pixel.y >= int(pc.resolution.y)) {
+        return;
+    }
+
+    vec3 current = sampleCurrent(pixel);
+
+    // First frame: no history to blend with, just pass through
+    if (pc.isFirstFrame != 0u) {
+        imageStore(outputImage, ivec2(pixel), vec4(current, 1.0));
+        return;
+    }
+
+    vec3 history = sampleHistory(pixel);
+
+    // Compute color bounding box from 3x3 neighborhood of current frame
+    vec3 minColor = current;
+    vec3 maxColor = current;
+
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            ivec2 neighbor = pixel + ivec2(dx, dy);
+            if (neighbor.x >= 0 && neighbor.x < int(pc.resolution.x) &&
+                    neighbor.y >= 0 && neighbor.y < int(pc.resolution.y)) {
+                vec3 n = sampleCurrent(neighbor);
+                minColor = min(minColor, n);
+                maxColor = max(maxColor, n);
+            }
+        }
+    }
+
+    // Expand bounding box slightly to reduce over-clamping
+    vec3 boxExtent = maxColor - minColor;
+    minColor -= boxExtent * 0.1;
+    maxColor += boxExtent * 0.1;
+
+    // Clamp history to valid color range around current sample
+    vec3 clampedHistory = clamp(history, minColor, maxColor);
+
+    // Blend: small blendFactor means more temporal accumulation
+    vec3 result = mix(clampedHistory, current, pc.blendFactor);
+
+    imageStore(outputImage, ivec2(pixel), vec4(result, 1.0));
+}
