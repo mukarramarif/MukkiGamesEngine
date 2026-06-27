@@ -10,11 +10,11 @@
 
 // Example vertices (triangle)
 const std::vector<Vertex> vertices = {
-	{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-	{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-	{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-	{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
-};
+		{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+		{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+		{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}},
+		{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}}
+	};
 
 const std::vector<uint32_t> indices = {
 	0, 1, 2, 2, 3, 0
@@ -63,7 +63,7 @@ void VulkanApplication::createRayTracingUniformBuffer()
 
 void VulkanApplication::createRayTracingGeometryBuffers()
 {
-	cleanupRayTracingGeometryBuffers();
+	cleanup GeometryBuffers();
 
 	if (loadedModel.meshes.empty()) {
 		return;
@@ -183,7 +183,7 @@ void VulkanApplication::updateRayTracingUniformBuffer()
 		glm::mat4 model;
 		glm::mat4 invModel;
 		glm::mat4 normalMatrix;
-      GPULight lights[MAX_LIGHTS];
+        GPULight lights[MAX_LIGHTS];
 		glm::vec4 lightParams;
 	};
 
@@ -234,7 +234,7 @@ void VulkanApplication::initVulkan()
 	std::cout << "glm::vec2 size: " << sizeof(glm::vec2) << " bytes" << std::endl;
 
 	// Sample vertex to verify actual memory layout
-	Vertex testVertex = { {1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}, {7.0f, 8.0f} };
+	Vertex testVertex = { {1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}, {7.0f, 8.0f}, {0.0f, 0.0f, 1.0f} };
 	std::cout << "Test vertex data:" << std::endl;
 	float* data = reinterpret_cast<float*>(&testVertex);
 	for (int i = 0; i < sizeof(Vertex) / sizeof(float); i++) {
@@ -308,14 +308,14 @@ void VulkanApplication::initVulkan()
 
 	// 11. Create descriptor set layout and pipeline layout BEFORE creating the pipeline
 	createDescriptorSetLayout();
- createRayTracingDescriptorSetLayout();
+    createRayTracingDescriptorSetLayout();
 	createPipelineLayout();
 
 	// 12. Create graphics pipeline (shaders and rendering configuration)
 	createGraphicsPipeline();
 
 	initComputePipeline();
-  initRayTracingPipeline();
+    initRayTracingPipeline();
 	// 13. Create vertex and index buffers
 	createVertexBuffer();
 	createIndexBuffer();
@@ -709,8 +709,8 @@ void VulkanApplication::drawFrame()
 				pipelineLayout,
 				loadedModel,
 				skybox,
-            swapChain->getSwapChainImages()[imageIndex],
-            swapChainImageLayouts[imageIndex],
+	           swapChain->getSwapChainImages()[imageIndex],
+	           swapChainImageLayouts[imageIndex],
 				modelDescriptorSets,
 				currentFrame,
 				*uiManager
@@ -728,7 +728,7 @@ void VulkanApplication::drawFrame()
 				pipelineLayout,
 				vertexBuffer,
 				indexBuffer,
-         swapChain->getSwapChainImages()[imageIndex],
+	        swapChain->getSwapChainImages()[imageIndex],
 				swapChainImageLayouts[imageIndex],
 				descriptorSets,
 				currentFrame,
@@ -736,6 +736,8 @@ void VulkanApplication::drawFrame()
 				*uiManager
 			);
 		}
+		// Track swap chain image layout for graphics mode
+		swapChainImageLayouts[imageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 	}
 
 

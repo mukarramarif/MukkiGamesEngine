@@ -155,7 +155,7 @@ private:
 	void cleanupMaterialUniformBuffers();
     void createRayTracingUniformBuffer();
 	void updateUniformBuffer(uint32_t currentImage);
-  void updateRayTracingUniformBuffer();
+    void updateRayTracingUniformBuffer();
 	void createTextureResources();
 	void drawFrame();
 	void recreateSwapChain();

@@ -2,11 +2,13 @@
 #include <iostream>
 #include <stdexcept>
 #include <set>
+#include <cstring>
 
 Device::Device(Instance& instance, VkSurfaceKHR surface) : surface(surface) {
 	this->instance = &instance;
 	this->surface = surface;
 	pickPhysicalDevice();
+	collectOptionalExtensions();
 	createLogicalDevice();
 }
 Device::~Device() {
@@ -151,10 +153,27 @@ SwapChainSupportDetails Device::querySwapChainSupport(VkPhysicalDevice device)
         vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
     }
 
-    return details;
-}
+    	return details;
+    }
 
-void Device::createLogicalDevice()
+    void Device::collectOptionalExtensions()
+    {
+    	uint32_t extensionCount;
+    	vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, nullptr);
+    	std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+    	vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, availableExtensions.data());
+
+    	// VK_NV_ray_tracing_validation — extra ray tracing validation from NVIDIA drivers
+    	for (const auto& ext : availableExtensions) {
+    		if (strcmp(ext.extensionName, VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME) == 0) {
+    			optionalDeviceExtensions.push_back(VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME);
+    			std::cout << "Enabled optional extension: VK_NV_ray_tracing_validation" << std::endl;
+    			break;
+    		}
+    	}
+    }
+
+    void Device::createLogicalDevice()
 {
     QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
@@ -193,8 +212,14 @@ void Device::createLogicalDevice()
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
     createInfo.pEnabledFeatures = &deviceFeatures;
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
-    createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+
+    // Merge required + optional extensions
+    std::vector<const char*> allExtensions = deviceExtensions;
+    allExtensions.insert(allExtensions.end(),
+                         optionalDeviceExtensions.begin(),
+                         optionalDeviceExtensions.end());
+    createInfo.enabledExtensionCount = static_cast<uint32_t>(allExtensions.size());
+    createInfo.ppEnabledExtensionNames = allExtensions.data();
     createInfo.pNext = &rayTracingFeatures;
 
     if (instance && instance->isValidEnabled()) {

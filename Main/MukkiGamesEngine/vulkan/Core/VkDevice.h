@@ -56,8 +56,11 @@ private:
 		VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
 		VK_KHR_SPIRV_1_4_EXTENSION_NAME,
 		VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME
-
 	};
+
+	// Optional: only enabled when the driver supports it
+	std::vector<const char*> optionalDeviceExtensions;
+	void collectOptionalExtensions();
 	void pickPhysicalDevice();
 	void createLogicalDevice();
 	bool isDeviceSuitable(VkPhysicalDevice device);
