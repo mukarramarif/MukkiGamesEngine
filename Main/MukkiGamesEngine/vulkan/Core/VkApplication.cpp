@@ -29,10 +29,11 @@ struct TAAPushConstants {
 
 // Example vertices (triangle)
 const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}};
+		{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+		{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+		{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}},
+		{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}}
+	};
 
 const std::vector<uint32_t> indices = {0, 1, 2, 2, 3, 0};
 
@@ -63,52 +64,70 @@ void VulkanApplication::createRayTracingUniformBuffer() {
               0, &rayTracingUniformBufferMapped);
 }
 
-void VulkanApplication::createRayTracingGeometryBuffers() {
-  cleanupRayTracingGeometryBuffers();
+void VulkanApplication::createRayTracingGeometryBuffers()
+{
+	 cleanupRayTracingGeometryBuffers();
 
-  if (loadedModel.meshes.empty()) {
-    return;
-  }
+	if (loadedModel.meshes.empty()) {
+		return;
+	}
 
-  std::vector<RayTracingPrimitiveInfo> primitiveInfos;
-  primitiveInfos.reserve(loadedModel.indices.size() / 3);
-  std::vector<RayTracingMeshInfo> meshInfos;
-  meshInfos.reserve(loadedModel.meshes.size());
+	std::vector<RayTracingPrimitiveInfo> primitiveInfos;
+	primitiveInfos.reserve(loadedModel.indices.size() / 3);
+	std::vector<RayTracingMeshInfo> meshInfos;
+	meshInfos.reserve(loadedModel.meshes.size());
 
-  uint32_t primitiveOffset = 0;
-  for (const auto &mesh : loadedModel.meshes) {
-    RayTracingMeshInfo meshInfo{};
-    meshInfo.primitiveOffset = primitiveOffset;
-    meshInfo.primitiveCount = static_cast<uint32_t>(mesh.primitives.size());
-    meshInfo.pad0 = 0;
-    meshInfo.pad1 = 0;
-    meshInfos.push_back(meshInfo);
+	uint32_t primitiveOffset = 0;
+	for (const auto& mesh : loadedModel.meshes) {
+		RayTracingMeshInfo meshInfo{};
+		meshInfo.primitiveOffset = primitiveOffset;
+		meshInfo.primitiveCount = static_cast<uint32_t>(mesh.primitives.size());
+		meshInfo.pad0 = 0;
+		meshInfo.pad1 = 0;
+		meshInfos.push_back(meshInfo);
 
-    for (const auto &primitive : mesh.primitives) {
-      RayTracingPrimitiveInfo primInfo{};
-      primInfo.firstIndex = primitive.firstIndex;
-      primInfo.indexCount = primitive.indexCount;
-      int32_t texIdx = -1;
-      float metallic = 0.0f;
-      float roughness = 1.0f;
-      glm::vec3 baseColor = glm::vec3(1.0f);
-      if (primitive.materialIndex >= 0 &&
-          primitive.materialIndex <
-              static_cast<int32_t>(loadedModel.materials.size())) {
-        const auto &mat = loadedModel.materials[primitive.materialIndex];
-        texIdx = mat.baseColorTextureIndex;
-        metallic = mat.metallicFactor;
-        roughness = mat.roughnessFactor;
-        baseColor = glm::vec3(mat.baseColorFactor);
-      }
-      primInfo.textureIndex = texIdx;
-      primInfo.metallicFactor = metallic;
-      primInfo.roughnessFactor = roughness;
-      primInfo.baseColorR = baseColor.r;
-      primInfo.baseColorG = baseColor.g;
-      primInfo.baseColorB = baseColor.b;
-      primitiveInfos.push_back(primInfo);
-    }
+		for (const auto& primitive : mesh.primitives) {
+			RayTracingPrimitiveInfo primInfo{};
+			primInfo.firstIndex = primitive.firstIndex;
+			primInfo.indexCount = primitive.indexCount;
+			int32_t texIdx = -1;
+			float metallic = 0.0f;
+			float roughness = 1.0f;
+			glm::vec3 baseColor = glm::vec3(1.0f);
+			if (primitive.materialIndex >= 0 &&
+				primitive.materialIndex < static_cast<int32_t>(loadedModel.materials.size())) {
+				const auto& mat = loadedModel.materials[primitive.materialIndex];
+				texIdx = mat.baseColorTextureIndex;
+				metallic = mat.metallicFactor;
+				roughness = mat.roughnessFactor;
+				baseColor = glm::vec3(mat.baseColorFactor);
+			}
+			primInfo.textureIndex = texIdx;
+			primInfo.metallicFactor = metallic;
+			primInfo.roughnessFactor = roughness;
+			primInfo.baseColorR = baseColor.r;
+			primInfo.baseColorG = baseColor.g;
+			primInfo.baseColorB = baseColor.b;
+			primitiveInfos.push_back(primInfo);
+		}
+
+		primitiveOffset += static_cast<uint32_t>(mesh.primitives.size());
+	}
+
+	if (!primitiveInfos.empty()) {
+		VkDeviceSize primBufferSize = sizeof(RayTracingPrimitiveInfo) * primitiveInfos.size();
+		device->createBuffer(
+			primBufferSize,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			rayTracingPrimitiveBuffer,
+			rayTracingPrimitiveBufferMemory);
+
+		void* mapped = nullptr;
+		vkMapMemory(device->getDevice(), rayTracingPrimitiveBufferMemory, 0, primBufferSize, 0, &mapped);
+		memcpy(mapped, primitiveInfos.data(), primBufferSize);
+		vkUnmapMemory(device->getDevice(), rayTracingPrimitiveBufferMemory);
+	}
 
     primitiveOffset += static_cast<uint32_t>(mesh.primitives.size());
   }
@@ -225,7 +244,55 @@ struct RayTracingCameraUBO {
   }
   ubo.lightParams.x = static_cast<float>(lightCount);
 
-  ubo.jitter = glm::vec4(taaJitter, 0.0f, 0.0f);
+void VulkanApplication::updateRayTracingUniformBuffer()
+{
+	VkExtent2D extent = swapChain->getSwapChainExtent();
+	float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+	glm::mat4 view = camera->getViewMatrix();
+	glm::mat4 proj = camera->getProjectionMatrix(aspect);
+	glm::mat4 invView = glm::inverse(view);
+	glm::mat4 invProj = glm::inverse(proj);
+	glm::vec4 camPos = glm::vec4(camera->position, 1.0f);
+
+	struct RayTracingCameraUBO {
+		glm::mat4 invView;
+		glm::mat4 invProj;
+		glm::vec4 cameraPos;
+		glm::mat4 model;
+		glm::mat4 invModel;
+		glm::mat4 normalMatrix;
+        GPULight lights[MAX_LIGHTS];
+		glm::vec4 lightParams;
+	};
+
+	RayTracingCameraUBO ubo{};
+	ubo.invView = invView;
+	ubo.invProj = invProj;
+	ubo.cameraPos = camPos;
+
+	glm::mat4 model = glm::mat4(1.0f);
+	model = glm::translate(model, modelTransform.position);
+	model = glm::rotate(model, glm::radians(modelTransform.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+	model = glm::rotate(model, glm::radians(modelTransform.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+	model = glm::rotate(model, glm::radians(modelTransform.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+	model = glm::scale(model, glm::vec3(modelTransform.scale));
+	ubo.model = model;
+	ubo.invModel = glm::inverse(model);
+	ubo.normalMatrix = glm::transpose(ubo.invModel);
+
+	ubo.lightParams = glm::vec4(0.0f);
+	ubo.lightParams.y = ambientStrength;
+	ubo.lightParams.z = static_cast<float>(lights.size());
+	ubo.lightParams.w = static_cast<float>(accumulationFrameCount);
+
+	int lightCount = 0;
+	for (size_t i = 0; i < lights.size() && lightCount < MAX_LIGHTS; ++i) {
+		if (lights[i].enabled) {
+			ubo.lights[lightCount] = lights[i].toGPU();
+			++lightCount;
+		}
+	}
+	ubo.lightParams.x = static_cast<float>(lightCount);
 
   memcpy(rayTracingUniformBufferMapped, &ubo, sizeof(ubo));
 }
@@ -236,40 +303,90 @@ void VulkanApplication::run() {
   cleanup();
 }
 
-void VulkanApplication::initVulkan() {
-  std::cout << "\n=== VERTEX LAYOUT DIAGNOSTICS ===" << std::endl;
-  Vertex::printLayout();
-  std::cout << "glm::vec3 size: " << sizeof(glm::vec3) << " bytes" << std::endl;
-  std::cout << "glm::vec2 size: " << sizeof(glm::vec2) << " bytes" << std::endl;
+void VulkanApplication::initVulkan()
+{
+	std::cout << "\n=== VERTEX LAYOUT DIAGNOSTICS ===" << std::endl;
+	Vertex::printLayout();
+	std::cout << "glm::vec3 size: " << sizeof(glm::vec3) << " bytes" << std::endl;
+	std::cout << "glm::vec2 size: " << sizeof(glm::vec2) << " bytes" << std::endl;
 
-  // Sample vertex to verify actual memory layout
-  Vertex testVertex = {{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}, {7.0f, 8.0f}};
-  std::cout << "Test vertex data:" << std::endl;
-  float *data = reinterpret_cast<float *>(&testVertex);
-  for (int i = 0; i < sizeof(Vertex) / sizeof(float); i++) {
-    std::cout << "  [" << i << "] = " << data[i] << std::endl;
-  }
-  std::cout << "================================\n" << std::endl;
-  // 0. Ensure shaders are compiled to SPIR-V (will skip if up-to-date)
-  ShaderCompiler::compileShadersIfNeeded();
+	// Sample vertex to verify actual memory layout
+	Vertex testVertex = { {1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}, {7.0f, 8.0f}, {0.0f, 0.0f, 1.0f} };
+	std::cout << "Test vertex data:" << std::endl;
+	float* data = reinterpret_cast<float*>(&testVertex);
+	for (int i = 0; i < sizeof(Vertex) / sizeof(float); i++) {
+		std::cout << "  [" << i << "] = " << data[i] << std::endl;
+	}
+	std::cout << "================================\n" << std::endl;
+	// 0. Ensure shaders are compiled to SPIR-V (will skip if up-to-date)
+	ShaderCompiler::compileShadersIfNeeded();
 
-  // 1. Create window
-  window = new EngineWindow();
-  window->init(800, 600, "Mukki Games Engine");
-  glfwSetWindowUserPointer(window->getGLFWwindow(), this);
-  m_deletionQueue.push([this]() {
-    if (window) {
-      window->cleanup();
-      delete window;
-      window = nullptr;
-    }
-  });
+	// 1. Create window
+	window = new EngineWindow();
+	window->init(800, 600, "Mukki Games Engine");
+	glfwSetWindowUserPointer(window->getGLFWwindow(), this);
+	// 2. Create instance (Vulkan context)
+	instance.createInstance();
+
+	// 3. Create surface (connection between Vulkan and window)
+	VkSurfaceKHR surface = window->createSurface(instance.getInstance());
+
+	// 4. Create device (select GPU and create logical device)
+	device = new Device(instance, surface);
+
+	// 5. Create swap chain (manages images for presentation)
+	swapChain = new VulkanSwap();
+	swapChain->initSwap(*device, surface, window->getGLFWwindow());
+	swapChain->createImageViews();
+
+	// 6. Create render pass (defines how rendering operations are performed)
+	renderPassObj = new VulkanRenderPass(device, swapChain->getSwapChainImageFormat());
+	renderPass = renderPassObj->getRenderPass();
+
+	// 7. Create command buffers FIRST (required by BufferManager and TextureManager)
+	commandBufferManager = new CommandBufferManager();
+	commandBufferManager->init(device, MAX_FRAMES_IN_FLIGHT);
+
+	// 8. Initialize BufferManager and TextureManager (they depend on CommandBufferManager)
+	bufferManager = new BufferManager();
+	bufferManager->init(*device, *commandBufferManager);
+
+	textureManager = new TextureManager();
+	textureManager->init(*device, *commandBufferManager, *bufferManager);
+
+	rayTracingAS = new RayTracingAS();
+	rayTracingAS->init(device, commandBufferManager);
+
+	objectLoader = new ObjectLoader();
+	objectLoader->init(device, textureManager, bufferManager);
+
+	sceneLoader = new SceneLoader();
+	sceneLoader->init(device, textureManager, bufferManager, objectLoader);
+	sceneLoader->loadScene(ASSETS_PATH + availableScenes[0] );
+
+	skybox = new SkyBox();
+	std::string skyboxFileName = sceneLoader->getConfig().skyboxPath;
+	if(skyboxFileName.empty()) skyboxFileName = "studio_small.hdr";
+	std::string fullSkyboxPath = std::string(ASSETS_PATH) + skyboxFileName;
+
+	skybox->init(device, textureManager, bufferManager,
+		renderPass, fullSkyboxPath,
+		CubemapLayout::VerticalCross, MAX_FRAMES_IN_FLIGHT);
+
+	// 9. Create depth resources using TextureManager
+	VkExtent2D extent = swapChain->getSwapChainExtent();
+	textureManager->createdepthResources(depthImage, depthImageMemory, depthImageView,
+		extent.width, extent.height);
+	objectLoader = new ObjectLoader();
+	objectLoader->init(device, textureManager, bufferManager);
 
   // 2. Create instance (Vulkan context)
   instance.createInstance();
 
-  // 3. Create surface (connection between Vulkan and window)
-  VkSurfaceKHR surface = window->createSurface(instance.getInstance());
+	// 11. Create descriptor set layout and pipeline layout BEFORE creating the pipeline
+	createDescriptorSetLayout();
+  createRayTracingDescriptorSetLayout();
+	createPipelineLayout();
 
   // 4. Create device (select GPU and create logical device)
   device = new Device(instance, surface);
@@ -376,117 +493,62 @@ void VulkanApplication::initVulkan() {
     }
   });
 
+	initComputePipeline();
+	createAccumulationImage();
   initRayTracingPipeline();
-  m_deletionQueue.push([this]() {
-    if (rayTracingPipeline) {
-      rayTracingPipeline->cleanup();
-      delete rayTracingPipeline;
-      rayTracingPipeline = nullptr;
-    }
-  });
+	// 13. Create vertex and index buffers
+	createVertexBuffer();
+	createIndexBuffer();
+	createTextureResources();
+	createUniformBuffers();
+	createDefaultMaterialUniformBuffers();
+	createRayTracingUniformBuffer();
 
-  // Initialize TAA pipeline and images
-  createTAAPipeline();
-  createTAAImages();
-  updateTAADescriptorSets();
-  m_deletionQueue.push([this]() {
-    cleanupTAAPipeline();
-    cleanupTAAImages();
-  });
+	lights = sceneLoader->getLights();
+	ambientStrength = sceneLoader->getConfig().ambientStrenght;
+	if(lights.empty()) {
+		setupDefaultLights();
+	}
 
-  // 13. Create vertex and index buffers
-  createVertexBuffer();
-  m_deletionQueue.pushBuffer(device->getDevice(), vertexBuffer,
-                             vertexBufferMemory);
-  createIndexBuffer();
-  m_deletionQueue.pushBuffer(device->getDevice(), indexBuffer,
-                             indexBufferMemory);
-  createTextureResources();
-  m_deletionQueue.push([this]() {
-    if (textureSampler != VK_NULL_HANDLE)
-      textureManager->destroySampler(textureSampler);
-    if (textureImageView != VK_NULL_HANDLE)
-      textureManager->destroyImageView(textureImageView);
-    if (textureImage != VK_NULL_HANDLE)
-      textureManager->destroyImage(textureImage, textureImageMemory);
-  });
-  createUniformBuffers();
-  m_deletionQueue.push([this]() {
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-      if (uniformBuffers[i] != VK_NULL_HANDLE)
-        vkDestroyBuffer(device->getDevice(), uniformBuffers[i], nullptr);
-      if (uniformBuffersMemory[i] != VK_NULL_HANDLE)
-        vkFreeMemory(device->getDevice(), uniformBuffersMemory[i], nullptr);
-    }
-  });
-  createDefaultMaterialUniformBuffers();
-  m_deletionQueue.push([this]() {
-    for (size_t i = 0; i < defaultMaterialUniformBuffers.size(); i++) {
-      if (defaultMaterialUniformBuffers[i] != VK_NULL_HANDLE)
-        vkDestroyBuffer(device->getDevice(), defaultMaterialUniformBuffers[i],
-                        nullptr);
-      if (i < defaultMaterialUniformBuffersMemory.size() &&
-          defaultMaterialUniformBuffersMemory[i] != VK_NULL_HANDLE)
-        vkFreeMemory(device->getDevice(),
-                     defaultMaterialUniformBuffersMemory[i], nullptr);
-    }
-  });
-  createRayTracingUniformBuffer();
-  m_deletionQueue.pushBuffer(device->getDevice(), rayTracingUniformBuffer,
-                             rayTracingUniformBufferMemory);
+	// 14. Create descriptor sets (for uniforms, textures, etc.)
+	descriptorBoss = new VkDescriptorBoss(device, MAX_FRAMES_IN_FLIGHT);
+	descriptorBoss->createDescriptorPool(MAX_FRAMES_IN_FLIGHT);
+	descriptorBoss->createDescriptorSets(
+		descriptorSetLayout,  // Use the member variable
+		MAX_FRAMES_IN_FLIGHT,
+		descriptorSets
+	);
 
-  lights = sceneLoader->getLights();
-  ambientStrength = sceneLoader->getConfig().ambientStrenght;
-  if (lights.empty()) {
-    setupDefaultLights();
-  }
+	descriptorBoss->updateDescriptorSets(
+		descriptorSets,
+		uniformBuffers,
+		defaultMaterialUniformBuffers,
+		textureImageView,
+		textureSampler
+	);
 
-  // 14. Create descriptor sets (for uniforms, textures, etc.)
-  descriptorBoss = new VkDescriptorBoss(device, MAX_FRAMES_IN_FLIGHT);
-  descriptorBoss->createDescriptorPool(MAX_FRAMES_IN_FLIGHT);
-  descriptorBoss->createDescriptorSets(
-      descriptorSetLayout, // Use the member variable
-      MAX_FRAMES_IN_FLIGHT, descriptorSets);
+	createRayTracingDescriptorPool();
+	createRayTracingDescriptorSet();
 
-  descriptorBoss->updateDescriptorSets(descriptorSets, uniformBuffers,
-                                       defaultMaterialUniformBuffers,
-                                       textureImageView, textureSampler);
+	auto sceneObjects = sceneLoader->getObjects();
+	if (!sceneObjects.empty()) {
+		loadModel(ASSETS_PATH + sceneObjects[0].modelPath);
+	}
+	else {
+		loadModel(ASSETS_PATH "Car_Model/scene.gltf");
+	}
 
-  createRayTracingDescriptorPool();
-  m_deletionQueue.pushDescriptorPool(device->getDevice(),
-                                     rayTracingDescriptorPool);
-  createRayTracingDescriptorSet();
-  m_deletionQueue.pushObject(descriptorBoss);
+	// 15. Create synchronization objects (semaphores and fences)
+	createSyncObjects();
 
-  auto sceneObjects = sceneLoader->getObjects();
-  if (!sceneObjects.empty()) {
-    loadModel(ASSETS_PATH + sceneObjects[0].modelPath);
-  } else {
-    loadModel(ASSETS_PATH "Car_Model/scene.gltf");
-  }
+	// Initialize camera
+	glm::vec3 camPos = sceneLoader->hasCameraSettings() ? sceneLoader->getInitialCameraPosition() : glm::vec3(0.0f, 0.0f, 3.0f);
+	camera = new Camera(camPos);
 
-  // 15. Create synchronization objects (semaphores and fences)
-  createSyncObjects();
-  m_deletionQueue.push([this]() {
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-      vkDestroySemaphore(device->getDevice(), imageAvailableSemaphores[i],
-                         nullptr);
-      vkDestroyFence(device->getDevice(), inFlightFences[i], nullptr);
-    }
-  });
-
-  // Initialize camera
-  glm::vec3 camPos = sceneLoader->hasCameraSettings()
-                         ? sceneLoader->getInitialCameraPosition()
-                         : glm::vec3(0.0f, 0.0f, 3.0f);
-  camera = new Camera(camPos);
-  m_deletionQueue.pushRawDelete(camera);
-
-  // Setup mouse callback
-  glfwSetInputMode(window->getGLFWwindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-  glfwSetCursorPosCallback(window->getGLFWwindow(), mouseCallback);
-  SetupUIManager();
-  m_deletionQueue.pushObject(uiManager);
+	// Setup mouse callback
+	glfwSetInputMode(window->getGLFWwindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+	glfwSetCursorPosCallback(window->getGLFWwindow(), mouseCallback);
+	SetupUIManager();
 }
 
 void VulkanApplication::createSyncObjects() {
@@ -753,227 +815,247 @@ void VulkanApplication::createTextureResources() {
   textureManager->createTextureSampler(textureSampler);
 }
 
-void VulkanApplication::drawFrame() {
-  // 1. Wait for the current frame's fence
-  vkWaitForFences(device->getDevice(), 1, &inFlightFences[currentFrame],
-                  VK_TRUE, UINT64_MAX);
+void VulkanApplication::drawFrame()
+{
+	// 1. Wait for the current frame's fence
+	vkWaitForFences(device->getDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
-  // 2. Acquire image from swap chain
-  uint32_t imageIndex;
-  VkResult result = vkAcquireNextImageKHR(
-      device->getDevice(), swapChain->getSwapChain(), UINT64_MAX,
-      imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+	// 2. Acquire image from swap chain
+	uint32_t imageIndex;
+	VkResult result = vkAcquireNextImageKHR(
+		device->getDevice(),
+		swapChain->getSwapChain(),
+		UINT64_MAX,
+		imageAvailableSemaphores[currentFrame],
+		VK_NULL_HANDLE,
+		&imageIndex
+	);
 
-  if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-    recreateSwapChain();
-    return;
-  } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
-    throw std::runtime_error("failed to acquire swap chain image!");
-  }
+	if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+		recreateSwapChain();
+		return;
+	} else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+		throw std::runtime_error("failed to acquire swap chain image!");
+	}
 
-  // 3. Check if a previous frame is using this image (wait for it)
-  if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
-    vkWaitForFences(device->getDevice(), 1, &imagesInFlight[imageIndex],
-                    VK_TRUE, UINT64_MAX);
-  }
-  // Mark the image as being in use by this frame
-  imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+	// 3. Check if a previous frame is using this image (wait for it)
+	if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+		vkWaitForFences(device->getDevice(), 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+	}
+	// Mark the image as being in use by this frame
+	imagesInFlight[imageIndex] = inFlightFences[currentFrame];
 
-  // 4. Reset fence only after we're sure we'll submit work
-  vkResetFences(device->getDevice(), 1, &inFlightFences[currentFrame]);
-  updateUniformBuffer(currentFrame);
-  if (currentRenderMode == RenderMode::RAYTRACING) {
-    updateRayTracingUniformBuffer();
-  }
-  if (skybox) {
-    VkExtent2D extent = swapChain->getSwapChainExtent();
-    float aspect = extent.width / (float)extent.height;
-    glm::mat4 view = camera->getSkyboxVPMatrix(aspect, 0.1f, 100.f);
-    skybox->updateUniformBuffer(currentFrame, view);
-  }
-  // 5. Record command buffer
-  commandBufferManager->resetCommandBuffer(currentFrame);
-  VkCommandBuffer commandBuffer =
-      commandBufferManager->getCommandBuffer(currentFrame);
-  if (currentRenderMode == RenderMode::COMPUTE) {
-    recordComputeCommandBuffer(commandBuffer, imageIndex);
-    swapChainImageLayouts[imageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-  } else if (currentRenderMode == RenderMode::RAYTRACING) {
-    recordRayTracingCommandBuffer(commandBuffer, imageIndex);
-    swapChainImageLayouts[imageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-  } else {
-    if (modelLoaded && !modelDescriptorSets.empty()) {
-      // Render loaded model with per-material textures
-      commandBufferManager->recordModelCommandBuffer(
-          commandBuffer, imageIndex, renderPass,
-          swapChain->getSwapChainFramebuffers()[imageIndex],
-          swapChain->getSwapChainExtent(),
-          graphicsPipeline->getGraphicsPipeline(),
-          additivePipeline ? additivePipeline->getGraphicsPipeline()
-                           : VK_NULL_HANDLE,
-          pipelineLayout, loadedModel, skybox,
-          swapChain->getSwapChainImages()[imageIndex],
-          swapChainImageLayouts[imageIndex], modelDescriptorSets, currentFrame,
-          *uiManager);
-    } else {
-      // Fallback to default quad rendering
-      commandBufferManager->recordCommandBuffer(
-          commandBuffer, imageIndex, renderPass,
-          swapChain->getSwapChainFramebuffers()[imageIndex],
-          swapChain->getSwapChainExtent(),
-          graphicsPipeline->getGraphicsPipeline(), pipelineLayout, vertexBuffer,
-          indexBuffer, swapChain->getSwapChainImages()[imageIndex],
-          swapChainImageLayouts[imageIndex], descriptorSets, currentFrame,
-          indexCount, *uiManager);
-    }
-  }
+	// 4. Reset fence only after we're sure we'll submit work
+	vkResetFences(device->getDevice(), 1, &inFlightFences[currentFrame]);
 
-  // 6. Submit command buffer
-  VkSubmitInfo submitInfo{};
-  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	if (currentRenderMode == RenderMode::RAYTRACING) {
+		if (cameraMoved) {
+			accumulationFrameCount = 0;
+			cameraMoved = false;
+		}
+		updateRayTracingUniformBuffer();
+		++accumulationFrameCount;
+	}
 
-  VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
-  VkPipelineStageFlags waitStages[] = {
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-  submitInfo.waitSemaphoreCount = 1;
-  submitInfo.pWaitSemaphores = waitSemaphores;
-  submitInfo.pWaitDstStageMask = waitStages;
-  submitInfo.commandBufferCount = 1;
-  submitInfo.pCommandBuffers = &commandBuffer;
+	updateUniformBuffer(currentFrame);
+	if (skybox) {
+		VkExtent2D extent = swapChain->getSwapChainExtent();
+		float aspect = extent.width / (float)extent.height;
+		glm::mat4 view = camera->getSkyboxVPMatrix(aspect, 0.1f, 100.f);
+		skybox->updateUniformBuffer(currentFrame, view);
+	}
+	// 5. Record command buffer
+	commandBufferManager->resetCommandBuffer(currentFrame);
+	VkCommandBuffer commandBuffer = commandBufferManager->getCommandBuffer(currentFrame);
+	if (currentRenderMode == RenderMode::COMPUTE) {
+		recordComputeCommandBuffer(commandBuffer, imageIndex);
+       swapChainImageLayouts[imageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	}
+	else if (currentRenderMode == RenderMode::RAYTRACING) {
+		recordRayTracingCommandBuffer(commandBuffer, imageIndex);
+		swapChainImageLayouts[imageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	}
+	else {
+		if (modelLoaded && !modelDescriptorSets.empty()) {
+			// Render loaded model with per-material textures
+			commandBufferManager->recordModelCommandBuffer(
+				commandBuffer,
+				imageIndex,
+				renderPass,
+				swapChain->getSwapChainFramebuffers()[imageIndex],
+				swapChain->getSwapChainExtent(),
+				graphicsPipeline->getGraphicsPipeline(),
+				additivePipeline ? additivePipeline->getGraphicsPipeline() : VK_NULL_HANDLE,
+				pipelineLayout,
+				loadedModel,
+				skybox,
+	           swapChain->getSwapChainImages()[imageIndex],
+	           swapChainImageLayouts[imageIndex],
+				modelDescriptorSets,
+				currentFrame,
+				*uiManager
+			);
+		}
+		else {
+			// Fallback to default quad rendering
+			commandBufferManager->recordCommandBuffer(
+				commandBuffer,
+				imageIndex,
+				renderPass,
+				swapChain->getSwapChainFramebuffers()[imageIndex],
+				swapChain->getSwapChainExtent(),
+				graphicsPipeline->getGraphicsPipeline(),
+				pipelineLayout,
+				vertexBuffer,
+				indexBuffer,
+	        swapChain->getSwapChainImages()[imageIndex],
+				swapChainImageLayouts[imageIndex],
+				descriptorSets,
+				currentFrame,
+				indexCount,
+				*uiManager
+			);
+		}
+		// Track swap chain image layout for graphics mode
+		swapChainImageLayouts[imageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	}
 
-  // Use the per-image semaphore for signaling
-  VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[imageIndex]};
-  submitInfo.signalSemaphoreCount = 1;
-  submitInfo.pSignalSemaphores = signalSemaphores;
 
-  if (vkQueueSubmit(device->getGraphicsQueue(), 1, &submitInfo,
-                    inFlightFences[currentFrame]) != VK_SUCCESS) {
-    throw std::runtime_error("failed to submit draw command buffer!");
-  }
+	// 6. Submit command buffer
+	VkSubmitInfo submitInfo{};
+	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-  // 7. Present result
-  VkPresentInfoKHR presentInfo{};
-  presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-  presentInfo.waitSemaphoreCount = 1;
-  presentInfo.pWaitSemaphores = signalSemaphores;
+	VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
+	VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+	submitInfo.waitSemaphoreCount = 1;
+	submitInfo.pWaitSemaphores = waitSemaphores;
+	submitInfo.pWaitDstStageMask = waitStages;
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &commandBuffer;
 
-  VkSwapchainKHR swapChains[] = {swapChain->getSwapChain()};
-  presentInfo.swapchainCount = 1;
-  presentInfo.pSwapchains = swapChains;
-  presentInfo.pImageIndices = &imageIndex;
+	// Use the per-image semaphore for signaling
+	VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[imageIndex]};
+	submitInfo.signalSemaphoreCount = 1;
+	submitInfo.pSignalSemaphores = signalSemaphores;
 
-  result = vkQueuePresentKHR(device->getPresentQueue(), &presentInfo);
+	if (vkQueueSubmit(device->getGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
+		throw std::runtime_error("failed to submit draw command buffer!");
+	}
 
-  if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-    recreateSwapChain();
-  } else if (result != VK_SUCCESS) {
-    throw std::runtime_error("failed to present swap chain image!");
-  }
+	// 7. Present result
+	VkPresentInfoKHR presentInfo{};
+	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+	presentInfo.waitSemaphoreCount = 1;
+	presentInfo.pWaitSemaphores = signalSemaphores;
 
-  currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+	VkSwapchainKHR swapChains[] = {swapChain->getSwapChain()};
+	presentInfo.swapchainCount = 1;
+	presentInfo.pSwapchains = swapChains;
+	presentInfo.pImageIndices = &imageIndex;
+
+	result = vkQueuePresentKHR(device->getPresentQueue(), &presentInfo);
+
+	if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+		recreateSwapChain();
+	} else if (result != VK_SUCCESS) {
+		throw std::runtime_error("failed to present swap chain image!");
+	}
+
+	currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
-void VulkanApplication::recreateSwapChain() {
-  int width = 0, height = 0;
-  glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
-  while (width == 0 || height == 0) {
-    glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
-    glfwWaitEvents();
-  }
+void VulkanApplication::recreateSwapChain()
+{
+	int width = 0, height = 0;
+	glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
+	while (width == 0 || height == 0) {
+		glfwGetFramebufferSize(window->getGLFWwindow(), &width, &height);
+		glfwWaitEvents();
+	}
 
-  vkDeviceWaitIdle(device->getDevice());
+	vkDeviceWaitIdle(device->getDevice());
 
-  // Cleanup old depth resources using TextureManager
-  if (depthImageView != VK_NULL_HANDLE) {
-    textureManager->destroyImageView(depthImageView);
-    depthImageView = VK_NULL_HANDLE;
-  }
-  if (depthImage != VK_NULL_HANDLE) {
-    textureManager->destroyImage(depthImage, depthImageMemory);
-    depthImage = VK_NULL_HANDLE;
-    depthImageMemory = VK_NULL_HANDLE;
-  }
+	// Cleanup old depth resources using TextureManager
+	if (depthImageView != VK_NULL_HANDLE) {
+		textureManager->destroyImageView(depthImageView);
+		depthImageView = VK_NULL_HANDLE;
+	}
+	if (depthImage != VK_NULL_HANDLE) {
+		textureManager->destroyImage(depthImage, depthImageMemory);
+		depthImage = VK_NULL_HANDLE;
+		depthImageMemory = VK_NULL_HANDLE;
+	}
 
-  // Cleanup old compute output image
-  if (computeOutputImageView != VK_NULL_HANDLE) {
-    vkDestroyImageView(device->getDevice(), computeOutputImageView, nullptr);
-    computeOutputImageView = VK_NULL_HANDLE;
-  }
-  if (computeOutputImage != VK_NULL_HANDLE) {
-    vkDestroyImage(device->getDevice(), computeOutputImage, nullptr);
-    computeOutputImage = VK_NULL_HANDLE;
-  }
-  if (computeOutputImageMemory != VK_NULL_HANDLE) {
-    vkFreeMemory(device->getDevice(), computeOutputImageMemory, nullptr);
-    computeOutputImageMemory = VK_NULL_HANDLE;
-  }
+	// Cleanup old compute output image
+	if (computeOutputImageView != VK_NULL_HANDLE) {
+		vkDestroyImageView(device->getDevice(), computeOutputImageView, nullptr);
+		computeOutputImageView = VK_NULL_HANDLE;
+	}
+	if (computeOutputImage != VK_NULL_HANDLE) {
+		vkDestroyImage(device->getDevice(), computeOutputImage, nullptr);
+		computeOutputImage = VK_NULL_HANDLE;
+	}
+	if (computeOutputImageMemory != VK_NULL_HANDLE) {
+		vkFreeMemory(device->getDevice(), computeOutputImageMemory, nullptr);
+		computeOutputImageMemory = VK_NULL_HANDLE;
+	}
 
-  // Cleanup old TAA images
-  cleanupTAAImages();
+	cleanupAccumulationResources();
 
-  // Cleanup old per-image semaphores
-  for (size_t i = 0; i < renderFinishedSemaphores.size(); i++) {
-    vkDestroySemaphore(device->getDevice(), renderFinishedSemaphores[i],
-                       nullptr);
-  }
+	// Cleanup old per-image semaphores
+	for (size_t i = 0; i < renderFinishedSemaphores.size(); i++) {
+		vkDestroySemaphore(device->getDevice(), renderFinishedSemaphores[i], nullptr);
+	}
 
-  // Cleanup old graphics pipeline
-  if (graphicsPipeline) {
-    delete graphicsPipeline;
-    graphicsPipeline = nullptr;
-  }
-  if (additivePipeline) {
-    delete additivePipeline;
-    additivePipeline = nullptr;
-  }
+	// Cleanup old graphics pipeline
+	if (graphicsPipeline) {
+		delete graphicsPipeline;
+		graphicsPipeline = nullptr;
+	}
+	if(additivePipeline) {
+		delete additivePipeline;
+		additivePipeline = nullptr;
+	}
 
-  // Cleanup old swap chain
-  swapChain->cleanup();
+	// Cleanup old swap chain
+	swapChain->cleanup();
 
-  // Recreate swap chain and dependent objects
-  swapChain->initSwap(*device, window->getSurface(), window->getGLFWwindow());
-  swapChain->createImageViews();
+	// Recreate swap chain and dependent objects
+	swapChain->initSwap(*device, window->getSurface(), window->getGLFWwindow());
+	swapChain->createImageViews();
 
-  VkExtent2D swapExtent = swapChain->getSwapChainExtent();
-  textureManager->createdepthResources(depthImage, depthImageMemory,
-                                       depthImageView, swapExtent.width,
-                                       swapExtent.height);
-  swapChain->createFramebuffers(renderPass, depthImageView);
+	VkExtent2D swapExtent = swapChain->getSwapChainExtent();
+	textureManager->createdepthResources(depthImage, depthImageMemory, depthImageView, swapExtent.width, swapExtent.height);
+	swapChain->createFramebuffers(renderPass, depthImageView);
 
-  // Recreate graphics pipeline
-  createGraphicsPipeline();
+	// Recreate graphics pipeline
+	createGraphicsPipeline();
 
-  // Recreate compute output image
-  createComputeOutputImage();
+	// Recreate compute output image
+	createComputeOutputImage();
+	createAccumulationImage();
+	createRayTracingDescriptorSet();
 
-  // Recreate TAA images
-  createTAAImages();
-  updateTAADescriptorSets();
-  taaFirstFrame = true;
+	// IMPORTANT: Update compute pipeline descriptor sets with new image view
+	if (computePipeline) {
+		computePipeline->resetDesciriptorPool(device);
+		computePipeline->createDescriptorSets(device, computeOutputImageView);
+	}
 
-  createRayTracingDescriptorSet();
+	// Recreate per-image semaphores for new swapchain
+	size_t imageCount = swapChain->getSwapChainImages().size();
+	renderFinishedSemaphores.resize(imageCount);
+	imagesInFlight.resize(imageCount, VK_NULL_HANDLE);
+	swapChainImageLayouts.assign(imageCount, VK_IMAGE_LAYOUT_UNDEFINED);
 
-  // IMPORTANT: Update compute pipeline descriptor sets with new image view
-  if (computePipeline) {
-    computePipeline->resetDesciriptorPool(device);
-    computePipeline->createDescriptorSets(device, computeOutputImageView);
-  }
+	VkSemaphoreCreateInfo semaphoreInfo{};
+	semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
-  // Recreate per-image semaphores for new swapchain
-  size_t imageCount = swapChain->getSwapChainImages().size();
-  renderFinishedSemaphores.resize(imageCount);
-  imagesInFlight.resize(imageCount, VK_NULL_HANDLE);
-  swapChainImageLayouts.assign(imageCount, VK_IMAGE_LAYOUT_UNDEFINED);
-
-  VkSemaphoreCreateInfo semaphoreInfo{};
-  semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-  for (size_t i = 0; i < imageCount; i++) {
-    if (vkCreateSemaphore(device->getDevice(), &semaphoreInfo, nullptr,
-                          &renderFinishedSemaphores[i]) != VK_SUCCESS) {
-      throw std::runtime_error("failed to recreate per-image semaphores!");
-    }
-  }
+	for (size_t i = 0; i < imageCount; i++) {
+		if (vkCreateSemaphore(device->getDevice(), &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
+			throw std::runtime_error("failed to recreate per-image semaphores!");
+		}
+	}
 }
 
 void VulkanApplication::SetupUIManager() {
@@ -995,71 +1077,74 @@ void VulkanApplication::SetupUIManager() {
   uiManager->init(renderData, window);
 }
 
-void VulkanApplication::mainLoop() {
-  while (!glfwWindowShouldClose(window->getGLFWwindow())) {
-    float currentFrame = static_cast<float>(glfwGetTime());
-    deltaTime = currentFrame - lastFrame;
-    lastFrame = currentFrame;
+void VulkanApplication::mainLoop()
+{
+	while (!glfwWindowShouldClose(window->getGLFWwindow())) {
+		float currentFrame = static_cast<float>(glfwGetTime());
+		deltaTime = currentFrame - lastFrame;
+		lastFrame = currentFrame;
 
-    glfwPollEvents();
-    processInput();
+		glfwPollEvents();
+		processInput();
 
-    uiManager->newFrame();
-    float fps = 1.0f / deltaTime;
-    uiManager->renderDebugWindow(fps, deltaTime);
-    uiManager->renderCameraInfo(camera->position, camera->front);
-    uiManager->renderModelTransformWindow(modelTransform, deltaTime);
-    uiManager->renderLightingWindow(lights, ambientStrength);
-    bool loadSceneFlag = false;
-    uiManager->renderSceneLoader(
-        loadSceneFlag, availableScenes, currentSceneIndex,
-        [this](int sceneIndex) {
-          if (sceneIndex < 0 ||
-              sceneIndex >= static_cast<int>(availableScenes.size())) {
-            return;
-          }
+		uiManager->newFrame();
+		float fps = 1.0f / deltaTime;
+		uiManager->renderDebugWindow(fps, deltaTime);
+		uiManager->renderCameraInfo(camera->position, camera->front);
+		uiManager->renderModelTransformWindow(modelTransform, deltaTime);
+		uiManager->renderLightingWindow(lights, ambientStrength);
+		bool loadSceneFlag = false;
+		uiManager->renderSceneLoader(
+			loadSceneFlag,
+			availableScenes,
+			currentSceneIndex,
+			[this](int sceneIndex) {
+				if (sceneIndex < 0 || sceneIndex >= static_cast<int>(availableScenes.size())) {
+					return;
+				}
 
-          if (!sceneLoader->loadScene(ASSETS_PATH +
-                                      availableScenes[sceneIndex])) {
-            return;
-          }
+				if (!sceneLoader->loadScene(ASSETS_PATH + availableScenes[sceneIndex])) {
+					return;
+				}
 
-          currentSceneIndex = sceneIndex;
-          lights = sceneLoader->getLights();
-          ambientStrength = sceneLoader->getConfig().ambientStrenght;
-          if (lights.empty()) {
-            setupDefaultLights();
-          }
+				currentSceneIndex = sceneIndex;
+				lights = sceneLoader->getLights();
+				ambientStrength = sceneLoader->getConfig().ambientStrenght;
+				if (lights.empty()) {
+					setupDefaultLights();
+				}
 
-          const auto &sceneObjects = sceneLoader->getObjects();
-          if (!sceneObjects.empty()) {
-            if (modelLoaded) {
-              vkDeviceWaitIdle(device->getDevice());
+				const auto& sceneObjects = sceneLoader->getObjects();
+				if (!sceneObjects.empty()) {
+					if (modelLoaded) {
+						vkDeviceWaitIdle(device->getDevice());
 
-              objectLoader->destroyModel(loadedModel);
-              modelLoaded = false;
-              modelDescriptorSets.clear();
-              cleanupMaterialUniformBuffers();
-            }
+						objectLoader->destroyModel(loadedModel);
+						modelLoaded = false;
+						modelDescriptorSets.clear();
+						cleanupMaterialUniformBuffers();
+					}
 
-            loadModel(ASSETS_PATH + sceneObjects[0].modelPath);
-          }
+					loadModel(ASSETS_PATH + sceneObjects[0].modelPath);
 
-          if (sceneLoader->hasCameraSettings()) {
-            camera->position = sceneLoader->getInitialCameraPosition();
-          }
-        });
-    glm::mat4 view = camera->getViewMatrix();
-    VkExtent2D extent = swapChain->getSwapChainExtent();
-    float aspect =
-        static_cast<float>(extent.width) / static_cast<float>(extent.height);
-    glm::mat4 proj = camera->getProjectionMatrix(aspect);
-    uiManager->renderLightGizmo(lights, uiManager->getSelectedLight(), view,
-                                proj);
-    drawFrame();
-  }
+				}
 
-  vkDeviceWaitIdle(device->getDevice());
+				if (sceneLoader->hasCameraSettings()) {
+					camera->position = sceneLoader->getInitialCameraPosition();
+				}
+
+				accumulationFrameCount = 0;
+			}
+		);
+		glm::mat4 view = camera->getViewMatrix();
+		VkExtent2D extent = swapChain->getSwapChainExtent();
+		float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+		glm::mat4 proj = camera->getProjectionMatrix(aspect);
+		uiManager->renderLightGizmo(lights, uiManager->getSelectedLight(),view,proj);
+		drawFrame();
+	}
+
+	vkDeviceWaitIdle(device->getDevice());
 }
 
 void VulkanApplication::cleanup() {
@@ -1208,10 +1293,52 @@ void VulkanApplication::mouseCallback(GLFWwindow *window, double xpos,
   app->camera->processMouseMovement(xoffset, yoffset);
 }
 
-void VulkanApplication::createModelDescriptorSets() {
-  if (!modelLoaded || loadedModel.materials.empty()) {
-    return;
-  }
+void VulkanApplication::processInput() {
+	GLFWwindow* win = window->getGLFWwindow();
+	static bool renderKeyPressed = false;
+	static bool cursorKeyPressed = false;
+	if (glfwGetKey(win, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		glfwSetWindowShouldClose(win, true);
+	if (glfwGetKey(win, GLFW_KEY_TAB) == GLFW_PRESS) {
+		if (!cursorKeyPressed) {
+			toggleCursor();
+			cursorKeyPressed = true;
+		}
+	}
+	else {
+		cursorKeyPressed = false;
+	}
+	if (!cursorEnabled) {
+		if (glfwGetKey(win, GLFW_KEY_W) == GLFW_PRESS) {
+			camera->processKeyboardInput(FORWARD, deltaTime);
+			cameraMoved = true;
+		}
+		if (glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS) {
+			camera->processKeyboardInput(BACKWARD, deltaTime);
+			cameraMoved = true;
+		}
+		if (glfwGetKey(win, GLFW_KEY_A) == GLFW_PRESS) {
+			camera->processKeyboardInput(LEFT, deltaTime);
+			cameraMoved = true;
+		}
+		if (glfwGetKey(win, GLFW_KEY_D) == GLFW_PRESS) {
+			camera->processKeyboardInput(RIGHT, deltaTime);
+			cameraMoved = true;
+		}
+		if (glfwGetKey(win, GLFW_KEY_SPACE) == GLFW_PRESS) {
+			camera->processKeyboardInput(UP, deltaTime);
+			cameraMoved = true;
+		}
+		if (glfwGetKey(win, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) {
+			camera->processKeyboardInput(DOWN, deltaTime);
+			cameraMoved = true;
+		}
+	}
+	if (glfwGetKey(win, GLFW_KEY_B) == GLFW_PRESS) {
+		if(!renderKeyPressed) {
+			toggleRenderMode();
+			renderKeyPressed = true;
+		}
 
   size_t materialCount = loadedModel.materials.size();
   modelDescriptorSets.resize(materialCount);
@@ -1230,11 +1357,9 @@ void VulkanApplication::createModelDescriptorSets() {
     allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
     allocInfo.pSetLayouts = layouts.data();
 
-    if (vkAllocateDescriptorSets(device->getDevice(), &allocInfo,
-                                 modelDescriptorSets[matIndex].data()) !=
-        VK_SUCCESS) {
-      throw std::runtime_error("failed to allocate model descriptor sets!");
-    }
+	app->camera->processMouseMovement(xoffset, yoffset);
+	app->cameraMoved = true;
+}
 
     // Update descriptor sets with the material's texture
     for (size_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
@@ -1446,62 +1571,175 @@ void VulkanApplication::createComputeOutputImage() {
   commandBufferManager->endSingleTimeCommands(commandBuffer);
 }
 
-void VulkanApplication::recordComputeCommandBuffer(
-    VkCommandBuffer commandBuffer, uint32_t imageIndex) {
-  VkCommandBufferBeginInfo beginInfo{};
-  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+void VulkanApplication::createAccumulationImage()
+{
+	VkExtent2D extent = swapChain->getSwapChainExtent();
+	VkFormat accumFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
 
-  if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
-    throw std::runtime_error(
-        "failed to begin recording compute command buffer!");
-  }
+	VkImageCreateInfo imageInfo{};
+	imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+	imageInfo.imageType = VK_IMAGE_TYPE_2D;
+	imageInfo.extent.width = extent.width;
+	imageInfo.extent.height = extent.height;
+	imageInfo.extent.depth = 1;
+	imageInfo.mipLevels = 1;
+	imageInfo.arrayLayers = 1;
+	imageInfo.format = accumFormat;
+	imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+	imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+	imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-  // Bind compute pipeline
-  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
-                    computePipeline->getPipeline());
+	if (vkCreateImage(device->getDevice(), &imageInfo, nullptr, &accumOutputImage) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create accumulation image!");
+	}
 
-  // Bind descriptor sets
-  VkDescriptorSet descSet = computePipeline->getDescriptorSet();
-  vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
-                          computePipeline->getPipelineLayout(), 0, 1, &descSet,
-                          0, nullptr);
+	VkMemoryRequirements memRequirements;
+	vkGetImageMemoryRequirements(device->getDevice(), accumOutputImage, &memRequirements);
 
-  // Dispatch compute work
-  VkExtent2D extent = swapChain->getSwapChainExtent();
-  ComputePushConstants pushConstants{};
-  pushConstants.iResolution[0] = static_cast<float>(extent.width);
-  pushConstants.iResolution[1] = static_cast<float>(extent.height);
-  pushConstants.iTime = static_cast<float>(glfwGetTime());
-  vkCmdPushConstants(commandBuffer, computePipeline->getPipelineLayout(),
-                     VK_SHADER_STAGE_COMPUTE_BIT, 0,
-                     sizeof(ComputePushConstants), &pushConstants);
-  uint32_t groupCountX = (extent.width + 15) / 16; // 16x16 work groups
-  uint32_t groupCountY = (extent.height + 15) / 16;
-  vkCmdDispatch(commandBuffer, groupCountX, groupCountY, 1);
+	VkMemoryAllocateInfo allocInfo{};
+	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	allocInfo.allocationSize = memRequirements.size;
+	allocInfo.memoryTypeIndex = device->findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-  // Transition compute output for transfer
-  VkImageMemoryBarrier barrier{};
-  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-  barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.image = computeOutputImage;
-  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount = 1;
-  barrier.subresourceRange.baseArrayLayer = 0;
-  barrier.subresourceRange.layerCount = 1;
-  barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-  barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+	if (vkAllocateMemory(device->getDevice(), &allocInfo, nullptr, &accumOutputImageMemory) != VK_SUCCESS) {
+		throw std::runtime_error("failed to allocate accumulation image memory!");
+	}
 
-  vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
-                       nullptr, 1, &barrier);
+	vkBindImageMemory(device->getDevice(), accumOutputImage, accumOutputImageMemory, 0);
 
-  // Transition swapchain image for transfer destination
-  VkImageMemoryBarrier swapBarrier{};
-  swapBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	VkImageViewCreateInfo viewInfo{};
+	viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	viewInfo.image = accumOutputImage;
+	viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	viewInfo.format = accumFormat;
+	viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	viewInfo.subresourceRange.baseMipLevel = 0;
+	viewInfo.subresourceRange.levelCount = 1;
+	viewInfo.subresourceRange.baseArrayLayer = 0;
+	viewInfo.subresourceRange.layerCount = 1;
+
+	if (vkCreateImageView(device->getDevice(), &viewInfo, nullptr, &accumOutputImageView) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create accumulation image view!");
+	}
+
+	VkCommandBuffer cmdBuffer = commandBufferManager->beginSingleTimeCommands();
+
+	VkImageMemoryBarrier barrier{};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = accumOutputImage;
+	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	barrier.subresourceRange.baseMipLevel = 0;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.baseArrayLayer = 0;
+	barrier.subresourceRange.layerCount = 1;
+	barrier.srcAccessMask = 0;
+	barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+
+	vkCmdPipelineBarrier(
+		cmdBuffer,
+		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+		VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &barrier
+	);
+
+	commandBufferManager->endSingleTimeCommands(cmdBuffer);
+}
+
+void VulkanApplication::cleanupAccumulationResources()
+{
+	if (accumOutputImageView != VK_NULL_HANDLE) {
+		vkDestroyImageView(device->getDevice(), accumOutputImageView, nullptr);
+		accumOutputImageView = VK_NULL_HANDLE;
+	}
+	if (accumOutputImage != VK_NULL_HANDLE) {
+		vkDestroyImage(device->getDevice(), accumOutputImage, nullptr);
+		accumOutputImage = VK_NULL_HANDLE;
+	}
+	if (accumOutputImageMemory != VK_NULL_HANDLE) {
+		vkFreeMemory(device->getDevice(), accumOutputImageMemory, nullptr);
+		accumOutputImageMemory = VK_NULL_HANDLE;
+	}
+}
+
+void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
+{
+	VkCommandBufferBeginInfo beginInfo{};
+	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+	if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+		throw std::runtime_error("failed to begin recording compute command buffer!");
+	}
+
+	// Bind compute pipeline
+	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline->getPipeline());
+
+	// Bind descriptor sets
+	VkDescriptorSet descSet = computePipeline->getDescriptorSet();
+	vkCmdBindDescriptorSets(
+		commandBuffer,
+		VK_PIPELINE_BIND_POINT_COMPUTE,
+		computePipeline->getPipelineLayout(),
+		0, 1,
+		&descSet,
+		0, nullptr
+	);
+
+	// Dispatch compute work
+	VkExtent2D extent = swapChain->getSwapChainExtent();
+	ComputePushConstants pushConstants{};
+	pushConstants.iResolution[0] = static_cast<float>(extent.width);
+	pushConstants.iResolution[1] = static_cast<float>(extent.height);
+	pushConstants.iTime = static_cast<float>(glfwGetTime());
+	vkCmdPushConstants(
+		commandBuffer,
+		computePipeline->getPipelineLayout(),
+		VK_SHADER_STAGE_COMPUTE_BIT,
+		0,
+		sizeof(ComputePushConstants),
+		&pushConstants
+	);
+	uint32_t groupCountX = (extent.width + 15) / 16;  // 16x16 work groups
+	uint32_t groupCountY = (extent.height + 15) / 16;
+	vkCmdDispatch(commandBuffer, groupCountX, groupCountY, 1);
+
+	// Transition compute output for transfer
+	VkImageMemoryBarrier barrier{};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+	barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = computeOutputImage;
+	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	barrier.subresourceRange.baseMipLevel = 0;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.baseArrayLayer = 0;
+	barrier.subresourceRange.layerCount = 1;
+	barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+	barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &barrier
+	);
+
+	// Transition swapchain image for transfer destination
+	VkImageMemoryBarrier swapBarrier{};
+	swapBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
   swapBarrier.oldLayout = swapChainImageLayouts[imageIndex];
   swapBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
   swapBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -1889,131 +2127,21 @@ void VulkanApplication::toggleRenderMode() {
   }
 }
 
-void VulkanApplication::cleanupComputeResources() {
-  if (computePipeline) {
-    computePipeline->cleanup(device);
-    delete computePipeline;
-    computePipeline = nullptr;
-  }
-  if (computeOutputImageView != VK_NULL_HANDLE) {
-    vkDestroyImageView(device->getDevice(), computeOutputImageView, nullptr);
-  }
-  if (computeOutputImage != VK_NULL_HANDLE) {
-    vkDestroyImage(device->getDevice(), computeOutputImage, nullptr);
-  }
-  if (computeOutputImageMemory != VK_NULL_HANDLE) {
-    vkFreeMemory(device->getDevice(), computeOutputImageMemory, nullptr);
-  }
-  if (objectLoader) {
-    vkDeviceWaitIdle(device->getDevice());
-    objectLoader->destroyModel(loadedModel);
-    cleanupMaterialUniformBuffers();
-    cleanupRayTracingGeometryBuffers();
-    delete objectLoader;
-  }
-  if (rayTracingPipeline) {
-    rayTracingPipeline->cleanup();
-    delete rayTracingPipeline;
-    rayTracingPipeline = nullptr;
-  }
+void VulkanApplication::toggleRenderMode()
+{
+    if (currentRenderMode == RenderMode::GRAPHICS) {
+		currentRenderMode = RenderMode::RAYTRACING;
+		accumulationFrameCount = 0;
+		std::cout << "Switched to Raytracing rendering mode" << std::endl;
 	}
-
-	void VulkanApplication::createTAAPipeline() {
-  // Create descriptor set layout with 3 storage image bindings
-  std::array<VkDescriptorSetLayoutBinding, 3> bindings{};
-
-  bindings[0].binding = 0;
-  bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-  bindings[0].descriptorCount = 1;
-  bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-  bindings[1].binding = 1;
-  bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-  bindings[1].descriptorCount = 1;
-  bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-  bindings[2].binding = 2;
-  bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-  bindings[2].descriptorCount = 1;
-  bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-  VkDescriptorSetLayoutCreateInfo layoutInfo{};
-  layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-  layoutInfo.pBindings = bindings.data();
-
-  if (vkCreateDescriptorSetLayout(device->getDevice(), &layoutInfo, nullptr,
-                                  &taaDescriptorSetLayout) != VK_SUCCESS) {
-    throw std::runtime_error("failed to create TAA descriptor set layout!");
-  }
-
-  // Create descriptor pool
-  std::array<VkDescriptorPoolSize, 1> poolSizes{};
-  poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-  poolSizes[0].descriptorCount = 3;
-
-  VkDescriptorPoolCreateInfo poolInfo{};
-  poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-  poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-  poolInfo.pPoolSizes = poolSizes.data();
-  poolInfo.maxSets = 1;
-
-  if (vkCreateDescriptorPool(device->getDevice(), &poolInfo, nullptr,
-                             &taaDescriptorPool) != VK_SUCCESS) {
-    throw std::runtime_error("failed to create TAA descriptor pool!");
-  }
-
-  // Create pipeline layout with push constants
-  VkPushConstantRange pushConstantRange{};
-  pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-  pushConstantRange.offset = 0;
-  pushConstantRange.size = sizeof(TAAPushConstants);
-
-  VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-  pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  pipelineLayoutInfo.setLayoutCount = 1;
-  pipelineLayoutInfo.pSetLayouts = &taaDescriptorSetLayout;
-  pipelineLayoutInfo.pushConstantRangeCount = 1;
-  pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
-
-  if (vkCreatePipelineLayout(device->getDevice(), &pipelineLayoutInfo, nullptr,
-                             &taaPipelineLayout) != VK_SUCCESS) {
-    throw std::runtime_error("failed to create TAA pipeline layout!");
-  }
-
-  // Load compiled SPIR-V shader
-  auto shaderCode = EngineUtils::readFile("Shaders/taa.comp.spv");
-
-  VkShaderModuleCreateInfo shaderModuleInfo{};
-  shaderModuleInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-  shaderModuleInfo.codeSize = shaderCode.size();
-  shaderModuleInfo.pCode =
-      reinterpret_cast<const uint32_t *>(shaderCode.data());
-
-  VkShaderModule shaderModule;
-  if (vkCreateShaderModule(device->getDevice(), &shaderModuleInfo, nullptr,
-                           &shaderModule) != VK_SUCCESS) {
-    throw std::runtime_error("failed to create TAA shader module!");
-  }
-
-  VkPipelineShaderStageCreateInfo shaderStageInfo{};
-  shaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-  shaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-  shaderStageInfo.module = shaderModule;
-  shaderStageInfo.pName = "main";
-
-  VkComputePipelineCreateInfo pipelineInfo{};
-  pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-  pipelineInfo.stage = shaderStageInfo;
-  pipelineInfo.layout = taaPipelineLayout;
-
-  if (vkCreateComputePipelines(device->getDevice(), VK_NULL_HANDLE, 1,
-                               &pipelineInfo, nullptr,
-                               &taaPipeline) != VK_SUCCESS) {
-    throw std::runtime_error("failed to create TAA compute pipeline!");
-  }
-
-  vkDestroyShaderModule(device->getDevice(), shaderModule, nullptr);
+	//else if (currentRenderMode == RenderMode::COMPUTE) {
+	//	currentRenderMode = RenderMode::RAYTRACING;
+	//	std::cout << "Switched to Raytracing rendering mode" << std::endl;
+	//}
+	else {
+		currentRenderMode = RenderMode::GRAPHICS;
+		std::cout << "Switched to Graphics rendering mode" << std::endl;
+	}
 }
 
 void VulkanApplication::createTAAImages() {
@@ -2081,111 +2209,118 @@ void VulkanApplication::createTAAImages() {
         VK_SUCCESS) {
       throw std::runtime_error("failed to create TAA image view!");
     }
-  };
-
-  createImage(taaHistoryImage, taaHistoryImageMemory, taaHistoryImageView,
-              historyUsage);
-  createImage(taaOutputImage, taaOutputImageMemory, taaOutputImageView,
-              outputUsage);
-
-  // Transition both images to GENERAL layout
-  VkCommandBuffer commandBuffer =
-      commandBufferManager->beginSingleTimeCommands();
-
-  VkImageMemoryBarrier barrier{};
-  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount = 1;
-  barrier.subresourceRange.baseArrayLayer = 0;
-  barrier.subresourceRange.layerCount = 1;
-  barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-  barrier.srcAccessMask = 0;
-  barrier.dstAccessMask =
-      VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-
-  std::array<VkImageMemoryBarrier, 2> barriers;
-  barrier.image = taaHistoryImage;
-  barriers[0] = barrier;
-  barrier.image = taaOutputImage;
-  barriers[1] = barrier;
-
-  vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
-                       nullptr, static_cast<uint32_t>(barriers.size()),
-                       barriers.data());
-
-  commandBufferManager->endSingleTimeCommands(commandBuffer);
-
-  taaFirstFrame = true;
+	cleanupAccumulationResources();
+	if(objectLoader) {
+		vkDeviceWaitIdle(device->getDevice());
+		objectLoader->destroyModel(loadedModel);
+		cleanupMaterialUniformBuffers();
+		cleanupRayTracingGeometryBuffers();
+		delete objectLoader;
+	}
+   if (rayTracingPipeline) {
+		rayTracingPipeline->cleanup();
+		delete rayTracingPipeline;
+		rayTracingPipeline = nullptr;
+	}
 }
 
-void VulkanApplication::updateTAADescriptorSets() {
-  vkResetDescriptorPool(device->getDevice(), taaDescriptorPool, 0);
+void VulkanApplication::createRayTracingDescriptorSetLayout()
+{
+	std::array<VkDescriptorSetLayoutBinding, 10> bindings{};
 
-  VkDescriptorSetAllocateInfo allocInfo{};
-  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  allocInfo.descriptorPool = taaDescriptorPool;
-  allocInfo.descriptorSetCount = 1;
-  allocInfo.pSetLayouts = &taaDescriptorSetLayout;
+	bindings[0].binding = 0;
+	bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+	bindings[0].descriptorCount = 1;
+	bindings[0].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+	bindings[0].pImmutableSamplers = nullptr;
 
-  if (vkAllocateDescriptorSets(device->getDevice(), &allocInfo,
-                               &taaDescriptorSet) != VK_SUCCESS) {
-    throw std::runtime_error("failed to allocate TAA descriptor set!");
-  }
+	bindings[1].binding = 1;
+	bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+	bindings[1].descriptorCount = 1;
+	bindings[1].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+	bindings[1].pImmutableSamplers = nullptr;
 
-  std::array<VkDescriptorImageInfo, 3> imageInfos{};
-  imageInfos[0].imageView = computeOutputImageView;
-  imageInfos[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-  imageInfos[1].imageView = taaHistoryImageView;
-  imageInfos[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-  imageInfos[2].imageView = taaOutputImageView;
-  imageInfos[2].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+	bindings[2].binding = 2;
+	bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+	bindings[2].descriptorCount = 1;
+	bindings[2].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+	bindings[2].pImmutableSamplers = nullptr;
 
-  std::array<VkWriteDescriptorSet, 3> writes{};
-  for (uint32_t i = 0; i < 3; i++) {
-    writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[i].dstSet = taaDescriptorSet;
-    writes[i].dstBinding = i;
-    writes[i].dstArrayElement = 0;
-    writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    writes[i].descriptorCount = 1;
-    writes[i].pImageInfo = &imageInfos[i];
-  }
+	bindings[3].binding = 3;
+	bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	bindings[3].descriptorCount = 1;
+	bindings[3].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+	bindings[3].pImmutableSamplers = nullptr;
 
-  vkUpdateDescriptorSets(device->getDevice(),
-                         static_cast<uint32_t>(writes.size()), writes.data(), 0,
-                         nullptr);
+	bindings[4].binding = 4;
+	bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	bindings[4].descriptorCount = 1;
+	bindings[4].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+	bindings[4].pImmutableSamplers = nullptr;
+
+	bindings[5].binding = 5;
+	bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	bindings[5].descriptorCount = 1;
+	bindings[5].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+	bindings[5].pImmutableSamplers = nullptr;
+
+	bindings[6].binding = 6;
+	bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	bindings[6].descriptorCount = 1;
+	bindings[6].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+	bindings[6].pImmutableSamplers = nullptr;
+
+	bindings[7].binding = 7;
+	bindings[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	bindings[7].descriptorCount = 1;
+	bindings[7].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+	bindings[7].pImmutableSamplers = nullptr;
+
+	bindings[8].binding = 8;
+	bindings[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	bindings[8].descriptorCount = 16;
+	bindings[8].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+	bindings[8].pImmutableSamplers = nullptr;
+
+	bindings[9].binding = 9;
+	bindings[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+	bindings[9].descriptorCount = 1;
+	bindings[9].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+	bindings[9].pImmutableSamplers = nullptr;
+
+	VkDescriptorSetLayoutCreateInfo layoutInfo{};
+	layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+	layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+	layoutInfo.pBindings = bindings.data();
+
+	if (vkCreateDescriptorSetLayout(device->getDevice(), &layoutInfo, nullptr, &rayTracingDescriptorSetLayout) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create ray tracing descriptor set layout!");
+	}
 }
 
-void VulkanApplication::cleanupTAAImages() {
-  if (taaOutputImageView != VK_NULL_HANDLE) {
-    vkDestroyImageView(device->getDevice(), taaOutputImageView, nullptr);
-    taaOutputImageView = VK_NULL_HANDLE;
-  }
-  if (taaOutputImage != VK_NULL_HANDLE) {
-    vkDestroyImage(device->getDevice(), taaOutputImage, nullptr);
-    taaOutputImage = VK_NULL_HANDLE;
-  }
-  if (taaOutputImageMemory != VK_NULL_HANDLE) {
-    vkFreeMemory(device->getDevice(), taaOutputImageMemory, nullptr);
-    taaOutputImageMemory = VK_NULL_HANDLE;
-  }
-  if (taaHistoryImageView != VK_NULL_HANDLE) {
-    vkDestroyImageView(device->getDevice(), taaHistoryImageView, nullptr);
-    taaHistoryImageView = VK_NULL_HANDLE;
-  }
-  if (taaHistoryImage != VK_NULL_HANDLE) {
-    vkDestroyImage(device->getDevice(), taaHistoryImage, nullptr);
-    taaHistoryImage = VK_NULL_HANDLE;
-  }
-  if (taaHistoryImageMemory != VK_NULL_HANDLE) {
-    vkFreeMemory(device->getDevice(), taaHistoryImageMemory, nullptr);
-    taaHistoryImageMemory = VK_NULL_HANDLE;
-  }
+void VulkanApplication::createRayTracingDescriptorPool()
+{
+    std::array<VkDescriptorPoolSize, 5> poolSizes{};
+	poolSizes[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+	poolSizes[0].descriptorCount = 1;
+	poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+	poolSizes[1].descriptorCount = 2;
+	poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+	poolSizes[2].descriptorCount = 1;
+	poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	poolSizes[3].descriptorCount = 4;
+	poolSizes[4].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	poolSizes[4].descriptorCount = 17;
+
+	VkDescriptorPoolCreateInfo poolInfo{};
+	poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+	poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+	poolInfo.pPoolSizes = poolSizes.data();
+	poolInfo.maxSets = 1;
+
+	if (vkCreateDescriptorPool(device->getDevice(), &poolInfo, nullptr, &rayTracingDescriptorPool) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create ray tracing descriptor pool!");
+	}
 }
 
 void VulkanApplication::cleanupTAAPipeline() {
@@ -2306,173 +2441,42 @@ void VulkanApplication::createRayTracingDescriptorPool() {
   }
 }
 
-void VulkanApplication::createRayTracingDescriptorSet() {
-  if (!rayTracingAS || rayTracingAS->getTLAS().handle == VK_NULL_HANDLE) {
-    return;
-  }
-  if (loadedModel.indexBuffer == VK_NULL_HANDLE ||
-      loadedModel.rtVertexBuffer == VK_NULL_HANDLE ||
-      rayTracingPrimitiveBuffer == VK_NULL_HANDLE ||
-      rayTracingMeshBuffer == VK_NULL_HANDLE) {
-    return;
-  }
+	VkWriteDescriptorSet textureWrite{};
+	std::vector<VkDescriptorImageInfo> texImageInfos(16);
+	for (size_t i = 0; i < 16; i++) {
+		texImageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		texImageInfos[i].imageView = textureImageView;
+		texImageInfos[i].sampler = textureSampler;
+	}
+	for (size_t i = 0; i < loadedModel.textures.size() && i < 16; i++) {
+		if (loadedModel.textures[i].imageView != VK_NULL_HANDLE) {
+			texImageInfos[i].imageView = loadedModel.textures[i].imageView;
+			texImageInfos[i].sampler = loadedModel.textures[i].sampler;
+		}
+	}
+	textureWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+	textureWrite.dstSet = rayTracingDescriptorSet;
+	textureWrite.dstBinding = 8;
+	textureWrite.dstArrayElement = 0;
+	textureWrite.descriptorCount = 16;
+	textureWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	textureWrite.pImageInfo = texImageInfos.data();
 
-  if (rayTracingDescriptorSet == VK_NULL_HANDLE) {
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = rayTracingDescriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &rayTracingDescriptorSetLayout;
+	VkDescriptorImageInfo accumImageInfo{};
+	accumImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+	accumImageInfo.imageView = accumOutputImageView;
+	accumImageInfo.sampler = VK_NULL_HANDLE;
 
-    if (vkAllocateDescriptorSets(device->getDevice(), &allocInfo,
-                                 &rayTracingDescriptorSet) != VK_SUCCESS) {
-      throw std::runtime_error(
-          "failed to allocate ray tracing descriptor set!");
-    }
-  }
+	VkWriteDescriptorSet accumWrite{};
+	accumWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+	accumWrite.dstSet = rayTracingDescriptorSet;
+	accumWrite.dstBinding = 9;
+	accumWrite.descriptorCount = 1;
+	accumWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+	accumWrite.pImageInfo = &accumImageInfo;
 
-  VkWriteDescriptorSetAccelerationStructureKHR asInfo{};
-  asInfo.sType =
-      VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
-  asInfo.accelerationStructureCount = 1;
-  VkAccelerationStructureKHR tlasHandle = rayTracingAS->getTLAS().handle;
-  asInfo.pAccelerationStructures = &tlasHandle;
-
-  VkWriteDescriptorSet asWrite{};
-  asWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  asWrite.dstSet = rayTracingDescriptorSet;
-  asWrite.dstBinding = 0;
-  asWrite.descriptorCount = 1;
-  asWrite.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-  asWrite.pNext = &asInfo;
-
-  VkDescriptorImageInfo imageInfo{};
-  imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-  imageInfo.imageView = computeOutputImageView;
-  imageInfo.sampler = VK_NULL_HANDLE;
-
-  VkDescriptorBufferInfo cameraBufferInfo{};
-  cameraBufferInfo.buffer = rayTracingUniformBuffer;
-  cameraBufferInfo.offset = 0;
-  cameraBufferInfo.range = sizeof(glm::mat4) * 5 + sizeof(glm::vec4) +
-                           sizeof(GPULight) * MAX_LIGHTS + sizeof(glm::vec4);
-
-  VkWriteDescriptorSet imageWrite{};
-  imageWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  imageWrite.dstSet = rayTracingDescriptorSet;
-  imageWrite.dstBinding = 1;
-  imageWrite.descriptorCount = 1;
-  imageWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-  imageWrite.pImageInfo = &imageInfo;
-
-  VkWriteDescriptorSet cameraWrite{};
-  cameraWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  cameraWrite.dstSet = rayTracingDescriptorSet;
-  cameraWrite.dstBinding = 2;
-  cameraWrite.descriptorCount = 1;
-  cameraWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  cameraWrite.pBufferInfo = &cameraBufferInfo;
-
-  VkDescriptorBufferInfo indexBufferInfo{};
-  indexBufferInfo.buffer = loadedModel.indexBuffer;
-  indexBufferInfo.offset = 0;
-  indexBufferInfo.range = VK_WHOLE_SIZE;
-
-  VkDescriptorBufferInfo vertexBufferInfo{};
-  vertexBufferInfo.buffer = loadedModel.rtVertexBuffer;
-  vertexBufferInfo.offset = 0;
-  vertexBufferInfo.range = VK_WHOLE_SIZE;
-
-  VkDescriptorBufferInfo primitiveBufferInfo{};
-  primitiveBufferInfo.buffer = rayTracingPrimitiveBuffer;
-  primitiveBufferInfo.offset = 0;
-  primitiveBufferInfo.range = VK_WHOLE_SIZE;
-
-  VkDescriptorBufferInfo meshBufferInfo{};
-  meshBufferInfo.buffer = rayTracingMeshBuffer;
-  meshBufferInfo.offset = 0;
-  meshBufferInfo.range = VK_WHOLE_SIZE;
-
-  VkWriteDescriptorSet indexWrite{};
-  indexWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  indexWrite.dstSet = rayTracingDescriptorSet;
-  indexWrite.dstBinding = 3;
-  indexWrite.descriptorCount = 1;
-  indexWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  indexWrite.pBufferInfo = &indexBufferInfo;
-
-  VkWriteDescriptorSet vertexWrite{};
-  vertexWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  vertexWrite.dstSet = rayTracingDescriptorSet;
-  vertexWrite.dstBinding = 4;
-  vertexWrite.descriptorCount = 1;
-  vertexWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  vertexWrite.pBufferInfo = &vertexBufferInfo;
-
-  VkWriteDescriptorSet primitiveWrite{};
-  primitiveWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  primitiveWrite.dstSet = rayTracingDescriptorSet;
-  primitiveWrite.dstBinding = 5;
-  primitiveWrite.descriptorCount = 1;
-  primitiveWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  primitiveWrite.pBufferInfo = &primitiveBufferInfo;
-
-  VkWriteDescriptorSet meshWrite{};
-  meshWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  meshWrite.dstSet = rayTracingDescriptorSet;
-  meshWrite.dstBinding = 6;
-  meshWrite.descriptorCount = 1;
-  meshWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  meshWrite.pBufferInfo = &meshBufferInfo;
-
-  VkWriteDescriptorSet cubemapWrite{};
-  {
-    VkDescriptorImageInfo cubemapImageInfo{};
-    cubemapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    cubemapImageInfo.imageView = textureImageView;
-    cubemapImageInfo.sampler = textureSampler;
-    if (skybox && skybox->getCubemapImageView() != VK_NULL_HANDLE) {
-      cubemapImageInfo.imageView = skybox->getCubemapImageView();
-      cubemapImageInfo.sampler = skybox->getCubemapSampler();
-    }
-    cubemapWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    cubemapWrite.dstSet = rayTracingDescriptorSet;
-    cubemapWrite.dstBinding = 7;
-    cubemapWrite.descriptorCount = 1;
-    cubemapWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    cubemapWrite.pImageInfo = &cubemapImageInfo;
-  }
-
-  VkWriteDescriptorSet textureWrite{};
-  std::vector<VkDescriptorImageInfo> texImageInfos(16);
-  for (size_t i = 0; i < texImageInfos.size(); i++) {
-    texImageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    texImageInfos[i].imageView = textureImageView;
-    texImageInfos[i].sampler = textureSampler;
-  }
-  for (size_t i = 0;
-       i < loadedModel.textures.size() && i < texImageInfos.size(); i++) {
-    if (loadedModel.textures[i].imageView != VK_NULL_HANDLE) {
-      texImageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-      texImageInfos[i].imageView = loadedModel.textures[i].imageView;
-      texImageInfos[i].sampler = loadedModel.textures[i].sampler;
-    }
-  }
-
-  textureWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  textureWrite.dstSet = rayTracingDescriptorSet;
-  textureWrite.dstBinding = 8;
-  textureWrite.dstArrayElement = 0;
-  textureWrite.descriptorCount = static_cast<uint32_t>(texImageInfos.size());
-  textureWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  textureWrite.pImageInfo = texImageInfos.data();
-
-  std::array<VkWriteDescriptorSet, 9> writes{
-      asWrite,        imageWrite, cameraWrite,  indexWrite,  vertexWrite,
-      primitiveWrite, meshWrite,  cubemapWrite, textureWrite};
-  vkUpdateDescriptorSets(device->getDevice(),
-                         static_cast<uint32_t>(writes.size()), writes.data(), 0,
-                         nullptr);
+    std::array<VkWriteDescriptorSet, 10> writes{ asWrite, imageWrite, cameraWrite, indexWrite, vertexWrite, primitiveWrite, meshWrite, cubemapWrite, textureWrite, accumWrite };
+	vkUpdateDescriptorSets(device->getDevice(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
 
 void VulkanApplication::createDescriptorSetLayout() {

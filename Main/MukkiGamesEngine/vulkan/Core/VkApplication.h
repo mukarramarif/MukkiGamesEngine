@@ -156,7 +156,7 @@ private:
 	void cleanupMaterialUniformBuffers();
     void createRayTracingUniformBuffer();
 	void updateUniformBuffer(uint32_t currentImage);
-  void updateRayTracingUniformBuffer();
+    void updateRayTracingUniformBuffer();
 	void createTextureResources();
 	void drawFrame();
 	void recreateSwapChain();
@@ -186,6 +186,8 @@ private:
 	void createGraphicsPipeline();
 
 	// Input handling methods
+    void createAccumulationImage();
+    void cleanupAccumulationResources();
 	void processInput();
 	static void mouseCallback(GLFWwindow* window, double xpos, double ypos);
 
@@ -217,6 +219,13 @@ private:
 	glm::vec2 taaJitter = glm::vec2(0.0f);
 
 	RayTracingPipeline* rayTracingPipeline = nullptr;
+
+	// Accumulation
+	VkImage accumOutputImage = VK_NULL_HANDLE;
+	VkDeviceMemory accumOutputImageMemory = VK_NULL_HANDLE;
+	VkImageView accumOutputImageView = VK_NULL_HANDLE;
+	uint32_t accumulationFrameCount = 0;
+	bool cameraMoved = false;
 
 	//Object-Loader
 	std::vector<std::vector<VkDescriptorSet>> modelDescriptorSets; // set for each model and each frame

@@ -254,20 +254,8 @@ void RayTracingAS::buildTLASFromModel(const Model& model)
         }
 
         VkTransformMatrixKHR transform{};
-        const glm::mat4& m = node.worldTransform;
-        transform.matrix[0][0] = m[0][0];
-        transform.matrix[0][1] = m[1][0];
-        transform.matrix[0][2] = m[2][0];
-        transform.matrix[0][3] = m[3][0];
-        transform.matrix[1][0] = m[0][1];
-        transform.matrix[1][1] = m[1][1];
-        transform.matrix[1][2] = m[2][1];
-        transform.matrix[1][3] = m[3][1];
-        transform.matrix[2][0] = m[0][2];
-        transform.matrix[2][1] = m[1][2];
-        transform.matrix[2][2] = m[2][2];
-        transform.matrix[2][3] = m[3][2];
-
+        auto matrix = glm::mat3x4(glm::transpose(node.worldTransform));
+        memcpy(transform.matrix, &matrix, sizeof(matrix));
         VkAccelerationStructureInstanceKHR instance{};
         instance.transform = transform;
 		instance.instanceCustomIndex = static_cast<uint32_t>(node.meshIndex);
@@ -335,7 +323,7 @@ void RayTracingAS::buildTLASFromModel(const Model& model)
     createInfo.size = sizeInfo.accelerationStructureSize;
     createInfo.buffer = tlas.buffer;
 
-  if (vkCreateAccelerationStructureKHRFunc(device->getDevice(), &createInfo, nullptr, &tlas.handle) != VK_SUCCESS) {
+    if (vkCreateAccelerationStructureKHRFunc(device->getDevice(), &createInfo, nullptr, &tlas.handle) != VK_SUCCESS) {
         throw std::runtime_error("failed to create TLAS!");
     }
 
@@ -354,7 +342,7 @@ void RayTracingAS::buildTLASFromModel(const Model& model)
 
     const VkAccelerationStructureBuildRangeInfoKHR* rangePtr = &range;
     VkCommandBuffer commandBuffer = commandBufferManager->beginSingleTimeCommands();
-   vkCmdBuildAccelerationStructuresKHRFunc(commandBuffer, 1, &buildInfo, &rangePtr);
+    vkCmdBuildAccelerationStructuresKHRFunc(commandBuffer, 1, &buildInfo, &rangePtr);
     commandBufferManager->endSingleTimeCommands(commandBuffer);
 
     vkDestroyBuffer(device->getDevice(), instanceBuffer, nullptr);
@@ -362,8 +350,8 @@ void RayTracingAS::buildTLASFromModel(const Model& model)
     vkDestroyBuffer(device->getDevice(), scratchBuffer, nullptr);
     vkFreeMemory(device->getDevice(), scratchMemory, nullptr);
 
-  VkAccelerationStructureDeviceAddressInfoKHR addressInfo{};
+    VkAccelerationStructureDeviceAddressInfoKHR addressInfo{};
     addressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
     addressInfo.accelerationStructure = tlas.handle;
- tlas.deviceAddress = vkGetAccelerationStructureDeviceAddressKHRFunc(device->getDevice(), &addressInfo);
+    tlas.deviceAddress = vkGetAccelerationStructureDeviceAddressKHRFunc(device->getDevice(), &addressInfo);
 }
