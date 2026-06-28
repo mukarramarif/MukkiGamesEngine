@@ -3,6 +3,7 @@
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = 1, rgba8) uniform image2D outputImage;
+layout(set = 0, binding = 9, rgba32f) uniform image2D accumImage;
 const int MAX_LIGHTS = 4;
 const int LIGHT_TYPE_DIRECTIONAL = 0;
 const int LIGHT_TYPE_POINT = 1;
@@ -90,8 +91,9 @@ void main()
     vec3 result = vec3(0.0);
     vec3 throughput = vec3(1.0);
     const int maxBounces = 3;
-    uint rngState = gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * 4096u + 1u;
-
+    int frameCount = int(sceneData.lightParams.w + 0.5);
+    uint rngState = (gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x) ^ (uint(frameCount) * 9781u);
+    rngState = pcgHash(rngState);
     for (int bounce = 0; bounce < maxBounces; ++bounce)
     {
         payload.hit = 0;
@@ -241,5 +243,10 @@ void main()
         origin = (sceneData.invModel * vec4(hitPos + normal * 0.01, 1.0)).xyz;
     }
 
-    imageStore(outputImage, ivec2(gl_LaunchIDEXT.xy), vec4(result, 1.0));
+    ivec2 p = ivec2(gl_LaunchIDEXT.xy);
+    vec4 prev = imageLoad(accumImage, p);
+    vec3 accumulated = prev.rgb * float(frameCount) + result;
+    accumulated /= float(frameCount + 1);
+    imageStore(accumImage, p, vec4(accumulated, 1.0));
+    imageStore(outputImage, p, vec4(accumulated, 1.0));
 }

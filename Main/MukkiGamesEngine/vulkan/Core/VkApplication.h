@@ -180,6 +180,8 @@ private:
 	void createGraphicsPipeline();
 
 	// Input handling methods
+    void createAccumulationImage();
+    void cleanupAccumulationResources();
 	void processInput();
 	static void mouseCallback(GLFWwindow* window, double xpos, double ypos);
 
@@ -193,6 +195,13 @@ private:
 	VkImageView computeOutputImageView = VK_NULL_HANDLE;
 	VkExtent2D computeOutputImageExtent{};
 	RayTracingPipeline* rayTracingPipeline = nullptr;
+
+	// Accumulation
+	VkImage accumOutputImage = VK_NULL_HANDLE;
+	VkDeviceMemory accumOutputImageMemory = VK_NULL_HANDLE;
+	VkImageView accumOutputImageView = VK_NULL_HANDLE;
+	uint32_t accumulationFrameCount = 0;
+	bool cameraMoved = false;
 
 	//Object-Loader
 	std::vector<std::vector<VkDescriptorSet>> modelDescriptorSets; // set for each model and each frame
