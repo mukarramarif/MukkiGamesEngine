@@ -1,0 +1,96 @@
+---
+# clang-tidy configuration for MukkiGamesEngine
+# C++20 / Vulkan / GLM / GLFW / ImGui project
+#
+# Usage:
+#   cmake -B build -DENABLE_CLANG_TIDY=ON
+#   cmake --build build
+#
+# Or run manually:
+#   clang-tidy -p build <source-file.cpp>
+---
+
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-macro-parentheses,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-pro-type-union-access,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-special-member-functions,
+  google-*,
+  -google-readability-todo,
+  -google-runtime-references,
+  hicpp-*,
+  -hicpp-avoid-c-arrays,
+  -hicpp-no-malloc,
+  misc-*,
+  -misc-non-private-member-variables-in-classes,
+  -misc-include-cleaner,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  performance-*,
+  portability-*,
+  readability-*,
+  -readability-magic-numbers,
+  -readability-identifier-length,
+  -readability-function-cognitive-complexity,
+  -readability-avoid-return-with-void-value,
+
+CheckOptions:
+  # Allow Vulkan-style naming (camelCase + PascalCase + snake_case)
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: camelBack
+  - key: readability-identifier-naming.MethodCase
+    value: camelBack
+  - key: readability-identifier-naming.VariableCase
+    value: camelBack
+  - key: readability-identifier-naming.ParameterCase
+    value: camelBack
+  - key: readability-identifier-naming.MemberCase
+    value: camelBack
+  - key: readability-identifier-naming.PrivateMemberPrefix
+    value: m_
+  - key: readability-identifier-naming.ConstexprVariableCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.EnumConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.GlobalConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.StaticConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.NamespaceCase
+    value: lower_case
+  - key: readability-identifier-naming.TypeAliasCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypedefCase
+    value: CamelCase
+  - key: readability-identifier-naming.TemplateParameterCase
+    value: CamelCase
+
+  # Allow longer functions for Vulkan setup code
+  - key: readability-function-size.LineThreshold
+    value: 80
+  - key: readability-function-size.StatementThreshold
+    value: 40
+
+  # Performance: allow larger types to be passed by value (e.g. glm::vec3 = 12 bytes)
+  - key: performance-unnecessary-value-param.AllowedTypes
+    value: "glm::vec2;glm::vec3;glm::vec4;glm::mat3;glm::mat4"
+
+HeaderFilterRegex: "MukkiGamesEngine/.*"
+
+# Use fix-its from clang-tidy (applied automatically if FIXES file is written)
+FormatStyle: file

@@ -68,6 +68,25 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
 message(STATUS "Engine sources: ${ENGINE_SOURCES}")
 add_executable(MukkiGamesEngine ${ENGINE_SOURCES})
 
+# --- clang-tidy integration (opt-in) ---
+option(ENABLE_CLANG_TIDY "Run clang-tidy on source files during build" ON)
+if(ENABLE_CLANG_TIDY)
+  find_program(CLANG_TIDY_EXECUTABLE clang-tidy
+    HINTS ENV LLVM_DIR
+    PATH_SUFFIXES bin
+  )
+  if(NOT CLANG_TIDY_EXECUTABLE)
+    message(FATAL_ERROR "ENABLE_CLANG_TIDY is ON but clang-tidy was not found. "
+                        "Install LLVM/clang-tidy or set LLVM_DIR.")
+  endif()
+  message(STATUS "clang-tidy found: ${CLANG_TIDY_EXECUTABLE}")
+  set_target_properties(MukkiGamesEngine PROPERTIES
+    CXX_CLANG_TIDY
+    "${CLANG_TIDY_EXECUTABLE};-p=${CMAKE_BINARY_DIR};--config-file=${CMAKE_SOURCE_DIR}/.clang-tidy"
+  )
+endif()
+# ----------------------------------------
+
 # libraries
 target_link_libraries(MukkiGamesEngine PRIVATE Vulkan::Vulkan glfw imgui::imgui glm::glm imguizmo::imguizmo nlohmann_json::nlohmann_json stb::stb gli)
 
@@ -165,6 +184,7 @@ add_shaders(MukkiGamesEngine
     MukkiGamesEngine/Shaders/rt.rgen
     MukkiGamesEngine/Shaders/rt.rmiss
     MukkiGamesEngine/Shaders/rt.rchit
+    MukkiGamesEngine/Shaders/taa.comp
 )
 
 add_slang_fragment_shaders(MukkiGamesEngine

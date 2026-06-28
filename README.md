@@ -60,10 +60,23 @@ cmake --build --preset conan-debug
 - [x] create scene loader
     - [x] SceneObject
     - [ ] Shader hot reloading
-- [ ] looking into SIMD 
+- [x] Basic raytracing pipeline (TLAS/BLAS, SBT, rgen/rmiss/rchit shaders)
+- [x] RT lighting with shadows and BRDF
+- [x] RT cubemap skydome fallback
+- [ ] looking into SIMD
 - [ ] multithreading for rendering and resource loading
-- [ ] Adding Fragment Lighting 
-- [ ] Raytracing
+- [ ] Adding Fragment Lighting
+## Raytracing Known Issues
+- [ ] **Image not cleared between frames** — the ray-traced output storage image persists
+      old pixel data, causing flickering/ghosting artifacts
+- [ ] **Normal transformation in hit shader** — `gl_WorldToObjectEXT` may double-transform
+      normals when rtVertex normals are already in local space
+- [ ] **InstanceCustomIndex → meshBuffer index mapping** — needs validation that
+      `node.meshIndex` aligns with the order meshes are stored in the mesh buffer
+- [ ] **TLAS instance buffer not rebuilt** — transform updates during scene changes may
+      require TLAS rebuild per frame or dirty-flag
+- [ ] **No multi-bounce accumulation** — each frame traces independently with no temporal
+      denoising, leading to noise in low-sample-count paths
 ## Fixes
 - [x] recreating swapchain on window resize
 - [x] validation layers errors when switching from compute to graphics and back
@@ -89,6 +102,11 @@ flowchart TD
 	   subgraph scene
 		sceneLoader[Scene Loader]
 		entities[Entities]
+	   end
+	   subgraph raytracing
+		raytracingAS[RT Acceleration Structures]
+		raytracingPipeline[RT Pipeline + SBT]
+		raytracingShader[RT Shaders]
 	   end
 	   subgraph ui
 		uiRenderer[UI Renderer]
