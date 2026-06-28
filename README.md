@@ -1,5 +1,26 @@
 # MukkiGamesEngine
 
+## Progress
+
+
+## RayTracing 
+<img width="1701" height="744" alt="Screenshot 2026-06-27 230955" src="https://github.com/user-attachments/assets/fbc24807-e90f-4112-8a88-57661d3a8253" />
+<img width="1675" height="1360" alt="Screenshot 2026-06-27 230926" src="https://github.com/user-attachments/assets/da61c802-441b-4254-9968-733d00e521c8" />
+
+## UI changes Works!
+
+https://github.com/user-attachments/assets/0c19a22d-971b-4ff4-b9d8-ecf9d9b7e023
+
+## CubeMap rendering works 
+
+https://github.com/user-attachments/assets/ff565553-97be-4b4f-b2da-1129d42001f7
+
+## BRDF Basic Shine
+<img width="1558" height="1348" alt="image" src="https://github.com/user-attachments/assets/32bfceeb-bcfc-42e4-bcdb-bc2d0bddc939" />
+
+
+
+
 ## Build (Windows)
 ### Prerequisites
 - **CMake 3.31.4+** (3.16 minimum) and **Ninja**
@@ -113,21 +134,5 @@ flowchart TD
 	   end
   end
 ```
-## Progress
-![MukkiGamesEngine Progress1: rectangle](image.png)
 
-## UI changes Works!
-
-https://github.com/user-attachments/assets/0c19a22d-971b-4ff4-b9d8-ecf9d9b7e023
-
-
-
-
-## CubeMap rendering works 
-
-
-https://github.com/user-attachments/assets/ff565553-97be-4b4f-b2da-1129d42001f7
-
-## BRDF Basic Shine
-<img width="1558" height="1348" alt="image" src="https://github.com/user-attachments/assets/32bfceeb-bcfc-42e4-bcdb-bc2d0bddc939" />
 
