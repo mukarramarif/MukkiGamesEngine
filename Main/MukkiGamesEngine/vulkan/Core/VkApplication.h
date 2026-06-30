@@ -1,5 +1,4 @@
 #pragma once
-#include <memory>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_raii.hpp>
 #include "VkInstance.h"
@@ -20,6 +19,7 @@
 #include "../uiManager/uiManager.h"
 #include "../pipeline/computePipeline.h"
 #include "../objects/lights.h"
+#include <memory>
 #include <vector>
 #include <string>
 #include "ShaderCompiler.h"
@@ -51,16 +51,16 @@ private:
 	std::unique_ptr<VulkanSwap> swapChain;
 
 	// Rendering components
-	VulkanRenderPass* renderPassObj = nullptr;
+	std::unique_ptr<VulkanRenderPass> renderPassObj;
 	VkRenderPass renderPass = VK_NULL_HANDLE;
-	VulkanPipeline* graphicsPipeline = nullptr;
-	VulkanPipeline* additivePipeline = nullptr;
+	std::unique_ptr<VulkanPipeline> graphicsPipeline;
+	std::unique_ptr<VulkanPipeline> additivePipeline;
 	// Pipeline layout and descriptor set layout (now managed here)
 	VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 	VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
 
 	// Command buffers
-	CommandBufferManager* commandBufferManager = nullptr;
+	std::unique_ptr<CommandBufferManager> commandBufferManager;
 
 	// Synchronization objects
 	std::vector<VkSemaphore> imageAvailableSemaphores;
@@ -78,7 +78,7 @@ private:
 	uint32_t indexCount = 0;
 
 	// Descriptors
-	VkDescriptorBoss* descriptorBoss = nullptr;
+	std::unique_ptr<VkDescriptorBoss> descriptorBoss;
 	std::vector<VkDescriptorSet> descriptorSets;
 	VkDescriptorSetLayout rayTracingDescriptorSetLayout = VK_NULL_HANDLE;
 	VkDescriptorPool rayTracingDescriptorPool = VK_NULL_HANDLE;
@@ -109,8 +109,8 @@ private:
 	VkDeviceMemory rayTracingMeshBufferMemory = VK_NULL_HANDLE;
 
 	//Texture Handler and Buffer Manager
-	TextureManager* textureManager = nullptr;
-	BufferManager* bufferManager = nullptr;
+	std::unique_ptr<TextureManager> textureManager;
+	std::unique_ptr<BufferManager> bufferManager;
 	//depth resources
 	VkImage depthImage;
 	VkDeviceMemory depthImageMemory;
@@ -134,7 +134,7 @@ private:
 	std::vector<std::vector<void*>> materialUniformBuffersMapped;
 
 	// Camera
-	Camera* camera = nullptr;
+	std::unique_ptr<Camera> camera;
 
 	// Input tracking
 	float lastX = 400.0f;
@@ -193,10 +193,10 @@ private:
 	static void mouseCallback(GLFWwindow* window, double xpos, double ypos);
 
 	//UI Manager
-	UIManager* uiManager = nullptr;
+	std::unique_ptr<UIManager> uiManager;
 	ModelTransform modelTransform;
 	// Compute Pipeline
-	ComputePipeline* computePipeline = nullptr;
+	std::unique_ptr<ComputePipeline> computePipeline;
 	VkImage computeOutputImage = VK_NULL_HANDLE;
 	VkDeviceMemory computeOutputImageMemory = VK_NULL_HANDLE;
 	VkImageView computeOutputImageView = VK_NULL_HANDLE;
@@ -219,7 +219,7 @@ private:
 	uint64_t rtFrameCounter = 0;
 	glm::vec2 taaJitter = glm::vec2(0.0f);
 
-	RayTracingPipeline* rayTracingPipeline = nullptr;
+	std::unique_ptr<RayTracingPipeline> rayTracingPipeline;
 
 	// Accumulation
 	VkImage accumOutputImage = VK_NULL_HANDLE;
@@ -230,17 +230,17 @@ private:
 
 	//Object-Loader
 	std::vector<std::vector<VkDescriptorSet>> modelDescriptorSets; // set for each model and each frame
-	ObjectLoader* objectLoader = nullptr;
+	std::unique_ptr<ObjectLoader> objectLoader;
 	Model loadedModel;
 	bool modelLoaded = false;
 	void createModelDescriptorSets();
 
 	//Scene Loader
-	SceneLoader* sceneLoader = nullptr;
+	std::unique_ptr<SceneLoader> sceneLoader;
 
 	//Skybox
-	SkyBox* skybox = nullptr;
-	RayTracingAS* rayTracingAS = nullptr;
+	std::unique_ptr<SkyBox> skybox;
+	std::unique_ptr<RayTracingAS> rayTracingAS;
 
 	std::vector<Light> lights;
 	float ambientStrength = 0.1f;

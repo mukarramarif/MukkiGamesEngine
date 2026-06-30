@@ -17,6 +17,7 @@ private:
 	GLFWwindow* window;
 
 public:
+	~VulkanSwap() { cleanup(); }
 	void initSwap(Device& device, const VkSurfaceKHR& vkSurface, GLFWwindow* window);
 	void createImageViews();
 	void createFramebuffers(VkRenderPass renderPass, VkImageView depthImageView = VK_NULL_HANDLE);

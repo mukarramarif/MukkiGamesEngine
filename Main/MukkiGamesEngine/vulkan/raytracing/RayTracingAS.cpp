@@ -5,7 +5,7 @@
 #include <array>
 
 RayTracingAS::RayTracingAS() = default;
-RayTracingAS::~RayTracingAS() = default;
+RayTracingAS::~RayTracingAS() { cleanup(); }
 
 void RayTracingAS::init(Device* device, CommandBufferManager* commandBufferManager)
 {

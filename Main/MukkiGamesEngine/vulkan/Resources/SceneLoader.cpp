@@ -21,7 +21,7 @@ void SceneLoader::init(Device* device, TextureManager* textureManager, BufferMan
 }
 
 bool SceneLoader::loadScene(const std::string& filepath)
-{
+{   
 	std::ifstream file(filepath);
 	if (!file.is_open()) {
 		std::cerr << "Failed to open scene file: " << filepath << std::endl;
