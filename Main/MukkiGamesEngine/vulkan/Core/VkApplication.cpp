@@ -1601,7 +1601,7 @@ void VulkanApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer
 	// Transition swapchain image for transfer destination
 	VkImageMemoryBarrier swapBarrier{};
 	swapBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  swapBarrier.oldLayout = swapChainImageLayouts[imageIndex];
+    swapBarrier.oldLayout = swapChainImageLayouts[imageIndex];
 	swapBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	swapBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 	swapBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;

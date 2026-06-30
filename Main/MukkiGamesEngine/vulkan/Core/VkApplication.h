@@ -1,4 +1,5 @@
 #pragma once
+#include <memory>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_raii.hpp>
 #include "VkInstance.h"
@@ -45,9 +46,9 @@ private:
 	RenderMode currentRenderMode = RenderMode::GRAPHICS;
 	// Core components
 	Instance instance;
-	EngineWindow* window = nullptr;
-	Device* device = nullptr;
-	VulkanSwap* swapChain = nullptr;
+	std::unique_ptr<EngineWindow> window;
+	std::unique_ptr<Device> device;
+	std::unique_ptr<VulkanSwap> swapChain;
 
 	// Rendering components
 	VulkanRenderPass* renderPassObj = nullptr;
@@ -243,7 +244,8 @@ private:
 
 	std::vector<Light> lights;
 	float ambientStrength = 0.1f;
-	std::vector<std::string> availableScenes{ "scene.json", "sceneTrack.json" };
+	// @TODO: find a way to automatically update scenes like hot shader reloading
+	std::vector<std::string> availableScenes{ "WaterExample.json", "sceneTrack.json", "scene.json" };
 	int currentSceneIndex = 0;
 
 	// Deletion queue for deferred resource cleanup
