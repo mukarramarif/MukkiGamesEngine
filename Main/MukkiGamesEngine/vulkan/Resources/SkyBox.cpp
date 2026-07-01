@@ -7,7 +7,7 @@
 
 SkyBox::SkyBox() {}
 
-SkyBox::~SkyBox() {}
+SkyBox::~SkyBox() { cleanup(); }
 
 void SkyBox::init(Device* device, TextureManager* textureManager, BufferManager* bufferManager,
 	VkRenderPass renderPass, const std::string& cubemapPath,

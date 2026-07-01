@@ -35,6 +35,7 @@ public:
 	void pushDescriptorPool(VkDevice device, VkDescriptorPool pool);
 	void pushDescriptorSetLayout(VkDevice device, VkDescriptorSetLayout layout);
 	void pushPipelineLayout(VkDevice device, VkPipelineLayout layout);
+	void pushPipeline(VkDevice device, VkPipeline pipeline);
 
 	/// Push an object with a cleanup() + delete pattern.
 	/// The object's cleanup() is called, then it is deleted.

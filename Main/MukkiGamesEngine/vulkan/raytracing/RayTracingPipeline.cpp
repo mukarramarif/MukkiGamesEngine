@@ -5,7 +5,7 @@
 #include <array>
 
 RayTracingPipeline::RayTracingPipeline() = default;
-RayTracingPipeline::~RayTracingPipeline() = default;
+RayTracingPipeline::~RayTracingPipeline() { cleanup(); }
 
 void RayTracingPipeline::init(Device* device)
 {

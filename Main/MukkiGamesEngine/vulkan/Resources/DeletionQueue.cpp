@@ -110,6 +110,16 @@ void DeletionQueue::pushPipelineLayout(VkDevice device, VkPipelineLayout layout)
 	}
 }
 
+void DeletionQueue::pushPipeline(VkDevice device, VkPipeline pipeline)
+{
+	if (pipeline != VK_NULL_HANDLE)
+	{
+		push([device, pipeline]() {
+			vkDestroyPipeline(device, pipeline, nullptr);
+		});
+	}
+}
+
 void DeletionQueue::flush()
 {
 	// Execute in reverse order (LIFO) so resources are destroyed
