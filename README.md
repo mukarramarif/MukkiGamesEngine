@@ -2,24 +2,21 @@
 
 ## Progress
 
-
-## RayTracing 
+* RayTracing 
 <img width="1701" height="744" alt="Screenshot 2026-06-27 230955" src="https://github.com/user-attachments/assets/fbc24807-e90f-4112-8a88-57661d3a8253" />
 <img width="1675" height="1360" alt="Screenshot 2026-06-27 230926" src="https://github.com/user-attachments/assets/da61c802-441b-4254-9968-733d00e521c8" />
 
-## Shadows
+* Shadows
 <img width="1377" height="868" alt="image" src="https://github.com/user-attachments/assets/57b37e72-8c3d-4592-a70a-0bd81c77bafe" />
 
-## UI changes Works!
+* BRDF Basic Shine
+<img width="1558" height="1348" alt="image" src="https://github.com/user-attachments/assets/32bfceeb-bcfc-42e4-bcdb-bc2d0bddc939" />
 
-https://github.com/user-attachments/assets/0c19a22d-971b-4ff4-b9d8-ecf9d9b7e023
 
-## CubeMap rendering works 
+* CubeMap
 
 https://github.com/user-attachments/assets/ff565553-97be-4b4f-b2da-1129d42001f7
 
-## BRDF Basic Shine
-<img width="1558" height="1348" alt="image" src="https://github.com/user-attachments/assets/32bfceeb-bcfc-42e4-bcdb-bc2d0bddc939" />
 
 
 
@@ -85,27 +82,19 @@ cmake --build --preset conan-debug
     - [x] SceneObject
     - [ ] Shader hot reloading
 - [x] Basic raytracing pipeline (TLAS/BLAS, SBT, rgen/rmiss/rchit shaders)
-- [x] RT lighting with shadows and BRDF
+- [ ] RT lighting with shadows and BRDF
+	- [ ] BRDF
+ 	- [ ] Shadows	
 - [x] RT cubemap skydome fallback
 - [ ] looking into SIMD
 - [ ] multithreading for rendering and resource loading
-- [ ] Adding Fragment Lighting
-## Raytracing Known Issues
-- [ ] **Image not cleared between frames** — the ray-traced output storage image persists
-      old pixel data, causing flickering/ghosting artifacts
-- [ ] **Normal transformation in hit shader** — `gl_WorldToObjectEXT` may double-transform
-      normals when rtVertex normals are already in local space
-- [ ] **InstanceCustomIndex → meshBuffer index mapping** — needs validation that
-      `node.meshIndex` aligns with the order meshes are stored in the mesh buffer
-- [ ] **TLAS instance buffer not rebuilt** — transform updates during scene changes may
-      require TLAS rebuild per frame or dirty-flag
-- [ ] **No multi-bounce accumulation** — each frame traces independently with no temporal
-      denoising, leading to noise in low-sample-count paths
+
 ## Fixes
 - [x] recreating swapchain on window resize
 - [x] validation layers errors when switching from compute to graphics and back
-- [ ] cleanup code maybe using RAII or smart pointers
-- [ ] RAII would require bit to much refactoring right now will fix later (tech depth)
+- [ ] RAII cleanup (tech depth)
+	- [x] adding unique_ptrs to member variables in VkApplication
+ 	- [ ] fixing dangling ptrs in code after switching scenes
 ## Architecture Diagram
 ```mermaid
 flowchart TD
