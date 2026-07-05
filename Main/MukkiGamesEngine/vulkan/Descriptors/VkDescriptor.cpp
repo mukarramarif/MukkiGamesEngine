@@ -16,7 +16,7 @@ void VkDescriptorBoss::createDescriptorPool(uint32_t maxSets)
 	poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	poolSizes[0].descriptorCount = totalSets;
 	poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	poolSizes[1].descriptorCount = totalSets;
+	poolSizes[1].descriptorCount = totalSets * 2;  // doubled for shadow map
 	poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	poolSizes[2].descriptorCount = totalSets;
 
@@ -51,7 +51,9 @@ void VkDescriptorBoss::updateDescriptorSets(
 	const std::vector<VkBuffer>& uniformBuffers,
 	const std::vector<VkBuffer>& materialBuffers,
 	VkImageView textureImageView,
-	VkSampler textureSampler)
+	VkSampler textureSampler,
+	VkImageView shadowMapImageView,
+	VkSampler shadowMapSampler)
 {
 	for (size_t i = 0; i < descriptorSets.size(); i++) {
 		std::vector<VkWriteDescriptorSet> descriptorWrites;
@@ -103,12 +105,26 @@ void VkDescriptorBoss::updateDescriptorSets(
 			samplerWrite.pImageInfo = &imageInfo;
 			descriptorWrites.push_back(samplerWrite);
 		}
-		
-		
 
-		// Update both descriptors
-		// @TO-DO: Add sample writer for textures
-	
+		// Shadow map sampler (binding = 3)
+		if (shadowMapImageView != VK_NULL_HANDLE && shadowMapSampler != VK_NULL_HANDLE) {
+			VkDescriptorImageInfo shadowImageInfo{};
+			shadowImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			shadowImageInfo.imageView = shadowMapImageView;
+			shadowImageInfo.sampler = shadowMapSampler;
+
+			VkWriteDescriptorSet shadowWrite{};
+			shadowWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			shadowWrite.dstSet = descriptorSets[i];
+			shadowWrite.dstBinding = 3; // Shadow map sampler binding
+			shadowWrite.dstArrayElement = 0;
+			shadowWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			shadowWrite.descriptorCount = 1;
+			shadowWrite.pImageInfo = &shadowImageInfo;
+			descriptorWrites.push_back(shadowWrite);
+		}
+
+		// Update all descriptors
 		vkUpdateDescriptorSets(device->getDevice(), static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 	}
 }

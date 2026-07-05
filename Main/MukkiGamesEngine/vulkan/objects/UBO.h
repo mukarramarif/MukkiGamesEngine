@@ -6,12 +6,13 @@ struct UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
-    glm::mat4 normalMatrix;    // inverse transpose of model matrix
-    glm::vec4 viewPos;         // camera position
+    glm::mat4 normalMatrix;         // inverse transpose of model matrix
+    glm::mat4 lightSpaceMatrix;     // directional light view-projection for shadow mapping
+    glm::vec4 viewPos;              // camera position
     GPULight lights[MAX_LIGHTS];
     int numLights;
     float ambientStrength;
-    float padding[2];          // alignment to 16 bytes
+    float padding[2];               // alignment to 16 bytes
 };
 
 
