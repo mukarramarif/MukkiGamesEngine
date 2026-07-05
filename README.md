@@ -7,6 +7,9 @@
 <img width="1701" height="744" alt="Screenshot 2026-06-27 230955" src="https://github.com/user-attachments/assets/fbc24807-e90f-4112-8a88-57661d3a8253" />
 <img width="1675" height="1360" alt="Screenshot 2026-06-27 230926" src="https://github.com/user-attachments/assets/da61c802-441b-4254-9968-733d00e521c8" />
 
+## Shadows
+<img width="1377" height="868" alt="image" src="https://github.com/user-attachments/assets/57b37e72-8c3d-4592-a70a-0bd81c77bafe" />
+
 ## UI changes Works!
 
 https://github.com/user-attachments/assets/0c19a22d-971b-4ff4-b9d8-ecf9d9b7e023
