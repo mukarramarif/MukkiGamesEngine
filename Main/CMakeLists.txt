@@ -69,7 +69,7 @@ message(STATUS "Engine sources: ${ENGINE_SOURCES}")
 add_executable(MukkiGamesEngine ${ENGINE_SOURCES})
 
 # --- clang-tidy integration (opt-in) ---
-option(ENABLE_CLANG_TIDY "Run clang-tidy on source files during build" ON)
+option(ENABLE_CLANG_TIDY "Run clang-tidy on source files during build" OFF)
 if(ENABLE_CLANG_TIDY)
   find_program(CLANG_TIDY_EXECUTABLE clang-tidy
     HINTS ENV LLVM_DIR
@@ -158,8 +158,10 @@ function(add_slang_fragment_shaders TARGET_NAME)
   foreach(SHADER_SOURCE IN LISTS SHADER_SOURCE_FILES)
     get_filename_component(SHADER_BASE "${SHADER_SOURCE}" NAME_WE)
 
-    # Output name will be <build-dir>/<basename>.frag.spv -> brdf.frag.spv
-    set(OUT "${CMAKE_CURRENT_BINARY_DIR}/${SHADER_BASE}.frag.spv")
+    # Output name will be <build-dir>/Shaders/<basename>.frag.spv -> Shaders/brdf.frag.spv
+    set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/Shaders")
+    file(MAKE_DIRECTORY "${SHADER_OUTPUT_DIR}")
+    set(OUT "${SHADER_OUTPUT_DIR}/${SHADER_BASE}.frag.spv")
     add_custom_command(
       OUTPUT "${OUT}"
       COMMAND "${SLANGC_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/${SHADER_SOURCE}"
@@ -178,6 +180,8 @@ endfunction()
 # Compile all shaders
 add_shaders(MukkiGamesEngine
     MukkiGamesEngine/Shaders/shader.vert
+    MukkiGamesEngine/Shaders/shadow.vert
+    MukkiGamesEngine/Shaders/shadow.frag
     MukkiGamesEngine/Shaders/compute.comp
     MukkiGamesEngine/Shaders/skybox.vert
     MukkiGamesEngine/Shaders/skybox.frag

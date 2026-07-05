@@ -251,6 +251,8 @@ void VulkanApplication::initVulkan()
 	swapChain = std::make_unique<VulkanSwap>();
 	swapChain->initSwap(*device, surface, window->getGLFWwindow());
 	swapChain->createImageViews();
+	shadowMap = std::make_unique<ShadowMap>();
+	shadowMap->init(device.get(), 2048);
 
 	// 6. Create render pass (defines how rendering operations are performed)
 	renderPassObj = std::make_unique<VulkanRenderPass>(device.get(), swapChain->getSwapChainImageFormat());
@@ -333,7 +335,9 @@ void VulkanApplication::initVulkan()
 		uniformBuffers,
 		defaultMaterialUniformBuffers,
 		textureImageView,
-		textureSampler
+		textureSampler,
+		shadowMap ? shadowMap->getShadowMapImageView() : VK_NULL_HANDLE,
+		shadowMap ? shadowMap->getShadowSampler() : VK_NULL_HANDLE
 	);
 
 	createRayTracingDescriptorPool();
@@ -614,6 +618,15 @@ void VulkanApplication::updateUniformBuffer(uint32_t currentImage)
 	// Normal matrix (inverse transpose of model matrix for correct normal transformation)
 	ubo.normalMatrix = glm::transpose(glm::inverse(model));
 
+	// Compute light-space matrix for shadow mapping (first enabled directional light)
+	ubo.lightSpaceMatrix = glm::mat4(1.0f);
+	for (const auto& light : lights) {
+		if (light.enabled && light.type == LightType::Directional) {
+			ubo.lightSpaceMatrix = computeDirectionalLightSpaceMatrix(light, *camera);
+			break;
+		}
+	}
+
 	// Camera position for specular calculations
 	ubo.viewPos = glm::vec4(camera->position, 1.0f);
 
@@ -626,6 +639,11 @@ void VulkanApplication::updateUniformBuffer(uint32_t currentImage)
 			ubo.lights[ubo.numLights] = lights[i].toGPU();
 			ubo.numLights++;
 		}
+	}
+
+	// Set shadow map texel size for PCF sampling
+	if (shadowMap) {
+		ubo.padding[0] = 1.0f / static_cast<float>(shadowMap->getShadowMapSize());
 	}
 
 	memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
@@ -685,6 +703,10 @@ void VulkanApplication::drawFrame()
 		glm::mat4 view = camera->getSkyboxVPMatrix(aspect, 0.1f, 100.f);
 		skybox->updateUniformBuffer(currentFrame, view);
 	}
+
+	// Record shadow pass for directional light shadow mapping
+	recordShadowPass();
+
 	// 5. Record command buffer
 	commandBufferManager->resetCommandBuffer(currentFrame);
 	VkCommandBuffer commandBuffer = commandBufferManager->getCommandBuffer(currentFrame);
@@ -710,8 +732,8 @@ void VulkanApplication::drawFrame()
 				pipelineLayout,
 				loadedModel,
 				skybox.get(),
-	           swapChain->getSwapChainImages()[imageIndex],
-	           swapChainImageLayouts[imageIndex],
+	               swapChain->getSwapChainImages()[imageIndex],
+	               swapChainImageLayouts[imageIndex],
 				modelDescriptorSets,
 				currentFrame,
 				*uiManager
@@ -729,7 +751,7 @@ void VulkanApplication::drawFrame()
 				pipelineLayout,
 				vertexBuffer,
 				indexBuffer,
-	        swapChain->getSwapChainImages()[imageIndex],
+	            swapChain->getSwapChainImages()[imageIndex],
 				swapChainImageLayouts[imageIndex],
 				descriptorSets,
 				currentFrame,
@@ -1035,7 +1057,7 @@ void VulkanApplication::cleanup()
 	bufferManager.reset();
 	uiManager.reset();
 	camera.reset();
-
+	shadowMap->cleanup();
 	device.reset();
 	window.reset();
 
@@ -1051,6 +1073,146 @@ void VulkanApplication::toggleCursor()
 		glfwSetInputMode(window->getGLFWwindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 		firstMouse = true; // Reset mouse tracking
 	}
+}
+
+// Helper: compute orthographic light-space matrix for directional light shadow mapping
+glm::mat4 VulkanApplication::computeDirectionalLightSpaceMatrix(const Light& light, const Camera& camera){
+    float near = 0.1f, far = 80.0f;
+    float orthoSize = 25.0f;
+    glm::vec3 lightPos = camera.position - light.direction * 40.0f;
+    glm::vec3 worldUp = glm::vec3(0.0f, 1.0f, 0.0f);
+    if (glm::abs(glm::dot(glm::normalize(light.direction), worldUp)) > 0.99f) {
+        worldUp = glm::vec3(0.0f, 0.0f, 1.0f);
+    }
+    glm::mat4 lightView = glm::lookAt(lightPos, camera.position, worldUp);
+    glm::mat4 lightProj = glm::ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, near, far);
+    return lightProj * lightView;
+}
+
+void VulkanApplication::recordShadowPass()
+{
+    if (!shadowMap) return;
+
+    // Find first enabled directional light
+    const Light* dirLight = nullptr;
+    for (const auto& light : lights) {
+        if (light.enabled && light.type == LightType::Directional) {
+            dirLight = &light;
+            break;
+        }
+    }
+    if (!dirLight) return;
+
+    glm::mat4 lightSpaceMatrix = computeDirectionalLightSpaceMatrix(*dirLight, *camera);
+
+    VkCommandBuffer cmd = commandBufferManager->beginSingleTimeCommands();
+
+    // Transition shadow images to proper rendering layouts
+    VkImageMemoryBarrier shadowColorBarrier{};
+    shadowColorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    shadowColorBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    shadowColorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    shadowColorBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    shadowColorBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    shadowColorBarrier.image = shadowMap->getShadowImage();
+    shadowColorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    shadowColorBarrier.subresourceRange.baseMipLevel = 0;
+    shadowColorBarrier.subresourceRange.levelCount = 1;
+    shadowColorBarrier.subresourceRange.baseArrayLayer = 0;
+    shadowColorBarrier.subresourceRange.layerCount = 1;
+    shadowColorBarrier.srcAccessMask = 0;
+    shadowColorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    VkImageMemoryBarrier shadowDepthBarrier{};
+    shadowDepthBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    shadowDepthBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    shadowDepthBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    shadowDepthBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    shadowDepthBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    shadowDepthBarrier.image = shadowMap->getDepthImage();
+    shadowDepthBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    shadowDepthBarrier.subresourceRange.baseMipLevel = 0;
+    shadowDepthBarrier.subresourceRange.levelCount = 1;
+    shadowDepthBarrier.subresourceRange.baseArrayLayer = 0;
+    shadowDepthBarrier.subresourceRange.layerCount = 1;
+    shadowDepthBarrier.srcAccessMask = 0;
+    shadowDepthBarrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+    VkImageMemoryBarrier barriers[] = { shadowColorBarrier, shadowDepthBarrier };
+    vkCmdPipelineBarrier(
+        cmd,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        2, barriers
+    );
+
+    // Begin shadow render pass
+    VkRenderPassBeginInfo rpInfo{};
+    rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpInfo.renderPass = shadowMap->getRenderPass();
+    rpInfo.framebuffer = shadowMap->getFramebuffer();
+    rpInfo.renderArea.offset = { 0, 0 };
+    rpInfo.renderArea.extent = shadowMap->getExtent();
+
+    VkClearValue clearValues[2] = {};
+    clearValues[0].color = { {1.0f, 0.0f, 0.0f, 0.0f} };
+    clearValues[1].depthStencil = { 1.0f, 0 };
+    rpInfo.clearValueCount = 2;
+    rpInfo.pClearValues = clearValues;
+
+    vkCmdBeginRenderPass(cmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowMap->getPipeline());
+
+    // Set viewport and scissor
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(shadowMap->getShadowMapSize());
+    viewport.height = static_cast<float>(shadowMap->getShadowMapSize());
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = shadowMap->getExtent();
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    // Set depth bias (dynamic state) to match the pipeline's configured values
+    vkCmdSetDepthBias(cmd, 1.25f, 0.0f, 1.75f);
+
+    // Push light-space matrix via push constant
+    vkCmdPushConstants(cmd, shadowMap->getPipelineLayout(),
+        VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &lightSpaceMatrix);
+
+    // Draw geometry into shadow map
+    if (modelLoaded && loadedModel.vertexBuffer != VK_NULL_HANDLE) {
+        VkBuffer vertexBuffers[] = { loadedModel.vertexBuffer };
+        VkDeviceSize offsets[] = { 0 };
+        vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+        vkCmdBindIndexBuffer(cmd, loadedModel.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+        for (const auto& meshIndex : loadedModel.opaqueMeshIndices) {
+            const auto& meshRef = loadedModel.meshes[meshIndex];
+            for (const auto& primitive : meshRef.primitives) {
+                vkCmdDrawIndexed(cmd, primitive.indexCount, 1, primitive.firstIndex, 0, 0);
+            }
+        }
+    }
+    else {
+        VkBuffer vertexBuffers[] = { vertexBuffer };
+        VkDeviceSize offsets[] = { 0 };
+        vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+        vkCmdBindIndexBuffer(cmd, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 0);
+    }
+
+    vkCmdEndRenderPass(cmd);
+    commandBufferManager->endSingleTimeCommands(cmd);
 }
 
 void VulkanApplication::processInput() {
@@ -1216,6 +1378,27 @@ void VulkanApplication::createModelDescriptorSets()
 			materialWrite.pBufferInfo = &materialBufferInfo;
 			descriptorWrites.push_back(materialWrite);
 
+			// Shadow map sampler (binding 3)
+			VkDescriptorImageInfo shadowImageInfo{};
+			shadowImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			if (shadowMap) {
+				shadowImageInfo.imageView = shadowMap->getShadowMapImageView();
+				shadowImageInfo.sampler = shadowMap->getShadowSampler();
+			} else {
+				shadowImageInfo.imageView = textureImageView;
+				shadowImageInfo.sampler = textureSampler;
+			}
+
+			VkWriteDescriptorSet shadowWrite{};
+			shadowWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			shadowWrite.dstSet = modelDescriptorSets[matIndex][frame];
+			shadowWrite.dstBinding = 3;
+			shadowWrite.dstArrayElement = 0;
+			shadowWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			shadowWrite.descriptorCount = 1;
+			shadowWrite.pImageInfo = &shadowImageInfo;
+			descriptorWrites.push_back(shadowWrite);
+
 			vkUpdateDescriptorSets(device->getDevice(),
 				static_cast<uint32_t>(descriptorWrites.size()),
 				descriptorWrites.data(), 0, nullptr);
@@ -1236,7 +1419,7 @@ void VulkanApplication::setupDefaultLights()
 	// Add a directional light (like the sun)
 	Light sunLight;
 	sunLight.type = LightType::Directional;
-	sunLight.direction = glm::vec3(-0.5f, -1.0f, -0.3f);
+	sunLight.direction = glm::vec3(-0.8f, -0.5f, -0.3f);
 	sunLight.color = glm::vec3(1.0f, 0.95f, 0.8f);  // Warm white
 	sunLight.intensity = 1.0f;
 	sunLight.enabled = true;
@@ -2219,11 +2402,17 @@ void VulkanApplication::createDescriptorSetLayout()
 	materialLayoutBinding.descriptorCount = 1;
 	materialLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 	materialLayoutBinding.pImmutableSamplers = nullptr;
-
-	std::array<VkDescriptorSetLayoutBinding, 3> bindings = {
+	//ShadowMap Sampler (binding = 3)
+	VkDescriptorSetLayoutBinding shadowLayoutBinding{};
+	shadowLayoutBinding.binding = 3;
+	shadowLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	shadowLayoutBinding.descriptorCount = 1;
+	shadowLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+	std::array<VkDescriptorSetLayoutBinding, 4> bindings = {
 		uboLayoutBinding,
 		samplerLayoutBinding,
-		materialLayoutBinding
+		materialLayoutBinding,
+		shadowLayoutBinding
 	};
 
 	VkDescriptorSetLayoutCreateInfo layoutInfo{};

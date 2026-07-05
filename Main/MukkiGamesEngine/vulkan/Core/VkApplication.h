@@ -16,6 +16,7 @@
 #include "../Resources/SkyBox.h"
 #include "../Resources/Sceneloader.h"
 #include "../Resources/DeletionQueue.h"
+#include "../Resources/ShadowMap.h"
 #include "../uiManager/uiManager.h"
 #include "../pipeline/computePipeline.h"
 #include "../objects/lights.h"
@@ -35,6 +36,7 @@ public:
 	~VulkanApplication();
 	void run();
 	void toggleRenderMode();
+	glm::mat4 computeDirectionalLightSpaceMatrix(const Light& light, const Camera& camera);
 private:
 	// Render Mode toggle
 	vk::raii::Context context;
@@ -177,6 +179,7 @@ private:
 	void cleanupTAAImages();
 	void cleanupTAAPipeline();
 	void updateTAADescriptorSets();
+	void recordShadowPass();
 
 	// New methods for pipeline setup
 	void createDescriptorSetLayout();
@@ -244,10 +247,14 @@ private:
 
 	std::vector<Light> lights;
 	float ambientStrength = 0.1f;
+
+	//ShadowMap
+	std::unique_ptr<ShadowMap> shadowMap;
 	// @TODO: find a way to automatically update scenes like hot shader reloading
-	std::vector<std::string> availableScenes{ "WaterExample.json", "sceneTrack.json", "scene.json" };
+	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json","WaterExample.json"};
 	int currentSceneIndex = 0;
 
 	// Deletion queue for deferred resource cleanup
 	DeletionQueue m_deletionQueue;
+
 };
