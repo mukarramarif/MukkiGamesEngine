@@ -928,6 +928,12 @@ void VulkanApplication::mainLoop()
 		uiManager->renderCameraInfo(camera->position, camera->front);
 		uiManager->renderModelTransformWindow(modelTransform, deltaTime);
 		uiManager->renderLightingWindow(lights, ambientStrength);
+		{	bool resetAcc = false;
+			uiManager->renderRayTracingControls(resetAcc);
+			if (resetAcc) {
+				accumulationFrameCount = 0;
+			}
+		}
 		bool loadSceneFlag = false;
 		uiManager->renderSceneLoader(
 			loadSceneFlag,
@@ -990,6 +996,23 @@ void VulkanApplication::cleanup()
 	// Cleanup in reverse order of creation
 	cleanupComputeResources();
 
+	// Cleanup per-frame synchronization objects
+	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		if (imageAvailableSemaphores[i] != VK_NULL_HANDLE) {
+			vkDestroySemaphore(device->getDevice(), imageAvailableSemaphores[i], nullptr);
+		}
+		if (inFlightFences[i] != VK_NULL_HANDLE) {
+			vkDestroyFence(device->getDevice(), inFlightFences[i], nullptr);
+		}
+	}
+
+	// Cleanup per-image synchronization objects
+	for (size_t i = 0; i < renderFinishedSemaphores.size(); i++) {
+		if (renderFinishedSemaphores[i] != VK_NULL_HANDLE) {
+			vkDestroySemaphore(device->getDevice(), renderFinishedSemaphores[i], nullptr);
+		}
+	}
+
 	// Cleanup uniform buffers (manually managed vectors)
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		if (uniformBuffers[i] != VK_NULL_HANDLE) {
@@ -1011,9 +1034,51 @@ void VulkanApplication::cleanup()
 		}
 	}
 
-	// Cleanup per-image synchronization objects (leftover after DeletionQueue)
-	for (size_t i = 0; i < renderFinishedSemaphores.size(); i++) {
-		vkDestroySemaphore(device->getDevice(), renderFinishedSemaphores[i], nullptr);
+	// Cleanup texture resources
+	if (textureSampler != VK_NULL_HANDLE && textureManager) {
+		textureManager->destroySampler(textureSampler);
+	}
+	if (textureImageView != VK_NULL_HANDLE && textureManager) {
+		textureManager->destroyImageView(textureImageView);
+	}
+	if (textureImage != VK_NULL_HANDLE && textureManager) {
+		textureManager->destroyImage(textureImage, textureImageMemory);
+	}
+
+	// Cleanup depth resources
+	if (depthImageView != VK_NULL_HANDLE && textureManager) {
+		textureManager->destroyImageView(depthImageView);
+	}
+	if (depthImage != VK_NULL_HANDLE && textureManager) {
+		textureManager->destroyImage(depthImage, depthImageMemory);
+	}
+
+	// Cleanup vertex/index buffers (fallback quad)
+	if (indexBuffer != VK_NULL_HANDLE) {
+		vkDestroyBuffer(device->getDevice(), indexBuffer, nullptr);
+	}
+	if (indexBufferMemory != VK_NULL_HANDLE) {
+		vkFreeMemory(device->getDevice(), indexBufferMemory, nullptr);
+	}
+	if (vertexBuffer != VK_NULL_HANDLE) {
+		vkDestroyBuffer(device->getDevice(), vertexBuffer, nullptr);
+	}
+	if (vertexBufferMemory != VK_NULL_HANDLE) {
+		vkFreeMemory(device->getDevice(), vertexBufferMemory, nullptr);
+	}
+
+	// TAA cleanup
+	if (taaPipelineLayout != VK_NULL_HANDLE) {
+		vkDestroyPipelineLayout(device->getDevice(), taaPipelineLayout, nullptr);
+	}
+	if (taaDescriptorSetLayout != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(device->getDevice(), taaDescriptorSetLayout, nullptr);
+	}
+	if (taaDescriptorPool != VK_NULL_HANDLE) {
+		vkDestroyDescriptorPool(device->getDevice(), taaDescriptorPool, nullptr);
+	}
+	if (taaPipeline != VK_NULL_HANDLE) {
+		vkDestroyPipeline(device->getDevice(), taaPipeline, nullptr);
 	}
 
 	// Destroy managers in correct dependency order
@@ -1053,11 +1118,14 @@ void VulkanApplication::cleanup()
 
 	swapChain.reset();
 	renderPassObj.reset();
+	if (shadowMap) {
+		shadowMap->cleanup();
+		shadowMap.reset();
+	}
 	textureManager.reset();
 	bufferManager.reset();
 	uiManager.reset();
 	camera.reset();
-	shadowMap->cleanup();
 	device.reset();
 	window.reset();
 

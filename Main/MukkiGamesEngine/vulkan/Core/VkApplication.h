@@ -98,6 +98,9 @@ private:
 		float baseColorR;
 		float baseColorG;
 		float baseColorB;
+		float emissiveR;
+		float emissiveG;
+		float emissiveB;
 	};
 	struct RayTracingMeshInfo {
 		uint32_t primitiveOffset;

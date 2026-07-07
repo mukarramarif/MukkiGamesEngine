@@ -10,6 +10,7 @@ struct Payload
     int shadowRay;
     float metallic;
     float roughness;
+    vec3 emissiveColor;
 };
 
 layout(location = 0) rayPayloadInEXT Payload payload;
@@ -33,6 +34,9 @@ struct PrimitiveInfo
     float baseColorR;
     float baseColorG;
     float baseColorB;
+    float emissiveR;
+    float emissiveG;
+    float emissiveB;
 };
 
 struct MeshInfo
@@ -109,4 +113,5 @@ void main()
     payload.color = albedo;
     payload.metallic = primInfo.metallicFactor;
     payload.roughness = primInfo.roughnessFactor;
+    payload.emissiveColor = vec3(primInfo.emissiveR, primInfo.emissiveG, primInfo.emissiveB);
 }
