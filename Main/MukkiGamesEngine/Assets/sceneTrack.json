@@ -1,7 +1,7 @@
 {
   "sceneName": "Track",
   "skyboxPath": "autumn_field_puresky_4k.hdr",
-  "ambientStrenght": 0.8,
+  "ambientStrenght": 0.4,
   "cameraSpawnPos": [0.0, 2.0, 5.0],
   "Lights": [
     {

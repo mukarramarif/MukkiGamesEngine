@@ -10,6 +10,7 @@ struct Payload
     int shadowRay;
     float metallic;
     float roughness;
+    vec3 emissiveColor;
 };
 
 layout(location = 0) rayPayloadInEXT Payload payload;

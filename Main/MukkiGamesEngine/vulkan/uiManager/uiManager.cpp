@@ -532,3 +532,14 @@ void UIManager::renderModelTransformWindow(ModelTransform& transform, float delt
 	ImGui::Spacing();
 	ImGui::End();
 }
+
+void UIManager::renderRayTracingControls(bool& resetAccumulation)
+{
+	ImGui::Begin("Ray Tracing", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+
+	if (ImGui::Button("Reset Accumulation")) {
+		resetAccumulation = true;
+	}
+
+	ImGui::End();
+}

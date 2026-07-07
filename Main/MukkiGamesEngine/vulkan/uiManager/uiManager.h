@@ -49,6 +49,7 @@ public:
 	void setSelectedLight(int index) { selectedLightIndex = index; }
 	int getSelectedLight() const { return selectedLightIndex; }
 	void renderSceneLoader(bool& loadSceneFlag, const std::vector<std::string>& scenes, int sceneNum, const std::function<void(int)>& onLoad);
+	void renderRayTracingControls(bool& resetAccumulation);
 private:
 	VkDevice device = VK_NULL_HANDLE;
 	VkDescriptorPool imguiPool = VK_NULL_HANDLE;

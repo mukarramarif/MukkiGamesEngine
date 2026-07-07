@@ -1,6 +1,6 @@
 #version 460
 #extension GL_EXT_ray_tracing : require
-
+#extension GL_EXT_nonuniform_qualifier : enable
 struct Payload
 {
     vec3 color;
@@ -10,6 +10,7 @@ struct Payload
     int shadowRay;
     float metallic;
     float roughness;
+    vec3 emissiveColor;
 };
 
 layout(location = 0) rayPayloadInEXT Payload payload;
@@ -33,6 +34,9 @@ struct PrimitiveInfo
     float baseColorR;
     float baseColorG;
     float baseColorB;
+    float emissiveR;
+    float emissiveG;
+    float emissiveB;
 };
 
 struct MeshInfo
@@ -100,7 +104,7 @@ void main()
     vec3 albedo;
     vec3 baseColor = vec3(primInfo.baseColorR, primInfo.baseColorG, primInfo.baseColorB);
     if (texIdx >= 0) {
-        albedo = texture(textures[texIdx], uv).rgb * baseColor;
+        albedo = texture(textures[nonuniformEXT(texIdx)], uv).rgb * baseColor;
     } else {
         albedo = baseColor;
     }
@@ -109,4 +113,5 @@ void main()
     payload.color = albedo;
     payload.metallic = primInfo.metallicFactor;
     payload.roughness = primInfo.roughnessFactor;
+    payload.emissiveColor = vec3(primInfo.emissiveR, primInfo.emissiveG, primInfo.emissiveB);
 }
