@@ -1,6 +1,6 @@
 #version 460
 #extension GL_EXT_ray_tracing : require
-
+#extension GL_EXT_nonuniform_qualifier : enable
 struct Payload
 {
     vec3 color;
@@ -104,7 +104,7 @@ void main()
     vec3 albedo;
     vec3 baseColor = vec3(primInfo.baseColorR, primInfo.baseColorG, primInfo.baseColorB);
     if (texIdx >= 0) {
-        albedo = texture(textures[texIdx], uv).rgb * baseColor;
+        albedo = texture(textures[nonuniformEXT(texIdx)], uv).rgb * baseColor;
     } else {
         albedo = baseColor;
     }
