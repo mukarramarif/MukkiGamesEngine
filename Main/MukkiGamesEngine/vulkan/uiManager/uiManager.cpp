@@ -533,6 +533,138 @@ void UIManager::renderModelTransformWindow(ModelTransform& transform, float delt
 	ImGui::End();
 }
 
+void UIManager::renderObjectTransformWindow(
+	const std::vector<std::string>& objectNames,
+	int& selectedIndex,
+	glm::vec3& position,
+	glm::vec3& rotation,
+	glm::vec3& scale,
+	float deltaTime)
+{
+	ImGui::Begin("Object Transform", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
+
+	// Object selection combo
+	if (!objectNames.empty()) {
+		if (selectedIndex < 0 || selectedIndex >= static_cast<int>(objectNames.size())) {
+			selectedIndex = 0;
+		}
+		std::string preview = objectNames[selectedIndex];
+		if (ImGui::BeginCombo("Object", preview.c_str())) {
+			for (int i = 0; i < static_cast<int>(objectNames.size()); i++) {
+				bool isSelected = (selectedIndex == i);
+				if (ImGui::Selectable(objectNames[i].c_str(), isSelected)) {
+					selectedIndex = i;
+				}
+				if (isSelected) {
+					ImGui::SetItemDefaultFocus();
+				}
+			}
+			ImGui::EndCombo();
+		}
+	}
+
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	// Position controls
+	if (ImGui::CollapsingHeader("Position", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Indent(10.0f);
+		ImGui::Spacing();
+
+		ImGui::PushItemWidth(200.0f);
+		ImGui::DragFloat("X##pos", &position.x, 0.1f, 0.0f, 0.0f, "%.2f");
+		ImGui::Spacing();
+		ImGui::DragFloat("Y##pos", &position.y, 0.1f, 0.0f, 0.0f, "%.2f");
+		ImGui::Spacing();
+		ImGui::DragFloat("Z##pos", &position.z, 0.1f, 0.0f, 0.0f, "%.2f");
+		ImGui::PopItemWidth();
+
+		ImGui::Spacing();
+		if (ImGui::Button("Reset Position", ImVec2(120, 0))) {
+			position = glm::vec3(0.0f);
+		}
+
+		ImGui::Unindent(10.0f);
+		ImGui::Spacing();
+	}
+
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	// Rotation controls
+	if (ImGui::CollapsingHeader("Rotation", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Indent(10.0f);
+		ImGui::Spacing();
+
+		ImGui::PushItemWidth(200.0f);
+		ImGui::SliderFloat("Pitch (X)", &rotation.x, -180.0f, 180.0f, "%.1f deg");
+		ImGui::Spacing();
+		ImGui::SliderFloat("Yaw (Y)", &rotation.y, -180.0f, 180.0f, "%.1f deg");
+		ImGui::Spacing();
+		ImGui::SliderFloat("Roll (Z)", &rotation.z, -180.0f, 180.0f, "%.1f deg");
+		ImGui::PopItemWidth();
+
+		ImGui::Spacing();
+		if (ImGui::Button("Reset Rotation", ImVec2(120, 0))) {
+			rotation = glm::vec3(0.0f);
+		}
+
+		ImGui::Unindent(10.0f);
+		ImGui::Spacing();
+	}
+
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	// Scale controls
+	if (ImGui::CollapsingHeader("Scale", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Indent(10.0f);
+		ImGui::Spacing();
+
+		ImGui::PushItemWidth(200.0f);
+		ImGui::DragFloat("X", &scale.x, 0.01f, 0.01f, 100.0f, "%.2f");
+		ImGui::SameLine();
+		if (ImGui::Button("U", ImVec2(24, 0))) {
+			scale.y = scale.z = scale.x;
+		}
+		ImGui::Spacing();
+		ImGui::DragFloat("Y", &scale.y, 0.01f, 0.01f, 100.0f, "%.2f");
+		ImGui::Spacing();
+		ImGui::DragFloat("Z", &scale.z, 0.01f, 0.01f, 100.0f, "%.2f");
+		ImGui::PopItemWidth();
+
+		ImGui::Spacing();
+		if (ImGui::Button("Reset Scale", ImVec2(120, 0))) {
+			scale = glm::vec3(1.0f);
+		}
+
+		ImGui::Unindent(10.0f);
+		ImGui::Spacing();
+	}
+
+	ImGui::PopStyleVar(2);
+
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	float buttonWidth = 150.0f;
+	float windowWidth = ImGui::GetWindowSize().x;
+	ImGui::SetCursorPosX((windowWidth - buttonWidth) * 0.5f);
+
+	if (ImGui::Button("Reset All", ImVec2(buttonWidth, 30))) {
+		position = glm::vec3(0.0f);
+		rotation = glm::vec3(0.0f);
+		scale = glm::vec3(1.0f);
+	}
+
+	ImGui::Spacing();
+	ImGui::End();
+}
+
 void UIManager::renderRayTracingControls(bool& resetAccumulation)
 {
 	ImGui::Begin("Ray Tracing", nullptr, ImGuiWindowFlags_AlwaysAutoResize);

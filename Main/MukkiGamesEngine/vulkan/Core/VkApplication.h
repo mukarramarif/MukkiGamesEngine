@@ -134,10 +134,6 @@ private:
 	std::vector<VkDeviceMemory> defaultMaterialUniformBuffersMemory;
 	std::vector<void*> defaultMaterialUniformBuffersMapped;
 
-	std::vector<std::vector<VkBuffer>> materialUniformBuffers;
-	std::vector<std::vector<VkDeviceMemory>> materialUniformBuffersMemory;
-	std::vector<std::vector<void*>> materialUniformBuffersMapped;
-
 	// Camera
 	std::unique_ptr<Camera> camera;
 
@@ -158,10 +154,9 @@ private:
 	void createIndexBuffer();
 	void createUniformBuffers();
 	void createDefaultMaterialUniformBuffers();
-	void createMaterialUniformBuffers();
-	void cleanupMaterialUniformBuffers();
     void createRayTracingUniformBuffer();
 	void updateUniformBuffer(uint32_t currentImage);
+	void updatePerObjectUBO(LoadedObject& obj, uint32_t currentImage);
     void updateRayTracingUniformBuffer();
 	void createTextureResources();
 	void drawFrame();
@@ -174,7 +169,10 @@ private:
 	void cleanupRayTracingGeometryBuffers();
 	void recordComputeCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
     void recordRayTracingCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
-	void loadModel(const std::string& filepath);
+	void loadSceneObjects();
+	LoadedObject createLoadedObject(const SceneObject& sceneObj);
+	void destroyLoadedObject(LoadedObject& obj);
+	void destroyAllLoadedObjects();
 	void setupDefaultLights();
 	void cleanupComputeResources();
 	void createTAAPipeline();
@@ -200,7 +198,6 @@ private:
 
 	//UI Manager
 	std::unique_ptr<UIManager> uiManager;
-	ModelTransform modelTransform;
 	// Compute Pipeline
 	std::unique_ptr<ComputePipeline> computePipeline;
 	VkImage computeOutputImage = VK_NULL_HANDLE;
@@ -235,11 +232,9 @@ private:
 	bool cameraMoved = false;
 
 	//Object-Loader
-	std::vector<std::vector<VkDescriptorSet>> modelDescriptorSets; // set for each model and each frame
 	std::unique_ptr<ObjectLoader> objectLoader;
-	Model loadedModel;
-	bool modelLoaded = false;
-	void createModelDescriptorSets();
+	std::vector<LoadedObject> loadedObjects;
+	int selectedObjectIndex = 0;
 
 	//Scene Loader
 	std::unique_ptr<SceneLoader> sceneLoader;

@@ -51,3 +51,18 @@ struct SceneConfig{
 	glm::vec3 cameraPosition = glm::vec3(0.0f, 0.0f, 3.0f);
 	glm::vec3 cameraTarget = glm::vec3(0.0f);
 };
+
+struct LoadedObject {
+	Model model;
+	Transform transform;
+	uint32_t sceneObjectId = 0;
+	bool loaded = false;
+
+	std::vector<VkBuffer> uniformBuffers;
+	std::vector<VkDeviceMemory> uniformBuffersMemory;
+	std::vector<void*> uniformBuffersMapped;
+	std::vector<std::vector<VkBuffer>> materialUniformBuffers;
+	std::vector<std::vector<VkDeviceMemory>> materialUniformBuffersMemory;
+	std::vector<std::vector<void*>> materialUniformBuffersMapped;
+	std::vector<std::vector<VkDescriptorSet>> descriptorSets; // [materialIndex][frameIndex]
+};
