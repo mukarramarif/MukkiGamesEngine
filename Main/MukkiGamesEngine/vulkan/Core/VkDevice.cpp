@@ -193,19 +193,21 @@ SwapChainSupportDetails Device::querySwapChainSupport(VkPhysicalDevice device)
     VkPhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.samplerAnisotropy = VK_TRUE;
 
-    VkPhysicalDeviceBufferDeviceAddressFeatures bufferAddressFeatures{};
-    bufferAddressFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
-    bufferAddressFeatures.bufferDeviceAddress = VK_TRUE;
-
     VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{};
     accelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
     accelerationStructureFeatures.accelerationStructure = VK_TRUE;
-    accelerationStructureFeatures.pNext = &bufferAddressFeatures;
+    accelerationStructureFeatures.pNext = nullptr;
 
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingFeatures{};
     rayTracingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
     rayTracingFeatures.rayTracingPipeline = VK_TRUE;
     rayTracingFeatures.pNext = &accelerationStructureFeatures;
+
+    VkPhysicalDeviceVulkan12Features vulkan12Features{};
+    vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    vulkan12Features.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+    vulkan12Features.bufferDeviceAddress = VK_TRUE;
+    vulkan12Features.pNext = &rayTracingFeatures;
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -220,7 +222,7 @@ SwapChainSupportDetails Device::querySwapChainSupport(VkPhysicalDevice device)
                          optionalDeviceExtensions.end());
     createInfo.enabledExtensionCount = static_cast<uint32_t>(allExtensions.size());
     createInfo.ppEnabledExtensionNames = allExtensions.data();
-    createInfo.pNext = &rayTracingFeatures;
+    createInfo.pNext = &vulkan12Features;
 
     if (instance && instance->isValidEnabled()) {
         const auto& validationLayers = instance->getValidationLayers();

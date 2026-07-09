@@ -6,6 +6,7 @@
 #include "ShaderCompiler.h"
 #include <iostream>
 #include "../pipeline/computePipeline.h"
+#include "../Physics/VehiclePhysics.h"
 
 
 // Example vertices (triangle)
@@ -356,6 +357,7 @@ void VulkanApplication::initVulkan()
 	createRayTracingDescriptorSet();
 
 	loadSceneObjects();
+	initPhysics();
 
 	// 15. Create synchronization objects (semaphores and fences)
 	createSyncObjects();
@@ -931,6 +933,18 @@ void VulkanApplication::mainLoop()
 		glfwPollEvents();
 		processInput();
 
+		if (physicsEngine) {
+			static float accumulator = 0.0f;
+			const float fixedDt = 1.0f / 60.0f;
+			accumulator += deltaTime;
+			if (accumulator > 0.1f) accumulator = 0.1f;
+			while (accumulator >= fixedDt) {
+				physicsEngine->step(fixedDt);
+				accumulator -= fixedDt;
+			}
+			syncPhysicsTransforms();
+		}
+
 		uiManager->newFrame();
 		float fps = 1.0f / deltaTime;
 		uiManager->renderDebugWindow(fps, deltaTime);
@@ -991,6 +1005,7 @@ void VulkanApplication::mainLoop()
 				}
 
 				loadSceneObjects();
+				initPhysics();
 
 				if (sceneLoader->hasCameraSettings()) {
 					camera->position = sceneLoader->getInitialCameraPosition();
@@ -1045,7 +1060,12 @@ void VulkanApplication::cleanup()
 		}
 	}
 
+	vkDeviceWaitIdle(device->getDevice());
 	destroyAllLoadedObjects();
+	if (physicsEngine) {
+		physicsEngine->shutdown();
+		physicsEngine.reset();
+	}
 	for (size_t i = 0; i < defaultMaterialUniformBuffers.size(); i++) {
 		if (defaultMaterialUniformBuffers[i] != VK_NULL_HANDLE) {
 			vkDestroyBuffer(device->getDevice(), defaultMaterialUniformBuffers[i], nullptr);
@@ -1324,6 +1344,11 @@ void VulkanApplication::processInput() {
 	else {
 		cursorKeyPressed = false;
 	}
+
+	vehicleThrottle = 0.0f;
+	vehicleBrake = 0.0f;
+	vehicleSteering = 0.0f;
+
 	if (!cursorEnabled) {
 		if (glfwGetKey(win, GLFW_KEY_W) == GLFW_PRESS) {
 			camera->processKeyboardInput(FORWARD, deltaTime);
@@ -1349,7 +1374,29 @@ void VulkanApplication::processInput() {
 			camera->processKeyboardInput(DOWN, deltaTime);
 			cameraMoved = true;
 		}
+
+		// Vehicle controls (arrow keys)
+		if (glfwGetKey(win, GLFW_KEY_UP) == GLFW_PRESS) {
+			vehicleThrottle = 500.0f;
+		}
+		if (glfwGetKey(win, GLFW_KEY_DOWN) == GLFW_PRESS) {
+			vehicleBrake = 500.0f;
+		}
+		if (glfwGetKey(win, GLFW_KEY_LEFT) == GLFW_PRESS) {
+			vehicleSteering = 5.0f;
+		}
+		if (glfwGetKey(win, GLFW_KEY_RIGHT) == GLFW_PRESS) {
+			vehicleSteering = -5.0f;
+		}
 	}
+
+	// Apply vehicle input
+	for (auto& obj : loadedObjects) {
+		if (obj.vehicle) {
+			obj.vehicle->setInput(vehicleThrottle, vehicleBrake, vehicleSteering);
+		}
+	}
+
 	if (glfwGetKey(win, GLFW_KEY_B) == GLFW_PRESS) {
 		if(!renderKeyPressed) {
 			toggleRenderMode();
@@ -2049,6 +2096,7 @@ LoadedObject VulkanApplication::createLoadedObject(const SceneObject& sceneObj)
 {
 	LoadedObject obj;
 	obj.transform = sceneObj.modelTransform;
+	obj.physics = sceneObj.physics;
 	obj.sceneObjectId = sceneObj.id;
 
 	std::string fullPath = std::string(ASSETS_PATH) + sceneObj.modelPath;
@@ -2242,10 +2290,114 @@ void VulkanApplication::destroyLoadedObject(LoadedObject& obj)
 
 void VulkanApplication::destroyAllLoadedObjects()
 {
+	if (physicsEngine) {
+		for (auto& obj : loadedObjects) {
+			if (obj.vehicle) {
+				obj.vehicle->shutdown();
+				obj.vehicle.reset();
+			}
+			if (obj.physicsBodyID != 0xFFFFFFFF) {
+				physicsEngine->removeBody(obj.physicsBodyID);
+				obj.physicsBodyID = 0xFFFFFFFF;
+			}
+		}
+	}
 	for (auto& obj : loadedObjects) {
 		destroyLoadedObject(obj);
 	}
 	loadedObjects.clear();
+}
+
+void VulkanApplication::initPhysics()
+{
+	physicsEngine = std::make_unique<PhysicsEngine>();
+	physicsEngine->init();
+
+	// Ground plane for the car to drive on
+	JPH::ShapeRefC groundShape = new JPH::BoxShape(JPH::Vec3(200.0f, 0.5f, 200.0f));
+	physicsEngine->createStaticBody(glm::vec3(0.0f, -0.5f, 0.0f), glm::vec3(0.0f), groundShape);
+
+	for (auto& obj : loadedObjects) {
+		if (!obj.loaded || !obj.physics.enabled) continue;
+
+		if (obj.physics.isVehicle) {
+			JPH::ShapeRefC chassisShape = new JPH::BoxShape(JPH::Vec3(0.5f, 0.2f, 1.0f));
+			float mass = obj.physics.mass > 0.0f ? obj.physics.mass : 500.0f;
+			JPH::Body* chassisBody = physicsEngine->createRigidBody(
+				obj.transform.position,
+				obj.transform.rotation,
+				chassisShape,
+				mass,
+				true);
+			if (chassisBody) {
+				obj.physicsBodyID = chassisBody->GetID().GetIndexAndSequenceNumber();
+
+				VehicleConfig vConfig;
+				vConfig.wheels = {
+					{{ 0.6f, -0.2f, 1.4f}, 0.3f, 0.2f, 0.3f, 200.0f, 20.0f, 3000.0f, true},
+					{{-0.6f, -0.2f, 1.4f}, 0.3f, 0.2f, 0.3f, 200.0f, 20.0f, 3000.0f, true},
+					{{ 0.6f, -0.2f,-1.4f}, 0.3f, 0.2f, 0.3f, 200.0f, 20.0f, 3000.0f, false},
+					{{-0.6f, -0.2f,-1.4f}, 0.3f, 0.2f, 0.3f, 200.0f, 20.0f, 3000.0f, false},
+				};
+
+				auto vehicle = std::make_unique<VehiclePhysics>();
+				vehicle->init(physicsEngine.get(), chassisBody, vConfig);
+				obj.vehicle = std::move(vehicle);
+				std::cout << "Created vehicle body for object" << std::endl;
+			}
+		}
+		else if (obj.physics.isDynamic) {
+			JPH::ShapeRefC shape = new JPH::BoxShape(JPH::Vec3(0.5f, 0.3f, 1.0f));
+			JPH::Body* body = physicsEngine->createRigidBody(
+				obj.transform.position,
+				obj.transform.rotation,
+				shape,
+				obj.physics.mass,
+				true);
+			if (body) {
+				obj.physicsBodyID = body->GetID().GetIndexAndSequenceNumber();
+				std::cout << "Created dynamic body for object" << std::endl;
+			}
+		}
+	}
+}
+
+void VulkanApplication::syncPhysicsTransforms()
+{
+	for (auto& obj : loadedObjects) {
+		if (!obj.loaded || obj.physicsBodyID == 0xFFFFFFFF) continue;
+		obj.transform.position = physicsEngine->getBodyPosition(obj.physicsBodyID);
+		glm::quat q = physicsEngine->getBodyRotation(obj.physicsBodyID);
+		glm::vec3 euler = glm::degrees(glm::eulerAngles(q));
+		obj.transform.rotation = euler;
+		if (obj.vehicle && obj.physicsBodyID != 0xFFFFFFFF) {
+			float speed = obj.vehicle->getSpeed();
+			float rpm = obj.vehicle->getRPM();
+			int gear = obj.vehicle->getCurrentGear();
+			static int frameCount = 0;
+			frameCount++;
+			if (frameCount % 60 == 0) {
+				std::cout << "Car speed: " << speed << " m/s  RPM: " << rpm
+					<< "  Gear: " << gear
+					<< "  pos: (" << obj.transform.position.x << ", "
+					<< obj.transform.position.y << ", "
+					<< obj.transform.position.z << ")"
+					<< "  input: T=" << vehicleThrottle << " B=" << vehicleBrake << " S=" << vehicleSteering
+					<< std::endl;
+			}
+			if (vehicleThrottle > 0.0f || vehicleBrake > 0.0f) {
+				JPH::BodyID id(obj.physicsBodyID);
+				JPH::Vec3 fwd = physicsEngine->getBodyInterface().GetRotation(id) * JPH::Vec3(0, 0, 1);
+				float forceMagnitude = vehicleThrottle > 0.0f ? 3000.0f : -1000.0f;
+				physicsEngine->getBodyInterface().AddForce(id, fwd * forceMagnitude);
+			}
+			if (vehicleSteering != 0.0f) {
+				JPH::BodyID id(obj.physicsBodyID);
+				physicsEngine->getBodyInterface().AddTorque(id, JPH::Vec3(0, vehicleSteering * 200.0f, 0));
+			}
+
+		}
+	}
 }
 
 void VulkanApplication::toggleRenderMode()

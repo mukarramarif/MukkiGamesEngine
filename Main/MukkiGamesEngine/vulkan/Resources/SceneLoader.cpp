@@ -21,7 +21,7 @@ void SceneLoader::init(Device* device, TextureManager* textureManager, BufferMan
 }
 
 bool SceneLoader::loadScene(const std::string& filepath)
-{   
+{
 	std::ifstream file(filepath);
 	if (!file.is_open()) {
 		std::cerr << "Failed to open scene file: " << filepath << std::endl;
@@ -132,6 +132,15 @@ void SceneLoader::parseObjects(const nlohmann::json& j)
 				obj.modelTransform.scale.x = objJson["scale"][0].get<float>();
 				obj.modelTransform.scale.y = objJson["scale"][1].get<float>();
 				obj.modelTransform.scale.z = objJson["scale"][2].get<float>();
+			}
+
+			if (objJson.contains("physics")) {
+				const auto& phys = objJson["physics"];
+				obj.physics.enabled = phys.value("enabled", false);
+				obj.physics.isDynamic = phys.value("isDynamic", false);
+				obj.physics.isVehicle = phys.value("isVehicle", false);
+				obj.physics.mass = phys.value("mass", 1.0f);
+				obj.physics.useMeshShape = phys.value("useMeshShape", false);
 			}
 
 			objects.push_back(obj);

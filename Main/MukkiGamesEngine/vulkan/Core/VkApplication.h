@@ -26,6 +26,7 @@
 #include "ShaderCompiler.h"
 #include "../raytracing/RayTracingAS.h"
 #include "../raytracing/RayTracingPipeline.h"
+#include "../Physics/PhysicsEngine.h"
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -173,6 +174,8 @@ private:
 	LoadedObject createLoadedObject(const SceneObject& sceneObj);
 	void destroyLoadedObject(LoadedObject& obj);
 	void destroyAllLoadedObjects();
+	void initPhysics();
+	void syncPhysicsTransforms();
 	void setupDefaultLights();
 	void cleanupComputeResources();
 	void createTAAPipeline();
@@ -251,6 +254,12 @@ private:
 	// @TODO: find a way to automatically update scenes like hot shader reloading
 	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json","WaterExample.json"};
 	int currentSceneIndex = 0;
+
+	// Physics
+	std::unique_ptr<PhysicsEngine> physicsEngine;
+	float vehicleThrottle = 0.0f;
+	float vehicleBrake = 0.0f;
+	float vehicleSteering = 0.0f;
 
 	// Deletion queue for deferred resource cleanup
 	DeletionQueue m_deletionQueue;

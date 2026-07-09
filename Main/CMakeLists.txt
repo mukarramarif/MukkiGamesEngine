@@ -61,9 +61,29 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/uiManager/backends/*.h"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/pipeline/*.cpp"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/pipeline/*.h"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Physics/*.cpp"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Physics/*.h"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/raytracing/*.cpp"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/raytracing/*.h"
 )
+
+# Jolt Physics
+include(FetchContent)
+FetchContent_Declare(
+  JoltPhysics
+  GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+  GIT_TAG v5.5.0
+  SOURCE_SUBDIR Build
+)
+set(JOLT_ENABLE_LUA_BINDINGS OFF)
+FetchContent_MakeAvailable(JoltPhysics)
+
+# Jolt Physics targets C++17, ensure compatibility
+set_target_properties(Jolt PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+if(MSVC)
+	set_target_properties(Jolt PROPERTIES
+		MSVC_RUNTIME_LIBRARY "$<$<CONFIG:Debug>:MultiThreadedDebugDLL>$<$<NOT:$<CONFIG:Debug>>:MultiThreadedDLL>")
+endif()
 
 message(STATUS "Engine sources: ${ENGINE_SOURCES}")
 add_executable(MukkiGamesEngine ${ENGINE_SOURCES})
@@ -88,7 +108,7 @@ endif()
 # ----------------------------------------
 
 # libraries
-target_link_libraries(MukkiGamesEngine PRIVATE Vulkan::Vulkan glfw imgui::imgui glm::glm imguizmo::imguizmo nlohmann_json::nlohmann_json stb::stb gli)
+target_link_libraries(MukkiGamesEngine PRIVATE Vulkan::Vulkan glfw imgui::imgui glm::glm imguizmo::imguizmo nlohmann_json::nlohmann_json stb::stb gli Jolt)
 
 # imgui backend headers (imgui_impl_*) are installed to <package_root>/res/bindings
 get_filename_component(_IMGUI_ROOT ${imgui_INCLUDE_DIR} DIRECTORY)

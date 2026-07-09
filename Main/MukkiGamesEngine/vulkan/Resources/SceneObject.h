@@ -1,6 +1,7 @@
 #pragma once
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
+#include <memory>
 #include <string>
 #include <vector>
 #include "ObjectLoader.h"
@@ -20,6 +21,14 @@ struct Transform {
 	}
 };
 
+struct PhysicsProperties {
+	bool enabled = false;
+	bool isDynamic = false;
+	bool isVehicle = false;
+	float mass = 1.0f;
+	bool useMeshShape = false;
+};
+
 struct ShaderConfig {
 	std::string vertexShader = "shader.vert.spv";
 	std::string fragmentShader = "shader.frag.spv";
@@ -31,6 +40,7 @@ struct SceneObject {
 	std::string modelPath;
 	Transform modelTransform;
 	ShaderConfig shaderConfig;
+	PhysicsProperties physics;
 	bool visible = true;
 	
 
@@ -52,11 +62,18 @@ struct SceneConfig{
 	glm::vec3 cameraTarget = glm::vec3(0.0f);
 };
 
+class VehiclePhysics;
+
 struct LoadedObject {
 	Model model;
 	Transform transform;
+	PhysicsProperties physics;
 	uint32_t sceneObjectId = 0;
 	bool loaded = false;
+
+	// Jolt physics (body ID as uint32_t, 0xFFFFFFFF = invalid)
+	uint32_t physicsBodyID = 0xFFFFFFFF;
+	std::unique_ptr<VehiclePhysics> vehicle;
 
 	std::vector<VkBuffer> uniformBuffers;
 	std::vector<VkDeviceMemory> uniformBuffersMemory;
