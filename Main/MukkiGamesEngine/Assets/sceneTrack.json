@@ -19,7 +19,25 @@
       "modelPath": "Race_Track/scene.gltf",
       "position": [0.0, 0.0, 0.0],
       "rotation": [0.0, 0.0, 0.0],
-      "scale": [0.2, 0.2, 0.2]
+      "scale": [0.1, 0.1, 0.1],
+      "physics": {
+        "enabled": true,
+        "isDynamic": false,
+        "useMeshShape": true
+      }
+    },
+    {
+      "name": "Car",
+      "modelPath": "Car_Model/scene.gltf",
+      "position": [5.0, 0.0, 1.0],
+      "rotation": [0.0, 90.0, 0.0],
+      "scale": [15.0, 15.0, 15.0],
+      "physics": {
+        "enabled": true,
+        "isDynamic": true,
+        "mass": 600.0,
+        "isVehicle": true
+      }
     }
   ]
 }

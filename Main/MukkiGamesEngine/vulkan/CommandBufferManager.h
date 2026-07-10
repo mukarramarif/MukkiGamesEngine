@@ -19,27 +19,37 @@ public:
 	VkCommandBuffer beginSingleTimeCommands();
 	void endSingleTimeCommands(VkCommandBuffer commmandBuffer);
 	void resetCommandBuffer(uint32_t frameIndex);
+
 	void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
 		VkRenderPass renderPass, VkFramebuffer framebuffer,
 		VkExtent2D extent, VkPipeline graphicsPipeline,
 		VkPipelineLayout pipelineLayout, VkBuffer vertexBuffer,
         VkBuffer indexBuffer, VkImage swapChainImage, VkImageLayout swapChainOldLayout, const std::vector<VkDescriptorSet>& descriptorSets,
 		uint32_t currentFrame, uint32_t indexCount, UIManager& uiManager);
-	void recordModelCommandBuffer(
+
+	void beginModelRenderPass(
 		VkCommandBuffer commandBuffer,
-		uint32_t imageIndex,
 		VkRenderPass renderPass,
 		VkFramebuffer framebuffer,
 		VkExtent2D extent,
 		VkPipeline graphicsPipeline,
-		VkPipeline additivePipeline,
 		VkPipelineLayout pipelineLayout,
-		const Model& model,
 		SkyBox* skybox,
-     VkImage swapChainImage,
+		VkImage swapChainImage,
 		VkImageLayout swapChainOldLayout,
+		uint32_t currentFrame);
+
+	void recordModelDrawCommands(
+		VkCommandBuffer commandBuffer,
+		const Model& model,
+		VkPipelineLayout pipelineLayout,
+		VkPipeline graphicsPipeline,
+		VkPipeline additivePipeline,
 		const std::vector<std::vector<VkDescriptorSet>>& materialDescriptorSets,
-		uint32_t currentFrame,
+		uint32_t currentFrame);
+
+	void endModelRenderPass(
+		VkCommandBuffer commandBuffer,
 		UIManager& uiManager);
 private:
 	Device* device;

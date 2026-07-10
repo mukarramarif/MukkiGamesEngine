@@ -43,6 +43,13 @@ public:
 	void renderDebugWindow(float fps, float deltaTime);
 	void renderCameraInfo(const glm::vec3& position, const glm::vec3& front);
 	void renderModelTransformWindow(ModelTransform& transform, float deltaTime);
+	void renderObjectTransformWindow(
+		const std::vector<std::string>& objectNames,
+		int& selectedIndex,
+		glm::vec3& position,
+		glm::vec3& rotation,
+		glm::vec3& scale,
+		float deltaTime);
 	void renderLightingWindow(std::vector<Light>& lights, float& ambientStrength);
 	void renderLightGizmo(std::vector<Light>& lights, int selectedLightIndex,
 		const glm::mat4& view, const glm::mat4& projection);

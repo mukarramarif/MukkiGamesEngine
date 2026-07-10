@@ -24,12 +24,12 @@ class SceneLoader {
 public:
 	SceneLoader();
 	~SceneLoader();
- 
+
     void init(Device* device, TextureManager* textureManager, BufferManager* bufferManager, ObjectLoader* objectLoader);
 
     bool loadScene(const std::string& filepath);
 
-    
+
     bool saveScene(const std::string& filepath) const;
 
     // Getters for the VulkanApplication to consume
@@ -37,7 +37,7 @@ public:
     const std::vector<SceneObject>& getObjects() const { return objects; }
     const std::vector<Light>& getLights() const { return lights; }
 
-    
+
     bool hasCameraSettings() const { return bHasCamera; }
     glm::vec3 getInitialCameraPosition() const { return cameraSpawnPos; }
 
@@ -45,7 +45,7 @@ public:
     void cleanup();
 
 private:
-      
+
     Device* device = nullptr;
     TextureManager* textureManager = nullptr;
     BufferManager* bufferManager = nullptr;
@@ -64,6 +64,5 @@ private:
     void parseCamera(const nlohmann::json& j);
     void parseLights(const nlohmann::json& j);
     void parseObjects(const nlohmann::json& j);
-	
-};
 
+};
