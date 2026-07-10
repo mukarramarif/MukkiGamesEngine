@@ -68,17 +68,17 @@ void UIManager::init(const UIRenderData& renderData, EngineWindow* window)
 	// Setup Dear ImGui context
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
-	
+
 	ImGuiIO& io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-	
+
 	// Setup Dear ImGui style
 	/*ImGui::StyleColorsDark();*/
 	// Or: ImGui::StyleColorsLight();
 	setUpMainTheme(ImGui::GetStyle());
 	// Setup Platform/Renderer backends
 	ImGui_ImplGlfw_InitForVulkan(window->getGLFWwindow(), true);
-	
+
 	ImGui_ImplVulkan_InitInfo initInfo{};
 	initInfo.Instance = renderData.instance;
 	initInfo.PhysicalDevice = renderData.physicalDevice;
@@ -128,7 +128,7 @@ void UIManager::init(const UIRenderData& renderData, EngineWindow* window)
 	vkQueueWaitIdle(renderData.queue);
 
 	vkFreeCommandBuffers(renderData.device, renderData.commandPool, 1, &commandBuffer);
-	
+
 
 	initialized = true;
 }
@@ -295,18 +295,18 @@ void UIManager::renderLightGizmo(std::vector<Light>& lights, int selectedIndex,
 	ImGuiIO& io = ImGui::GetIO();
 	ImGuizmo::SetOrthographic(false);
 	ImGuizmo::BeginFrame();
-	
+
 	ImGuizmo::SetRect(ImGui::GetWindowPos().x, ImGui::GetWindowPos().y, io.DisplaySize.x, io.DisplaySize.y);
 
 	// Build transformation matrix from light position/direction
 	glm::mat4 lightMatrix = glm::mat4(1.0f);
-	
+
 	if (light.type == LightType::Directional) {
 		// For directional lights, use direction as rotation
 		// Place gizmo at origin or a fixed distance for visibility
 		glm::vec3 gizmoPos = glm::vec3(0.0f, 5.0f, 0.0f);
 		lightMatrix = glm::translate(glm::mat4(1.0f), gizmoPos);
-		
+
 		// Calculate rotation from direction
 		glm::vec3 dir = glm::normalize(light.direction);
 		glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -315,7 +315,7 @@ void UIManager::renderLightGizmo(std::vector<Light>& lights, int selectedIndex,
 		}
 		glm::vec3 right = glm::normalize(glm::cross(up, dir));
 		up = glm::cross(dir, right);
-		
+
 		lightMatrix[0] = glm::vec4(right, 0.0f);
 		lightMatrix[1] = glm::vec4(up, 0.0f);
 		lightMatrix[2] = glm::vec4(dir, 0.0f);
@@ -324,7 +324,7 @@ void UIManager::renderLightGizmo(std::vector<Light>& lights, int selectedIndex,
 	else {
 		// For point/spot lights, use position
 		lightMatrix = glm::translate(glm::mat4(1.0f), light.position);
-		
+
 		if (light.type == LightType::Spot) {
 			// Include direction as rotation for spot lights
 			glm::vec3 dir = glm::normalize(light.direction);
@@ -334,12 +334,12 @@ void UIManager::renderLightGizmo(std::vector<Light>& lights, int selectedIndex,
 			}
 			glm::vec3 right = glm::normalize(glm::cross(up, dir));
 			up = glm::cross(dir, right);
-			
+
 			glm::mat4 rotation = glm::mat4(1.0f);
 			rotation[0] = glm::vec4(right, 0.0f);
 			rotation[1] = glm::vec4(up, 0.0f);
 			rotation[2] = glm::vec4(dir, 0.0f);
-			
+
 			lightMatrix = glm::translate(glm::mat4(1.0f), light.position) * rotation;
 		}
 	}
@@ -358,7 +358,7 @@ void UIManager::renderLightGizmo(std::vector<Light>& lights, int selectedIndex,
 		if (light.type != LightType::Directional) {
 			light.position = glm::vec3(lightMatrix[3]);
 		}
-		
+
 		// Extract new direction for directional/spot lights
 		if (light.type == LightType::Directional || light.type == LightType::Spot) {
 			light.direction = glm::normalize(glm::vec3(lightMatrix[2]));
@@ -664,6 +664,26 @@ void UIManager::renderObjectTransformWindow(
 	ImGui::Spacing();
 	ImGui::End();
 }
+
+void UIManager::renderPhysicsDebug(int bodyCount, const std::vector<std::string>& objectNames,
+	const std::vector<glm::vec3>& bodyPositions, const std::vector<float>& speeds,
+	const std::vector<float>& rpms, const std::vector<int>& gears)
+{
+	ImGui::Begin("Physics Debug");
+	ImGui::Text("Total bodies: %d", bodyCount);
+	ImGui::Separator();
+	for (size_t i = 0; i < objectNames.size() && i < bodyPositions.size(); i++) {
+		ImGui::Text("%s:", objectNames[i].c_str());
+		ImGui::Text("  Pos: (%.2f, %.2f, %.2f)", bodyPositions[i].x, bodyPositions[i].y, bodyPositions[i].z);
+		if (i < speeds.size()) ImGui::Text("  Speed: %.2f m/s", speeds[i]);
+		if (i < rpms.size()) ImGui::Text("  RPM: %.0f", rpms[i]);
+		if (i < gears.size()) ImGui::Text("  Gear: %d", gears[i]);
+		ImGui::Spacing();
+	}
+	ImGui::End();
+}
+
+
 
 void UIManager::renderRayTracingControls(bool& resetAccumulation)
 {

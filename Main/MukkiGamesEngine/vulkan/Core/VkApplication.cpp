@@ -943,6 +943,7 @@ void VulkanApplication::mainLoop()
 				accumulator -= fixedDt;
 			}
 			syncPhysicsTransforms();
+			physicsEngine->drawDebug();
 		}
 
 		uiManager->newFrame();
@@ -1019,6 +1020,41 @@ void VulkanApplication::mainLoop()
 		float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
 		glm::mat4 proj = camera->getProjectionMatrix(aspect);
 		uiManager->renderLightGizmo(lights, uiManager->getSelectedLight(),view,proj);
+		if (physicsEngine) {
+			const auto& lines = physicsEngine->getDebugLines();
+			if (!lines.empty()) {
+				VkExtent2D ext = swapChain->getSwapChainExtent();
+				uiManager->renderDebugLines(lines, view, proj, ext.width, ext.height);
+			}
+		}
+		{
+			std::vector<std::string> physNames;
+			std::vector<glm::vec3> physPositions;
+			std::vector<float> physSpeeds, physRPMs;
+			std::vector<int> physGears;
+			for (auto& obj : loadedObjects) {
+				if (!obj.loaded) continue;
+				std::string name = "Unnamed";
+				const auto& sceneObjs = sceneLoader->getObjects();
+				for (size_t i = 0; i < loadedObjects.size() && i < sceneObjs.size(); i++) {
+					if (&loadedObjects[i] == &obj) { name = sceneObjs[i].name; break; }
+				}
+				physNames.push_back(name);
+				physPositions.push_back(obj.transform.position);
+				if (obj.vehicle) {
+					physSpeeds.push_back(obj.vehicle->getSpeed());
+					physRPMs.push_back(obj.vehicle->getRPM());
+					physGears.push_back(obj.vehicle->getCurrentGear());
+				} else {
+					physSpeeds.push_back(0.0f);
+					physRPMs.push_back(0.0f);
+					physGears.push_back(0);
+				}
+			}
+			uiManager->renderPhysicsDebug(
+				physicsEngine ? 1 : 0,
+				physNames, physPositions, physSpeeds, physRPMs, physGears);
+		}
 		drawFrame();
 	}
 
@@ -2313,16 +2349,33 @@ void VulkanApplication::initPhysics()
 	physicsEngine = std::make_unique<PhysicsEngine>();
 	physicsEngine->init();
 
-	// Ground plane for the car to drive on
-	JPH::ShapeRefC groundShape = new JPH::BoxShape(JPH::Vec3(200.0f, 0.5f, 200.0f));
-	physicsEngine->createStaticBody(glm::vec3(0.0f, -0.5f, 0.0f), glm::vec3(0.0f), groundShape);
-
 	for (auto& obj : loadedObjects) {
 		if (!obj.loaded || !obj.physics.enabled) continue;
 
-		if (obj.physics.isVehicle) {
-			JPH::ShapeRefC chassisShape = new JPH::BoxShape(JPH::Vec3(0.5f, 0.2f, 1.0f));
-			float mass = obj.physics.mass > 0.0f ? obj.physics.mass : 500.0f;
+		if (obj.physics.useMeshShape) {
+			const auto& model = obj.model;
+			int vertexCount = static_cast<int>(model.vertices.size());
+			int indexCount = static_cast<int>(model.indices.size());
+			if (vertexCount > 0 && indexCount > 0) {
+				JPH::Body* body = physicsEngine->createMeshShapeFromVertices(
+					obj.transform.position,
+					obj.transform.rotation,
+					obj.transform.scale,
+					model.vertices.data(),
+					vertexCount,
+					model.indices.data(),
+					indexCount,
+					false);
+				if (body) {
+					obj.physicsBodyID = body->GetID().GetIndexAndSequenceNumber();
+					std::cout << "Created mesh shape body (" << vertexCount << " verts)" << std::endl;
+				}
+			}
+		}
+		else if (obj.physics.isVehicle) {
+			glm::vec3 s = obj.transform.scale;
+			JPH::ShapeRefC chassisShape = new JPH::BoxShape(JPH::Vec3(0.5f , 0.2f , 1.0f  ));
+			float mass = obj.physics.mass > 0.0f ? obj.physics.mass  : 500.0f ;
 			JPH::Body* chassisBody = physicsEngine->createRigidBody(
 				obj.transform.position,
 				obj.transform.rotation,
@@ -2332,6 +2385,7 @@ void VulkanApplication::initPhysics()
 			if (chassisBody) {
 				obj.physicsBodyID = chassisBody->GetID().GetIndexAndSequenceNumber();
 
+				float ws = std::max({s.x, s.y, s.z});
 				VehicleConfig vConfig;
 				vConfig.wheels = {
 					{{ 0.6f, -0.2f, 1.4f}, 0.3f, 0.2f, 0.3f, 200.0f, 20.0f, 3000.0f, true},

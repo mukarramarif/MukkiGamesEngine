@@ -257,6 +257,15 @@ private:
 
 	// Physics
 	std::unique_ptr<PhysicsEngine> physicsEngine;
+	void initLineRenderer();
+	void drawDebugLines(VkCommandBuffer commandBuffer, uint32_t currentImage);
+	VkPipeline linePipeline = VK_NULL_HANDLE;
+	VkPipelineLayout linePipelineLayout = VK_NULL_HANDLE;
+	VkDescriptorSetLayout lineDescriptorSetLayout = VK_NULL_HANDLE;
+	VkDescriptorSet lineDescriptorSet = VK_NULL_HANDLE;
+	VkBuffer lineVertexBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory lineVertexBufferMemory = VK_NULL_HANDLE;
+	uint32_t lineVertexCount = 0;
 	float vehicleThrottle = 0.0f;
 	float vehicleBrake = 0.0f;
 	float vehicleSteering = 0.0f;
