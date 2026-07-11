@@ -535,7 +535,10 @@ void VulkanApplication::createDefaultMaterialUniformBuffers()
 	MaterialUBO defaultMaterial{};
 	defaultMaterial.metallicFactor = 0.0f;
 	defaultMaterial.roughnessFactor = 1.0f;
-
+	defaultMaterial.clearCoatFactor = 0.0f;
+	defaultMaterial.clearCoatRoughness = 0.0f;
+	defaultMaterial.clearCoatFactor = 0.0f;
+	defaultMaterial.clearCoatRoughness = 0.0f;
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		device->createBuffer(
 			bufferSize,
@@ -943,7 +946,7 @@ void VulkanApplication::mainLoop()
 				accumulator -= fixedDt;
 			}
 			syncPhysicsTransforms();
-			physicsEngine->drawDebug();
+			// physicsEngine->drawDebug();
 		}
 
 		uiManager->newFrame();
@@ -1020,37 +1023,37 @@ void VulkanApplication::mainLoop()
 		float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
 		glm::mat4 proj = camera->getProjectionMatrix(aspect);
 		uiManager->renderLightGizmo(lights, uiManager->getSelectedLight(),view,proj);
-		if (physicsEngine) {
-			const auto& lines = physicsEngine->getDebugLines();
-			if (!lines.empty()) {
-				VkExtent2D ext = swapChain->getSwapChainExtent();
-				uiManager->renderDebugLines(lines, view, proj, ext.width, ext.height);
+		// if (physicsEngine)[[discard]] {
+		// 	const auto& lines = physicsEngine->getDebugLines();
+		// 	if (!lines.empty()) {
+		// 		VkExtent2D ext = swapChain->getSwapChainExtent();
+		// 		uiManager->renderDebugLines(lines, view, proj, ext.width, ext.height);
+		// 	}
+		// }
+
+		std::vector<std::string> physNames;
+		std::vector<glm::vec3> physPositions;
+		std::vector<float> physSpeeds, physRPMs;
+		std::vector<int> physGears;
+		for (auto& obj : loadedObjects) {
+			if (!obj.loaded) continue;
+			std::string name = "Unnamed";
+			const auto& sceneObjs = sceneLoader->getObjects();
+			for (size_t i = 0; i < loadedObjects.size() && i < sceneObjs.size(); i++) {
+				if (&loadedObjects[i] == &obj) { name = sceneObjs[i].name; break; }
 			}
-		}
-		{
-			std::vector<std::string> physNames;
-			std::vector<glm::vec3> physPositions;
-			std::vector<float> physSpeeds, physRPMs;
-			std::vector<int> physGears;
-			for (auto& obj : loadedObjects) {
-				if (!obj.loaded) continue;
-				std::string name = "Unnamed";
-				const auto& sceneObjs = sceneLoader->getObjects();
-				for (size_t i = 0; i < loadedObjects.size() && i < sceneObjs.size(); i++) {
-					if (&loadedObjects[i] == &obj) { name = sceneObjs[i].name; break; }
-				}
-				physNames.push_back(name);
-				physPositions.push_back(obj.transform.position);
-				if (obj.vehicle) {
-					physSpeeds.push_back(obj.vehicle->getSpeed());
-					physRPMs.push_back(obj.vehicle->getRPM());
-					physGears.push_back(obj.vehicle->getCurrentGear());
-				} else {
-					physSpeeds.push_back(0.0f);
-					physRPMs.push_back(0.0f);
-					physGears.push_back(0);
-				}
+			physNames.push_back(name);
+			physPositions.push_back(obj.transform.position);
+			if (obj.vehicle) {
+				physSpeeds.push_back(obj.vehicle->getSpeed());
+				physRPMs.push_back(obj.vehicle->getRPM());
+				physGears.push_back(obj.vehicle->getCurrentGear());
+			} else {
+				physSpeeds.push_back(0.0f);
+				physRPMs.push_back(0.0f);
+				physGears.push_back(0);
 			}
+
 			uiManager->renderPhysicsDebug(
 				physicsEngine ? 1 : 0,
 				physNames, physPositions, physSpeeds, physRPMs, physGears);
@@ -2172,7 +2175,8 @@ LoadedObject VulkanApplication::createLoadedObject(const SceneObject& sceneObj)
 			MaterialUBO materialData{};
 			materialData.metallicFactor = obj.model.materials[matIndex].metallicFactor;
 			materialData.roughnessFactor = obj.model.materials[matIndex].roughnessFactor;
-
+			materialData.clearCoatFactor = 1.0f;
+			materialData.clearCoatRoughness = 0.5f;
 			for (size_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
 				device->createBuffer(
 					matBufferSize,

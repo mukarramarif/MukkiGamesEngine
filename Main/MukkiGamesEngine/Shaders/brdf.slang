@@ -1,4 +1,4 @@
-// Slang BRDF Shader - Cook-Torrance PBR with GGX microfacet model
+// Slang BRDF Shader - Cook-Torrance PBR with GGX microfacet model + Clear Coat
 // Directional light shadow mapping via R32 shadow map
 // Matches the existing GLSL interface for drop-in replacement
 // Inspo from Sasha Williams Slang for PBR Example: https://github.com/SaschaWillems/Vulkan/blob/master/shaders/slang/pbrbasic/pbr.slang
@@ -26,7 +26,8 @@ struct UniformBufferObject {
 struct MaterialUBO {
     float metallicFactor;
     float roughnessFactor;
-    float2 padding;
+    float clearCoatFactor;
+    float clearCoatRoughness;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<UniformBufferObject> ubo;
@@ -76,12 +77,9 @@ float3 fresnelSchlick(float cosTheta, float3 F0) {
 
 // Percentage-Closer Filtering shadow calculation for a single directional light
 float calculateShadow(float4 lightSpacePos) {
-    // Perspective divide
     float3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
-    // Transform from [-1,1] to [0,1]
     projCoords = projCoords * 0.5 + 0.5;
 
-    // Outside the light frustum → no shadow
     if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
         projCoords.y < 0.0 || projCoords.y > 1.0 ||
         projCoords.z < 0.0 || projCoords.z > 1.0) {
@@ -91,7 +89,6 @@ float calculateShadow(float4 lightSpacePos) {
     float currentDepth = projCoords.z;
     float bias = 0.005;
 
-    // 3x3 PCF
     float shadow = 0.0;
     float2 texelSize = float2(ubo.padding.x, ubo.padding.x);
     for (int x = -1; x <= 1; x++) {
@@ -104,6 +101,26 @@ float calculateShadow(float4 lightSpacePos) {
     return shadow;
 }
 
+// Clear coat helpers
+static const float CLEAR_COAT_F0 = 0.04;
+float3 fresnelSchlickClearCoat(float cosTheta) {
+    return CLEAR_COAT_F0 + (1.0 - CLEAR_COAT_F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+float3 clearCoatBRDF(float3 normal, float3 viewDir, float3 lightDir, float roughness) {
+    float3 H = normalize(lightDir + viewDir);
+    float NDF = distributionGGX(normal, H, roughness);
+    float G = geometrySmith(normal, viewDir, lightDir, roughness);
+    float3 F = fresnelSchlickClearCoat(max(dot(H, viewDir), 0.0));
+    float3 num = NDF * G * F;
+    float denom = 4.0 * max(dot(normal, viewDir), 0.0) * max(dot(normal, lightDir), 0.0) + 0.0001;
+    return num / denom;
+}
+
+float V_Kelemen(float LoH){
+    return 0.25/(LoH*LoH);
+}
+
 float3 calculateDirectionalLight(GPULight light, float3 normal, float3 viewDir, float3 albedo, float metallic, float roughness, float shadow) {
     float3 lightDir = normalize(-light.direction.xyz);
     float3 halfwayDir = normalize(lightDir + viewDir);
@@ -113,6 +130,7 @@ float3 calculateDirectionalLight(GPULight light, float3 normal, float3 viewDir, 
 
     float NDF = distributionGGX(normal, halfwayDir, roughness);
     float G = geometrySmith(normal, viewDir, lightDir, roughness);
+
     float3 F = fresnelSchlick(max(dot(halfwayDir, viewDir), 0.0), F0);
 
     float3 kS = F;
@@ -133,7 +151,6 @@ float3 calculatePointLight(GPULight light, float3 normal, float3 viewDir, float3
     float3 lightDir = normalize(light.position.xyz - fragPos);
     float distance = length(light.position.xyz - fragPos);
     float attenuation = 1.0 / (light.attenuation.x + light.attenuation.y * distance + light.attenuation.z * distance * distance);
-    // Point lights don't use the directional shadow map, so shadow = 0.0
     return calculateDirectionalLight(light, normal, viewDir, albedo, metallic, roughness, 0.0) * attenuation;
 }
 
@@ -158,20 +175,16 @@ PSOutput main(PSInput input) {
     float3 normal = normalize(input.fragNormal);
     float3 viewDir = normalize(ubo.viewPos.xyz - input.fragWorldPos);
 
-    // Material properties from UBO or constants
     float metallic = material.metallicFactor;
     float roughness = material.roughnessFactor;
 
-    // Compute shadow factor from directional light shadow map
     float shadow = calculateShadow(input.fragLightSpacePos);
-    // float shadow = 0;
     float3 ambient = ubo.ambientStrength * albedo;
     float3 lighting = float3(0.0, 0.0, 0.0);
 
     for (int i = 0; i < ubo.numLights && i < 4; i++) {
         int lightType = int(ubo.lights[i].attenuation.w);
         if (lightType == 0) {
-            // Directional light: apply shadow factor
             lighting += calculateDirectionalLight(ubo.lights[i], normal, viewDir, albedo, metallic, roughness, shadow);
         } else if (lightType == 1) {
             lighting += calculatePointLight(ubo.lights[i], normal, viewDir, input.fragWorldPos, albedo, metallic, roughness);
@@ -181,6 +194,33 @@ PSOutput main(PSInput input) {
     }
 
     float3 result = ambient + lighting;
+
+    // Clear coat layering (on top of base BRDF)
+    if (material.clearCoatFactor > 0.0) {
+        float ccRoughness = material.clearCoatRoughness;
+        float3 ccSpec = 0.0;
+        [unroll] for (int i = 0; i < ubo.numLights && i < 4; i++) {
+            int lightType = int(ubo.lights[i].attenuation.w);
+            float3 L;
+            float NdotL;
+            float atten = 1.0;
+            if (lightType == 0) {
+                L = normalize(-ubo.lights[i].direction.xyz);
+                NdotL = max(dot(normal, L), 0.0);
+            } else {
+                L = normalize(ubo.lights[i].position.xyz - input.fragWorldPos);
+                float dist = length(ubo.lights[i].position.xyz - input.fragWorldPos);
+                atten = 1.0 / (ubo.lights[i].attenuation.x + ubo.lights[i].attenuation.y * dist + ubo.lights[i].attenuation.z * dist * dist);
+                NdotL = max(dot(normal, L), 0.0);
+            }
+            float3 lightColor = atten * ubo.lights[i].color.rgb * ubo.lights[i].color.a;
+            ccSpec += clearCoatBRDF(normal, viewDir, L, ccRoughness) * lightColor * NdotL;
+        }
+        float3 ccFresnel = fresnelSchlickClearCoat(max(dot(normal, viewDir), 0.0));
+        result = result * (1.0 - ccFresnel * material.clearCoatFactor) + ccSpec * material.clearCoatFactor;
+    }
+
+    // Reinhard tone mapping
     result = result / (result + float3(1.0, 1.0, 1.0));
     output.outColor = float4(result, 1.0);
     return output;
