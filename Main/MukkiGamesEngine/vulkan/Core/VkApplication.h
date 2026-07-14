@@ -27,17 +27,35 @@
 #include "../raytracing/RayTracingAS.h"
 #include "../raytracing/RayTracingPipeline.h"
 #include "../Physics/PhysicsEngine.h"
+#include "../../Renderer/Renderer.h"
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
 class VulkanApplication {
 public:
-	// Explicit constructor and destructor
 	VulkanApplication();
 	~VulkanApplication();
+	void init(const RenderConfig& config);
+	void shutdown();
 	void run();
 	void toggleRenderMode();
 	glm::mat4 computeDirectionalLightSpaceMatrix(const Light& light, const Camera& camera);
+
+	void* getNativeWindow() const;
+	void* getNativeDevice() const;
+	void* getCurrentCommandBuffer();
+	TextureManager* getTextureManagerPtr();
+	BufferManager* getBufferManagerPtr();
+	float getFrameTime() const;
+	uint32_t getFrameCount() const;
+	void onResize(int width, int height);
+	void setLights(const std::vector<Light>& lights, float ambientStrength);
+	void setCamera(const Camera& camera);
+	void setSkybox(const std::string& path);
+	void setRenderMode(int mode);
+
+	Device* getInternalDevice() { return device.get(); }
+
 private:
 	// Render Mode toggle
 	vk::raii::Context context;
@@ -145,8 +163,9 @@ private:
 	float deltaTime = 0.0f;
 	float lastFrame = 0.0f;
 	bool cursorEnabled = false;
+	uint32_t m_frameCount = 0;
 	// Methods
-	void initVulkan();
+	void initVulkan(const RenderConfig& config);
 	void mainLoop();
 	void cleanup();
 	void toggleCursor();

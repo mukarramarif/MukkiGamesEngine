@@ -339,10 +339,8 @@ void CommandBufferManager::recordModelDrawCommands(
 }
 
 void CommandBufferManager::endModelRenderPass(
-	VkCommandBuffer commandBuffer,
-	UIManager& uiManager)
+	VkCommandBuffer commandBuffer)
 {
-	uiManager.render(commandBuffer);
 	vkCmdEndRenderPass(commandBuffer);
 }
 

@@ -49,8 +49,7 @@ public:
 		uint32_t currentFrame);
 
 	void endModelRenderPass(
-		VkCommandBuffer commandBuffer,
-		UIManager& uiManager);
+		VkCommandBuffer commandBuffer);
 private:
 	Device* device;
 	VkCommandPool commandPool;

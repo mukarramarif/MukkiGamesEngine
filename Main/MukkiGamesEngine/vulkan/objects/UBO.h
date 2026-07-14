@@ -19,5 +19,6 @@ struct UniformBufferObject {
 struct MaterialUBO {
     alignas(4) float metallicFactor;
     alignas(4) float roughnessFactor;
-    alignas(8) glm::vec2 padding;
+    alignas(4) float clearCoatFactor;
+    alignas(4) float clearCoatRoughness;
 };

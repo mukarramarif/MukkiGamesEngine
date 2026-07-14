@@ -222,14 +222,22 @@ void VulkanApplication::updateRayTracingUniformBuffer()
 	memcpy(rayTracingUniformBufferMapped, &ubo, sizeof(ubo));
 }
 
-void VulkanApplication::run()
+void VulkanApplication::init(const RenderConfig& config)
 {
-	initVulkan();
-	mainLoop();
+	initVulkan(config);
+}
+
+void VulkanApplication::shutdown()
+{
 	cleanup();
 }
 
-void VulkanApplication::initVulkan()
+void VulkanApplication::run()
+{
+	mainLoop();
+}
+
+void VulkanApplication::initVulkan(const RenderConfig& config)
 {
 	std::cout << "\n=== VERTEX LAYOUT DIAGNOSTICS ===" << std::endl;
 	Vertex::printLayout();
@@ -249,7 +257,7 @@ void VulkanApplication::initVulkan()
 
 	// 1. Create window
 	window = std::make_unique<EngineWindow>();
-	window->init(800, 600, "Mukki Games Engine");
+	window->init(config.windowWidgth, config.windowHeight, config.windowTitle.c_str());
 	glfwSetWindowUserPointer(window->getGLFWwindow(), this);
 	// 2. Create instance (Vulkan context)
 	instance.createInstance();
@@ -290,7 +298,12 @@ void VulkanApplication::initVulkan()
 
 	sceneLoader = std::make_unique<SceneLoader>();
 	sceneLoader->init(device.get(), textureManager.get(), bufferManager.get(), objectLoader.get());
-	sceneLoader->loadScene(ASSETS_PATH + availableScenes[0] );
+
+	if (!config.scenePath.empty()) {
+		sceneLoader->loadScene(config.scenePath);
+	} else {
+		sceneLoader->loadScene(ASSETS_PATH + availableScenes[0]);
+	}
 
 	skybox = std::make_unique<SkyBox>();
 	std::string skyboxFileName = sceneLoader->getConfig().skyboxPath;
@@ -535,7 +548,10 @@ void VulkanApplication::createDefaultMaterialUniformBuffers()
 	MaterialUBO defaultMaterial{};
 	defaultMaterial.metallicFactor = 0.0f;
 	defaultMaterial.roughnessFactor = 1.0f;
-
+	defaultMaterial.clearCoatFactor = 0.0f;
+	defaultMaterial.clearCoatRoughness = 0.0f;
+	defaultMaterial.clearCoatFactor = 0.0f;
+	defaultMaterial.clearCoatRoughness = 0.0f;
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		device->createBuffer(
 			bufferSize,
@@ -744,7 +760,8 @@ void VulkanApplication::drawFrame()
 				}
 			}
 
-			commandBufferManager->endModelRenderPass(commandBuffer, *uiManager);
+			uiManager->render(commandBuffer);
+			commandBufferManager->endModelRenderPass(commandBuffer);
 
 			if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 				throw std::runtime_error("failed to record command buffer!");
@@ -816,6 +833,7 @@ void VulkanApplication::drawFrame()
 	}
 
 	currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+	m_frameCount++;
 }
 
 void VulkanApplication::recreateSwapChain()
@@ -943,7 +961,7 @@ void VulkanApplication::mainLoop()
 				accumulator -= fixedDt;
 			}
 			syncPhysicsTransforms();
-			physicsEngine->drawDebug();
+			// physicsEngine->drawDebug();
 		}
 
 		uiManager->newFrame();
@@ -1020,37 +1038,37 @@ void VulkanApplication::mainLoop()
 		float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
 		glm::mat4 proj = camera->getProjectionMatrix(aspect);
 		uiManager->renderLightGizmo(lights, uiManager->getSelectedLight(),view,proj);
-		if (physicsEngine) {
-			const auto& lines = physicsEngine->getDebugLines();
-			if (!lines.empty()) {
-				VkExtent2D ext = swapChain->getSwapChainExtent();
-				uiManager->renderDebugLines(lines, view, proj, ext.width, ext.height);
+		// if (physicsEngine)[[discard]] {
+		// 	const auto& lines = physicsEngine->getDebugLines();
+		// 	if (!lines.empty()) {
+		// 		VkExtent2D ext = swapChain->getSwapChainExtent();
+		// 		uiManager->renderDebugLines(lines, view, proj, ext.width, ext.height);
+		// 	}
+		// }
+
+		std::vector<std::string> physNames;
+		std::vector<glm::vec3> physPositions;
+		std::vector<float> physSpeeds, physRPMs;
+		std::vector<int> physGears;
+		for (auto& obj : loadedObjects) {
+			if (!obj.loaded) continue;
+			std::string name = "Unnamed";
+			const auto& sceneObjs = sceneLoader->getObjects();
+			for (size_t i = 0; i < loadedObjects.size() && i < sceneObjs.size(); i++) {
+				if (&loadedObjects[i] == &obj) { name = sceneObjs[i].name; break; }
 			}
-		}
-		{
-			std::vector<std::string> physNames;
-			std::vector<glm::vec3> physPositions;
-			std::vector<float> physSpeeds, physRPMs;
-			std::vector<int> physGears;
-			for (auto& obj : loadedObjects) {
-				if (!obj.loaded) continue;
-				std::string name = "Unnamed";
-				const auto& sceneObjs = sceneLoader->getObjects();
-				for (size_t i = 0; i < loadedObjects.size() && i < sceneObjs.size(); i++) {
-					if (&loadedObjects[i] == &obj) { name = sceneObjs[i].name; break; }
-				}
-				physNames.push_back(name);
-				physPositions.push_back(obj.transform.position);
-				if (obj.vehicle) {
-					physSpeeds.push_back(obj.vehicle->getSpeed());
-					physRPMs.push_back(obj.vehicle->getRPM());
-					physGears.push_back(obj.vehicle->getCurrentGear());
-				} else {
-					physSpeeds.push_back(0.0f);
-					physRPMs.push_back(0.0f);
-					physGears.push_back(0);
-				}
+			physNames.push_back(name);
+			physPositions.push_back(obj.transform.position);
+			if (obj.vehicle) {
+				physSpeeds.push_back(obj.vehicle->getSpeed());
+				physRPMs.push_back(obj.vehicle->getRPM());
+				physGears.push_back(obj.vehicle->getCurrentGear());
+			} else {
+				physSpeeds.push_back(0.0f);
+				physRPMs.push_back(0.0f);
+				physGears.push_back(0);
 			}
+
 			uiManager->renderPhysicsDebug(
 				physicsEngine ? 1 : 0,
 				physNames, physPositions, physSpeeds, physRPMs, physGears);
@@ -2172,7 +2190,8 @@ LoadedObject VulkanApplication::createLoadedObject(const SceneObject& sceneObj)
 			MaterialUBO materialData{};
 			materialData.metallicFactor = obj.model.materials[matIndex].metallicFactor;
 			materialData.roughnessFactor = obj.model.materials[matIndex].roughnessFactor;
-
+			materialData.clearCoatFactor = 1.0f;
+			materialData.clearCoatRoughness = 0.5f;
 			for (size_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
 				device->createBuffer(
 					matBufferSize,
@@ -2862,4 +2881,78 @@ void VulkanApplication::createGraphicsPipeline()
 		"Shaders/brdf.frag.spv",
 		additiveConfig
 	);
+}
+
+void* VulkanApplication::getNativeWindow() const
+{
+	return window ? (void*)window->getGLFWwindow() : nullptr;
+}
+
+void* VulkanApplication::getNativeDevice() const
+{
+	return device ? (void*)device->getDevice() : nullptr;
+}
+
+void* VulkanApplication::getCurrentCommandBuffer()
+{
+	return commandBufferManager ? (void*)commandBufferManager->getCommandBuffer(currentFrame) : nullptr;
+}
+
+TextureManager* VulkanApplication::getTextureManagerPtr()
+{
+	return textureManager.get();
+}
+
+BufferManager* VulkanApplication::getBufferManagerPtr()
+{
+	return bufferManager.get();
+}
+
+float VulkanApplication::getFrameTime() const
+{
+	return deltaTime;
+}
+
+uint32_t VulkanApplication::getFrameCount() const
+{
+	return m_frameCount;
+}
+
+void VulkanApplication::onResize(int width, int height)
+{
+	(void)width; (void)height;
+	recreateSwapChain();
+}
+
+void VulkanApplication::setLights(const std::vector<Light>& l, float ambient)
+{
+	lights = l;
+	ambientStrength = ambient;
+}
+
+void VulkanApplication::setCamera(const Camera& cam)
+{
+	if (camera) {
+		camera->position = cam.position;
+		camera->front = cam.front;
+	}
+}
+
+void VulkanApplication::setSkybox(const std::string& path)
+{
+	if (path.empty()) return;
+	std::string fullPath = std::string(ASSETS_PATH) + path;
+	skybox->init(device.get(), textureManager.get(), bufferManager.get(),
+		renderPass, fullPath,
+		CubemapLayout::VerticalCross, MAX_FRAMES_IN_FLIGHT);
+}
+
+void VulkanApplication::setRenderMode(int mode)
+{
+	if (mode == 0) {
+		currentRenderMode = RenderMode::GRAPHICS;
+	} else if (mode == 1) {
+		currentRenderMode = RenderMode::RAYTRACING;
+		accumulationFrameCount = 0;
+	}
 }

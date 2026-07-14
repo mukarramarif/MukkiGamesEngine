@@ -3,12 +3,14 @@
 #include <imgui.h>
 #include "ImGuizmo.h"
 #include <glm/glm.hpp>
+#include <functional>
 #include <bindings/imgui_impl_vulkan.h>
 #include <bindings/imgui_impl_glfw.h>
 #include "../Core/VkDevice.h"
 #include "../Core/EngineWindow.h"
 #include "../objects/lights.h"
-#include <functional>
+
+#include "../Physics/PhysicsDebugRenderer.h"
 struct UIRenderData {
 	VkInstance instance;
 	VkPhysicalDevice physicalDevice;
@@ -57,6 +59,11 @@ public:
 	int getSelectedLight() const { return selectedLightIndex; }
 	void renderSceneLoader(bool& loadSceneFlag, const std::vector<std::string>& scenes, int sceneNum, const std::function<void(int)>& onLoad);
 	void renderRayTracingControls(bool& resetAccumulation);
+	void renderPhysicsDebug(int bodyCount, const std::vector<std::string>& objectNames,
+		const std::vector<glm::vec3>& bodyPositions, const std::vector<float>& speeds,
+		const std::vector<float>& rpms, const std::vector<int>& gears);
+	void renderDebugLines(const std::vector<DebugLineVertex>& lines,
+		const glm::mat4& view, const glm::mat4& proj, int width, int height);
 private:
 	VkDevice device = VK_NULL_HANDLE;
 	VkDescriptorPool imguiPool = VK_NULL_HANDLE;
