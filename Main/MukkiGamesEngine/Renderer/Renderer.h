@@ -9,12 +9,15 @@
 struct SceneObject;
 struct Light;
 class Camera;
-
+class TextureManager;
+class BufferManager;
+struct Model;
 
 struct RenderConfig {
     int windowWidgth= 800;
     int windowHeight=600;
     std::string windowTitle="Mukki Games Engine";
+    std::string scenePath;
 };
 
 
@@ -26,13 +29,15 @@ namespace MUKKI {
             virtual void init(const RenderConfig& config) =0;
             virtual void shutdown()=0;
 
+            virtual void run()=0;
+
             //Per Frame Calls
             virtual void beginFrame()=0;
             virtual void endFrame()=0;
 
             //Scene Objects
 
-            virtual void addObject(uint32_t id, const class Model& model, const glm::mat4& transform) =0;
+            virtual void addObject(uint32_t id, const ::Model& model, const glm::mat4& transform) =0;
             virtual void removeObject(uint32_t  id)=0;
 
             virtual void setLights(const std::vector<Light>& lights, float ambientStrength) =0;
@@ -60,8 +65,8 @@ namespace MUKKI {
 
             // Native device handles (needed for resource creation)
             virtual void* getNativeDevice() = 0;
-            virtual class TextureManager* getTextureManager() = 0;
-            virtual class BufferManager* getBufferManager() = 0;
+            virtual TextureManager* getTextureManager() = 0;
+            virtual BufferManager* getBufferManager() = 0;
 
 
 

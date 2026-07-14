@@ -222,14 +222,22 @@ void VulkanApplication::updateRayTracingUniformBuffer()
 	memcpy(rayTracingUniformBufferMapped, &ubo, sizeof(ubo));
 }
 
-void VulkanApplication::run()
+void VulkanApplication::init(const RenderConfig& config)
 {
-	initVulkan();
-	mainLoop();
+	initVulkan(config);
+}
+
+void VulkanApplication::shutdown()
+{
 	cleanup();
 }
 
-void VulkanApplication::initVulkan()
+void VulkanApplication::run()
+{
+	mainLoop();
+}
+
+void VulkanApplication::initVulkan(const RenderConfig& config)
 {
 	std::cout << "\n=== VERTEX LAYOUT DIAGNOSTICS ===" << std::endl;
 	Vertex::printLayout();
@@ -249,7 +257,7 @@ void VulkanApplication::initVulkan()
 
 	// 1. Create window
 	window = std::make_unique<EngineWindow>();
-	window->init(800, 600, "Mukki Games Engine");
+	window->init(config.windowWidgth, config.windowHeight, config.windowTitle.c_str());
 	glfwSetWindowUserPointer(window->getGLFWwindow(), this);
 	// 2. Create instance (Vulkan context)
 	instance.createInstance();
@@ -290,7 +298,12 @@ void VulkanApplication::initVulkan()
 
 	sceneLoader = std::make_unique<SceneLoader>();
 	sceneLoader->init(device.get(), textureManager.get(), bufferManager.get(), objectLoader.get());
-	sceneLoader->loadScene(ASSETS_PATH + availableScenes[0] );
+
+	if (!config.scenePath.empty()) {
+		sceneLoader->loadScene(config.scenePath);
+	} else {
+		sceneLoader->loadScene(ASSETS_PATH + availableScenes[0]);
+	}
 
 	skybox = std::make_unique<SkyBox>();
 	std::string skyboxFileName = sceneLoader->getConfig().skyboxPath;
@@ -820,6 +833,7 @@ void VulkanApplication::drawFrame()
 	}
 
 	currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+	m_frameCount++;
 }
 
 void VulkanApplication::recreateSwapChain()
@@ -2867,4 +2881,78 @@ void VulkanApplication::createGraphicsPipeline()
 		"Shaders/brdf.frag.spv",
 		additiveConfig
 	);
+}
+
+void* VulkanApplication::getNativeWindow() const
+{
+	return window ? (void*)window->getGLFWwindow() : nullptr;
+}
+
+void* VulkanApplication::getNativeDevice() const
+{
+	return device ? (void*)device->getDevice() : nullptr;
+}
+
+void* VulkanApplication::getCurrentCommandBuffer()
+{
+	return commandBufferManager ? (void*)commandBufferManager->getCommandBuffer(currentFrame) : nullptr;
+}
+
+TextureManager* VulkanApplication::getTextureManagerPtr()
+{
+	return textureManager.get();
+}
+
+BufferManager* VulkanApplication::getBufferManagerPtr()
+{
+	return bufferManager.get();
+}
+
+float VulkanApplication::getFrameTime() const
+{
+	return deltaTime;
+}
+
+uint32_t VulkanApplication::getFrameCount() const
+{
+	return m_frameCount;
+}
+
+void VulkanApplication::onResize(int width, int height)
+{
+	(void)width; (void)height;
+	recreateSwapChain();
+}
+
+void VulkanApplication::setLights(const std::vector<Light>& l, float ambient)
+{
+	lights = l;
+	ambientStrength = ambient;
+}
+
+void VulkanApplication::setCamera(const Camera& cam)
+{
+	if (camera) {
+		camera->position = cam.position;
+		camera->front = cam.front;
+	}
+}
+
+void VulkanApplication::setSkybox(const std::string& path)
+{
+	if (path.empty()) return;
+	std::string fullPath = std::string(ASSETS_PATH) + path;
+	skybox->init(device.get(), textureManager.get(), bufferManager.get(),
+		renderPass, fullPath,
+		CubemapLayout::VerticalCross, MAX_FRAMES_IN_FLIGHT);
+}
+
+void VulkanApplication::setRenderMode(int mode)
+{
+	if (mode == 0) {
+		currentRenderMode = RenderMode::GRAPHICS;
+	} else if (mode == 1) {
+		currentRenderMode = RenderMode::RAYTRACING;
+		accumulationFrameCount = 0;
+	}
 }
