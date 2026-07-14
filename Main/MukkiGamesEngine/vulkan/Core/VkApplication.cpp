@@ -747,7 +747,8 @@ void VulkanApplication::drawFrame()
 				}
 			}
 
-			commandBufferManager->endModelRenderPass(commandBuffer, *uiManager);
+			uiManager->render(commandBuffer);
+			commandBufferManager->endModelRenderPass(commandBuffer);
 
 			if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 				throw std::runtime_error("failed to record command buffer!");

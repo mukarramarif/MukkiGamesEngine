@@ -63,6 +63,8 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/pipeline/*.h"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Physics/*.cpp"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/Physics/*.h"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/Renderer/*.cpp"
+    "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/Renderer/*.h"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/raytracing/*.cpp"
     "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/raytracing/*.h"
 )
