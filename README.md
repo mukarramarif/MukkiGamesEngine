@@ -59,8 +59,11 @@ cd Main
 conan install . -of build-debug --build=missing -s build_type=Debug -s compiler.cppstd=20 -c tools.cmake.cmaketoolchain:generator=Ninja
 cmake --preset conan-debug
 cmake --build --preset conan-debug
-```
+# go into build folder you adjust backends in the future and run the sample scene to load first 
+cd build-debug
+./MukkiGamesEngine --backend vulkan --scene ../MukkiGamesEngine/Assets/sceneTrack.json
 
+```
 
 
 ## Current Progress
