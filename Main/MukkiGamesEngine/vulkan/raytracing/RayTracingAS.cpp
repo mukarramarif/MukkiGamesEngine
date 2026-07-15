@@ -1,6 +1,7 @@
 #include "RayTracingAS.h"
 #include "../Core/VkDevice.h"
 #include "../CommandBufferManager.h"
+#include "../Resources/SceneObject.h"
 #include <stdexcept>
 #include <array>
 
@@ -41,12 +42,29 @@ void RayTracingAS::cleanup()
 
 void RayTracingAS::buildBLAS(const Model& model)
 {
-    buildBLASForModel(model);
+	for (auto& blas : blases) {
+		destroyAccelerationStructure(blas);
+	}
+	blases.clear();
+	buildBLASForModel(model);
+}
+
+void RayTracingAS::buildBLASWithoutClear(const Model& model)
+{
+	buildBLASForModel(model);
+}
+
+void RayTracingAS::clearBLAS()
+{
+	for (auto& blas : blases) {
+		destroyAccelerationStructure(blas);
+	}
+	blases.clear();
 }
 
 void RayTracingAS::buildTLAS(const Model& model)
 {
-    buildTLASFromModel(model);
+	buildTLASFromModel(model);
 }
 
 VkDeviceAddress RayTracingAS::getBufferDeviceAddress(VkBuffer buffer) const
@@ -112,11 +130,8 @@ void RayTracingAS::buildBLASForModel(const Model& model)
         return;
     }
 
-    for (auto& blas : blases) {
-        destroyAccelerationStructure(blas);
-    }
-    blases.clear();
-    blases.resize(model.meshes.size());
+    size_t startIdx = blases.size();
+    blases.resize(startIdx + model.meshes.size());
 
     VkDeviceAddress vertexAddress = getBufferDeviceAddress(model.rtVertexBuffer != VK_NULL_HANDLE
 		? model.rtVertexBuffer
@@ -186,7 +201,7 @@ void RayTracingAS::buildBLASForModel(const Model& model)
             maxPrimCounts.data(),
             &sizeInfo);
 
-        AccelerationStructure& blas = blases[meshIndex];
+        AccelerationStructure& blas = blases[startIdx + meshIndex];
         createAccelerationStructureBuffer(sizeInfo.accelerationStructureSize, blas);
 
         VkAccelerationStructureCreateInfoKHR createInfo{};
@@ -335,6 +350,125 @@ void RayTracingAS::buildTLASFromModel(const Model& model)
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         scratchBuffer,
         scratchMemory);
+
+    VkDeviceAddress scratchAddress = getBufferDeviceAddress(scratchBuffer);
+    buildInfo.dstAccelerationStructure = tlas.handle;
+    buildInfo.scratchData.deviceAddress = scratchAddress;
+
+    const VkAccelerationStructureBuildRangeInfoKHR* rangePtr = &range;
+    VkCommandBuffer commandBuffer = commandBufferManager->beginSingleTimeCommands();
+    vkCmdBuildAccelerationStructuresKHRFunc(commandBuffer, 1, &buildInfo, &rangePtr);
+    commandBufferManager->endSingleTimeCommands(commandBuffer);
+
+    vkDestroyBuffer(device->getDevice(), instanceBuffer, nullptr);
+    vkFreeMemory(device->getDevice(), instanceMemory, nullptr);
+    vkDestroyBuffer(device->getDevice(), scratchBuffer, nullptr);
+    vkFreeMemory(device->getDevice(), scratchMemory, nullptr);
+
+    VkAccelerationStructureDeviceAddressInfoKHR addressInfo{};
+    addressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    addressInfo.accelerationStructure = tlas.handle;
+    tlas.deviceAddress = vkGetAccelerationStructureDeviceAddressKHRFunc(device->getDevice(), &addressInfo);
+}
+
+void RayTracingAS::buildTLASAll(const std::vector<LoadedObject>& loadedObjects, uint32_t globalMeshOffset)
+{
+    if (blases.empty()) return;
+
+    destroyAccelerationStructure(tlas);
+
+    std::vector<VkAccelerationStructureInstanceKHR> instances;
+    uint32_t currentMeshIdx = 0;
+
+    for (const auto& obj : loadedObjects) {
+        if (!obj.loaded || obj.model.nodes.empty()) continue;
+
+        for (const auto& node : obj.model.nodes) {
+            if (node.meshIndex < 0) continue;
+            uint32_t globalIdx = currentMeshIdx + static_cast<uint32_t>(node.meshIndex);
+            if (globalIdx >= blases.size()) continue;
+
+            const auto& blas = blases[globalIdx];
+            if (blas.deviceAddress == 0) continue;
+
+            VkTransformMatrixKHR transform{};
+            auto matrix = glm::mat3x4(glm::transpose(node.worldTransform));
+            memcpy(transform.matrix, &matrix, sizeof(matrix));
+
+            VkAccelerationStructureInstanceKHR instance{};
+            instance.transform = transform;
+            instance.instanceCustomIndex = globalMeshOffset + globalIdx;
+            instance.mask = 0xFF;
+            instance.instanceShaderBindingTableRecordOffset = 0;
+            instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+            instance.accelerationStructureReference = blas.deviceAddress;
+            instances.push_back(instance);
+        }
+
+        currentMeshIdx += static_cast<uint32_t>(obj.model.meshes.size());
+    }
+
+    if (instances.empty()) return;
+
+    VkBuffer instanceBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory instanceMemory = VK_NULL_HANDLE;
+    VkDeviceSize instanceBufferSize = sizeof(VkAccelerationStructureInstanceKHR) * instances.size();
+
+    device->createBuffer(
+        instanceBufferSize,
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        instanceBuffer, instanceMemory);
+
+    void* mappedData = nullptr;
+    vkMapMemory(device->getDevice(), instanceMemory, 0, instanceBufferSize, 0, &mappedData);
+    memcpy(mappedData, instances.data(), static_cast<size_t>(instanceBufferSize));
+    vkUnmapMemory(device->getDevice(), instanceMemory);
+
+    VkDeviceAddress instanceAddress = getBufferDeviceAddress(instanceBuffer);
+
+    VkAccelerationStructureGeometryKHR geometry{};
+    geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geometry.geometry.instances.arrayOfPointers = VK_FALSE;
+    geometry.geometry.instances.data.deviceAddress = instanceAddress;
+
+    VkAccelerationStructureBuildRangeInfoKHR range{};
+    range.primitiveCount = static_cast<uint32_t>(instances.size());
+
+    VkAccelerationStructureBuildGeometryInfoKHR buildInfo{};
+    buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    buildInfo.geometryCount = 1;
+    buildInfo.pGeometries = &geometry;
+
+    uint32_t primitiveCount = range.primitiveCount;
+    VkAccelerationStructureBuildSizesInfoKHR sizeInfo{};
+    sizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    vkGetAccelerationStructureBuildSizesKHRFunc(
+        device->getDevice(),
+        VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+        &buildInfo, &primitiveCount, &sizeInfo);
+
+    createAccelerationStructureBuffer(sizeInfo.accelerationStructureSize, tlas);
+
+    VkAccelerationStructureCreateInfoKHR createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    createInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    createInfo.size = sizeInfo.accelerationStructureSize;
+    createInfo.buffer = tlas.buffer;
+    if (vkCreateAccelerationStructureKHRFunc(device->getDevice(), &createInfo, nullptr, &tlas.handle) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create TLAS!");
+    }
+
+    VkBuffer scratchBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory scratchMemory = VK_NULL_HANDLE;
+    device->createBuffer(
+        sizeInfo.buildScratchSize,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, scratchBuffer, scratchMemory);
 
     VkDeviceAddress scratchAddress = getBufferDeviceAddress(scratchBuffer);
     buildInfo.dstAccelerationStructure = tlas.handle;

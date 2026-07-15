@@ -9,8 +9,8 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 view;
     mat4 proj;
     mat4 normalMatrix;
-    vec4 viewPos;
     mat4 lightSpaceMatrix;
+    vec4 viewPos;
 } ubo;
 
 

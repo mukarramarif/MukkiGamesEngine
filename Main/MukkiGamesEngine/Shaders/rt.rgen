@@ -88,10 +88,6 @@ void main()
     vec3 origin = sceneData.cameraPos.xyz;
     vec3 direction = normalize((sceneData.invView * vec4(view.xyz, 0.0)).xyz);
 
-    // Transform ray to object space (apply model transform)
-    origin = (sceneData.invModel * vec4(origin, 1.0)).xyz;
-    direction = normalize(mat3(sceneData.invModel) * direction);
-
     vec3 result = vec3(0.0);
     vec3 throughput = vec3(1.0);
     const int maxBounces = 3;
@@ -124,8 +120,8 @@ void main()
         }
 
         vec3 albedo = payload.color;
-        vec3 hitPos = (sceneData.model * vec4(payload.position, 1.0)).xyz;
-        vec3 normal = normalize(mat3(sceneData.normalMatrix) * payload.normal);
+        vec3 hitPos = payload.position;
+        vec3 normal = normalize(payload.normal);
         vec3 viewDir = normalize(sceneData.cameraPos.xyz - hitPos);
         int lightCount = int(sceneData.lightParams.x + 0.5);
         float ambientStrength = sceneData.lightParams.y;
@@ -258,9 +254,7 @@ void main()
             throughput *= (vec3(1.0) - bounceF) * albedo / (1.0 - reflectProb);
         }
 
-        // Transform back to object space for next trace
-        direction = normalize(mat3(sceneData.invModel) * direction);
-        origin = (sceneData.invModel * vec4(hitPos + normal * 0.01, 1.0)).xyz;
+        origin = hitPos + normal * 0.01;
     }
 
     ivec2 p = ivec2(gl_LaunchIDEXT.xy);

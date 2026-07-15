@@ -37,6 +37,8 @@ struct PrimitiveInfo
     float emissiveR;
     float emissiveG;
     float emissiveB;
+    uint vertexOffset;
+    uint pad0;
 };
 
 struct MeshInfo
@@ -82,9 +84,9 @@ void main()
     PrimitiveInfo primInfo = primitiveBuffer.primitives[primitiveIndex];
 
     uint triIndex = primInfo.firstIndex + uint(gl_PrimitiveID) * 3u;
-    uint i0 = indexBuffer.indices[triIndex + 0u];
-    uint i1 = indexBuffer.indices[triIndex + 1u];
-    uint i2 = indexBuffer.indices[triIndex + 2u];
+    uint i0 = indexBuffer.indices[triIndex + 0u] + primInfo.vertexOffset;
+    uint i1 = indexBuffer.indices[triIndex + 1u] + primInfo.vertexOffset;
+    uint i2 = indexBuffer.indices[triIndex + 2u] + primInfo.vertexOffset;
 
     RayTracingVertex v0 = vertexBuffer.vertices[i0];
     RayTracingVertex v1 = vertexBuffer.vertices[i1];

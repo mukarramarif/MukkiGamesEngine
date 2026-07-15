@@ -120,6 +120,8 @@ private:
 		float emissiveR;
 		float emissiveG;
 		float emissiveB;
+		uint32_t vertexOffset;
+		uint32_t pad0;
 	};
 	struct RayTracingMeshInfo {
 		uint32_t primitiveOffset;
@@ -131,6 +133,10 @@ private:
 	VkDeviceMemory rayTracingPrimitiveBufferMemory = VK_NULL_HANDLE;
 	VkBuffer rayTracingMeshBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory rayTracingMeshBufferMemory = VK_NULL_HANDLE;
+	VkBuffer rtCombinedVertexBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory rtCombinedVertexBufferMemory = VK_NULL_HANDLE;
+	VkBuffer rtCombinedIndexBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory rtCombinedIndexBufferMemory = VK_NULL_HANDLE;
 
 	//Texture Handler and Buffer Manager
 	std::unique_ptr<TextureManager> textureManager;
@@ -252,6 +258,8 @@ private:
 	VkImageView accumOutputImageView = VK_NULL_HANDLE;
 	uint32_t accumulationFrameCount = 0;
 	bool cameraMoved = false;
+	glm::vec3 m_prevCameraPos = glm::vec3(0.0f);
+	glm::vec3 m_prevCameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
 
 	//Object-Loader
 	std::unique_ptr<ObjectLoader> objectLoader;
@@ -270,8 +278,8 @@ private:
 
 	//ShadowMap
 	std::unique_ptr<ShadowMap> shadowMap;
-	// @TODO: find a way to automatically update scenes like hot shader reloading
-	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json","WaterExample.json"};
+	//TODO: find a way to automatically update scenes like hot shader reloading
+	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json","WaterExample.json", "showRoom.json"};
 	int currentSceneIndex = 0;
 
 	// Physics

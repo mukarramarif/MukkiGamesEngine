@@ -5,6 +5,7 @@
 
 class Device;
 class CommandBufferManager;
+struct LoadedObject;
 
 struct AccelerationStructure {
     VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
@@ -22,7 +23,10 @@ public:
     void cleanup();
 
     void buildBLAS(const Model& model);
+    void buildBLASWithoutClear(const Model& model);
     void buildTLAS(const Model& model);
+    void buildTLASAll(const std::vector<LoadedObject>& loadedObjects, uint32_t globalMeshOffset);
+    void clearBLAS();
 
     const AccelerationStructure& getTLAS() const { return tlas; }
 
