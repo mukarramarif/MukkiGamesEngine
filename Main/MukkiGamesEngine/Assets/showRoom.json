@@ -1,0 +1,43 @@
+{
+  "sceneName": "ShowRoom",
+  "skyboxPath": "studio_small.hdr",
+  "ambientStrenght": 0.4,
+  "cameraSpawnPos": [0.0, 2.0, 5.0],
+  "Lights": [
+    {
+      "name": "Sun",
+      "type": "Directional",
+      "direction": [-0.5, -1.0, -0.3],
+      "color": [1.0, 0.95, 0.8],
+      "intensity": 1.0,
+      "enabled": true
+    }
+  ],
+  "Objects": [
+    {
+      "name": "ShowRoom",
+      "modelPath": "ShowRoom/scene.gltf",
+      "position": [0.0, 0.0, 0.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [5, 5, 5],
+      "physics": {
+        "enabled": false,
+        "isDynamic": false,
+        "useMeshShape": true
+      }
+    },
+    {
+      "name": "GTR",
+      "modelPath": "GTR/scene.gltf",
+      "position": [-0.5, 0.5, 1.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [3.0, 3.0, 3.0],
+      "physics": {
+        "enabled": false,
+        "isDynamic": true,
+        "mass": 600.0,
+        "isVehicle": true
+      }
+    }
+  ]
+}

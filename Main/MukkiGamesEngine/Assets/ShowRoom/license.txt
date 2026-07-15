@@ -1,0 +1,11 @@
+Model Information:
+* title:	Car-Showroom 1
+* source:	https://sketchfab.com/3d-models/car-showroom-1-40b0ae06eb8343e5bacf34e04fcfff73
+* author:	Polsaris (https://sketchfab.com/polsaris)
+
+Model License:
+* license type:	CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)
+* requirements:	Author must be credited. No commercial use.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Car-Showroom 1" (https://sketchfab.com/3d-models/car-showroom-1-40b0ae06eb8343e5bacf34e04fcfff73) by Polsaris (https://sketchfab.com/polsaris) licensed under CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)
