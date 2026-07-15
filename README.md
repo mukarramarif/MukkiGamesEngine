@@ -4,6 +4,7 @@
 
 * RayTracing 
 <img width="1270" height="1064" alt="image" src="https://github.com/user-attachments/assets/dc16d9ab-dbad-4029-9b07-7ac9f490b848" />
+<img width="2963" height="1073" alt="image" src="https://github.com/user-attachments/assets/e0f609d8-20f7-495c-a70b-4bbb9ec5359b" />
 
 
 * Shadows
