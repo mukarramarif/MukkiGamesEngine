@@ -69,7 +69,7 @@ layout(set = 0, binding = 6, std430) readonly buffer MeshBuffer
     MeshInfo meshes[];
 } meshBuffer;
 
-layout(set = 0, binding = 8) uniform sampler2D textures[16];
+layout(set = 0, binding = 8) uniform sampler2D textures[32];
 
 hitAttributeEXT vec2 attribs;
 

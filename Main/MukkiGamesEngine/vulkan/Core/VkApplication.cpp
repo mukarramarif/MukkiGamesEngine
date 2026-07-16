@@ -98,10 +98,10 @@ void VulkanApplication::createRayTracingGeometryBuffers()
 					baseColor = glm::vec3(mat.baseColorFactor);
 					emissive = mat.emissiveFactor;
 					int32_t emissiveTexIdx = mat.emissiveTextureIndex;
-					primInfo.emissionTextureIndex = (emissiveTexIdx >= 0 && textureOffset + static_cast<uint32_t>(emissiveTexIdx) < 16)
+					primInfo.emissionTextureIndex = (emissiveTexIdx >= 0 && textureOffset + static_cast<uint32_t>(emissiveTexIdx) < 32)
                         ? static_cast<int32_t>(textureOffset) + emissiveTexIdx : -1;
 				}
-				primInfo.textureIndex = (texIdx >= 0 && textureOffset + static_cast<uint32_t>(texIdx) < 16)
+				primInfo.textureIndex = (texIdx >= 0 && textureOffset + static_cast<uint32_t>(texIdx) < 32)
 					? static_cast<int32_t>(textureOffset) + texIdx : -1;
 				primInfo.metallicFactor = metallic;
 				primInfo.roughnessFactor = roughness;
@@ -125,7 +125,7 @@ void VulkanApplication::createRayTracingGeometryBuffers()
 		indexOffset += static_cast<uint32_t>(rtModel.indices.size());
 		globalMeshOffset += static_cast<uint32_t>(rtModel.meshes.size());
 		textureOffset += static_cast<uint32_t>(rtModel.textures.size());
-		if (textureOffset > 16) textureOffset = 16;
+		if (textureOffset > 32) textureOffset = 32;
 	}
 
 	if (allVertices.empty() || allIndices.empty()) return;
@@ -2647,7 +2647,7 @@ void VulkanApplication::createRayTracingDescriptorSetLayout()
 
 	bindings[8].binding = 8;
 	bindings[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	bindings[8].descriptorCount = 16;
+	bindings[8].descriptorCount = 32;
 	bindings[8].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 	bindings[8].pImmutableSamplers = nullptr;
 
@@ -2681,7 +2681,7 @@ void VulkanApplication::createRayTracingDescriptorPool()
 	poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	poolSizes[3].descriptorCount = 4;
 	poolSizes[4].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	poolSizes[4].descriptorCount = 17;
+	poolSizes[4].descriptorCount = 33;
 
 	VkDescriptorPoolCreateInfo poolInfo{};
 	poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2833,8 +2833,8 @@ void VulkanApplication::createRayTracingDescriptorSet()
 	}
 
 	VkWriteDescriptorSet textureWrite{};
-	std::vector<VkDescriptorImageInfo> texImageInfos(16);
-	for (size_t i = 0; i < 16; i++) {
+	std::vector<VkDescriptorImageInfo> texImageInfos(32);
+	for (size_t i = 0; i < 32; i++) {
 		texImageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		texImageInfos[i].imageView = textureImageView;
 		texImageInfos[i].sampler = textureSampler;
@@ -2843,7 +2843,7 @@ void VulkanApplication::createRayTracingDescriptorSet()
 	uint32_t texSlot = 0;
 	for (auto& obj : loadedObjects) {
 		if (!obj.loaded) continue;
-		for (size_t i = 0; i < obj.model.textures.size() && texSlot < 16; i++) {
+		for (size_t i = 0; i < obj.model.textures.size() && texSlot < 32; i++) {
 			if (obj.model.textures[i].imageView != VK_NULL_HANDLE) {
 				texImageInfos[texSlot].imageView = obj.model.textures[i].imageView;
 				texImageInfos[texSlot].sampler = obj.model.textures[i].sampler;
@@ -2855,7 +2855,7 @@ void VulkanApplication::createRayTracingDescriptorSet()
 	textureWrite.dstSet = rayTracingDescriptorSet;
 	textureWrite.dstBinding = 8;
 	textureWrite.dstArrayElement = 0;
-	textureWrite.descriptorCount = 16;
+	textureWrite.descriptorCount = 32;
 	textureWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	textureWrite.pImageInfo = texImageInfos.data();
 
