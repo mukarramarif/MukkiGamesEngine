@@ -261,6 +261,12 @@ void main()
     vec4 prev = imageLoad(accumImage, p);
     vec3 accumulated = prev.rgb * float(frameCount) + result;
     accumulated /= float(frameCount + 1);
+    //previous red->blue issues was coming from sRGB swapping b and r
     imageStore(accumImage, p, vec4(accumulated, 1.0));
-    imageStore(outputImage, p, vec4(accumulated, 1.0));
+    // tone mapping and gamma correction
+    vec3 displayColor = accumulated / (accumulated+vec3(1.0));
+    // encoding to sRGB
+    displayColor = mix(pow(displayColor, vec3(1.0/2.4)) * 1.055-0.055, displayColor * 12.92, lessThan(displayColor, vec3(0.0031308)));
+    // Swapping R/B for swapchaing BGRA for correct display
+    imageStore(outputImage, p, vec4(displayColor.bgr, 1.0));
 }
