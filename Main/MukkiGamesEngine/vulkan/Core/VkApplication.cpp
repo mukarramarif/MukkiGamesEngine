@@ -2847,8 +2847,8 @@ void VulkanApplication::createRayTracingDescriptorSet()
 			if (obj.model.textures[i].imageView != VK_NULL_HANDLE) {
 				texImageInfos[texSlot].imageView = obj.model.textures[i].imageView;
 				texImageInfos[texSlot].sampler = obj.model.textures[i].sampler;
-				texSlot++;
 			}
+			texSlot++;
 		}
 	}
 	textureWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
