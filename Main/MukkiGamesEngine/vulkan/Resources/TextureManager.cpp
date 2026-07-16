@@ -237,10 +237,10 @@ void TextureManager::createDebugTextureImage(VkImage& textureImage, VkDeviceMemo
 	const uint32_t texHeight = 2;
 	VkDeviceSize imageSize = static_cast<VkDeviceSize>(texWidth * texHeight) * 4;
 	unsigned char pixels[16] = {
-		4,60,255,255,
-		4,60,255,255,
-		4,60,255,255,
-		4,60,255,255
+		255,255,255,255,
+		255,255,255,255,
+		255,255,255,255,
+		255,255,255,255
 	};
 	VkBuffer stagingBuffer;
 	VkDeviceMemory stagingBufferMemory;
@@ -398,13 +398,13 @@ void TextureManager::createCubemapImage(const std::string& filePath,
 	VkImage& cubemapImage, VkDeviceMemory& cubemapImageMemory, CubemapLayout layout)
 {
 	int texWidth = 0, texHeight = 0, texChannels = 0;
-    
+
     // Check if HDR file
     bool isHDR = stbi_is_hdr(filePath.c_str());
-    
+
     float* hdrPixels = nullptr;
     stbi_uc* ldrPixels = nullptr;
-    
+
     if (isHDR) {
         // Load as floating point
         hdrPixels = stbi_loadf(filePath.c_str(), &texWidth, &texHeight, &texChannels, 4);
@@ -412,7 +412,7 @@ void TextureManager::createCubemapImage(const std::string& filePath,
             throw std::runtime_error("failed to load HDR cubemap texture: " + filePath);
         }
         std::cout << "Loaded HDR image: " << texWidth << "x" << texHeight << std::endl;
-        
+
         // Convert HDR to LDR with tone mapping
         ldrPixels = new stbi_uc[texWidth * texHeight * 4];
         for (int i = 0; i < texWidth * texHeight; i++) {
@@ -438,9 +438,9 @@ void TextureManager::createCubemapImage(const std::string& filePath,
     Bitmap Source(texWidth, texHeight, 4, eBitmapFormat_UnsignedByte, ldrPixels);
     std::vector<Bitmap> cubemap;
     int faceSize = ConvertEctToCubemapFaces(Source, cubemap);
-    
+
     std::cout << "  Face size: " << faceSize << "x" << faceSize << std::endl;
-    
+
     // Free the loaded pixels
     if (isHDR) {
         delete[] ldrPixels;

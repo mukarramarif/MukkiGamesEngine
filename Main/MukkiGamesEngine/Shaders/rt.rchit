@@ -37,6 +37,8 @@ struct PrimitiveInfo
     float emissiveR;
     float emissiveG;
     float emissiveB;
+    uint vertexOffset;
+    int emssiveTextureIndex;
 };
 
 struct MeshInfo
@@ -67,7 +69,7 @@ layout(set = 0, binding = 6, std430) readonly buffer MeshBuffer
     MeshInfo meshes[];
 } meshBuffer;
 
-layout(set = 0, binding = 8) uniform sampler2D textures[16];
+layout(set = 0, binding = 8) uniform sampler2D textures[32];
 
 hitAttributeEXT vec2 attribs;
 
@@ -82,9 +84,9 @@ void main()
     PrimitiveInfo primInfo = primitiveBuffer.primitives[primitiveIndex];
 
     uint triIndex = primInfo.firstIndex + uint(gl_PrimitiveID) * 3u;
-    uint i0 = indexBuffer.indices[triIndex + 0u];
-    uint i1 = indexBuffer.indices[triIndex + 1u];
-    uint i2 = indexBuffer.indices[triIndex + 2u];
+    uint i0 = indexBuffer.indices[triIndex + 0u] + primInfo.vertexOffset;
+    uint i1 = indexBuffer.indices[triIndex + 1u] + primInfo.vertexOffset;
+    uint i2 = indexBuffer.indices[triIndex + 2u] + primInfo.vertexOffset;
 
     RayTracingVertex v0 = vertexBuffer.vertices[i0];
     RayTracingVertex v1 = vertexBuffer.vertices[i1];
@@ -108,10 +110,14 @@ void main()
     } else {
         albedo = baseColor;
     }
-
+    vec3 emissiveColor = vec3(primInfo.emissiveR, primInfo.emissiveG, primInfo.emissiveB);
+    int emissiveTexIdx = primInfo.emssiveTextureIndex;
+    if(emissiveTexIdx >= 0) {
+        emissiveColor *= texture(textures[nonuniformEXT(emissiveTexIdx)], uv).rgb;
+    }
     payload.normal = normal;
     payload.color = albedo;
     payload.metallic = primInfo.metallicFactor;
     payload.roughness = primInfo.roughnessFactor;
-    payload.emissiveColor = vec3(primInfo.emissiveR, primInfo.emissiveG, primInfo.emissiveB);
+    payload.emissiveColor = emissiveColor;
 }

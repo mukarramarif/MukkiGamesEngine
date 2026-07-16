@@ -11,7 +11,7 @@ VkDescriptorBoss::VkDescriptorBoss(const Device* device, uint32_t maxSets)
 
 void VkDescriptorBoss::createDescriptorPool(uint32_t maxSets)
 {
-	uint32_t totalSets = maxSets * 50;
+	uint32_t totalSets = maxSets * 500;
 	std::array<VkDescriptorPoolSize, 3> poolSizes{};
 	poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	poolSizes[0].descriptorCount = totalSets;

@@ -41,7 +41,7 @@ VulkanApplication::VulkanApplication()
 
 void VulkanApplication::createRayTracingUniformBuffer()
 {
-    VkDeviceSize bufferSize = sizeof(glm::mat4) * 5 + sizeof(glm::vec4) + sizeof(GPULight) * MAX_LIGHTS + sizeof(glm::vec4);
+    VkDeviceSize bufferSize = sizeof(glm::mat4) * 5 + sizeof(glm::vec4) + sizeof(GPULight) * MAX_LIGHTS + sizeof(glm::vec4) + sizeof(glm::vec4);
 	bufferManager->createBuffer(
 		bufferSize,
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -56,58 +56,79 @@ void VulkanApplication::createRayTracingGeometryBuffers()
 {
 	cleanupRayTracingGeometryBuffers();
 
-	LoadedObject* rtObj = nullptr;
-	for (auto& obj : loadedObjects) {
-		if (obj.loaded && !obj.model.meshes.empty()) {
-			rtObj = &obj;
-			break;
-		}
-	}
-	if (!rtObj) return;
-
-	Model& rtModel = rtObj->model;
-
 	std::vector<RayTracingPrimitiveInfo> primitiveInfos;
-	primitiveInfos.reserve(rtModel.indices.size() / 3);
 	std::vector<RayTracingMeshInfo> meshInfos;
-	meshInfos.reserve(rtModel.meshes.size());
+	std::vector<RayTracingVertex> allVertices;
+	std::vector<uint32_t> allIndices;
 
-	uint32_t primitiveOffset = 0;
-	for (const auto& mesh : rtModel.meshes) {
-		RayTracingMeshInfo meshInfo{};
-		meshInfo.primitiveOffset = primitiveOffset;
-		meshInfo.primitiveCount = static_cast<uint32_t>(mesh.primitives.size());
-		meshInfo.pad0 = 0;
-		meshInfo.pad1 = 0;
-		meshInfos.push_back(meshInfo);
+	uint32_t globalMeshOffset = 0;
+	uint32_t globalPrimitiveOffset = 0;
+	uint32_t vertexOffset = 0;
+	uint32_t indexOffset = 0;
+	uint32_t textureOffset = 0;
 
-		for (const auto& primitive : mesh.primitives) {
-			RayTracingPrimitiveInfo primInfo{};
-			primInfo.firstIndex = primitive.firstIndex;
-			primInfo.indexCount = primitive.indexCount;
-			int32_t texIdx = -1;
-			float metallic = 0.0f;
-			float roughness = 1.0f;
-			glm::vec3 baseColor = glm::vec3(1.0f);
-			if (primitive.materialIndex >= 0 &&
-				primitive.materialIndex < static_cast<int32_t>(rtModel.materials.size())) {
-				const auto& mat = rtModel.materials[primitive.materialIndex];
-				texIdx = mat.baseColorTextureIndex;
-				metallic = mat.metallicFactor;
-				roughness = mat.roughnessFactor;
-				baseColor = glm::vec3(mat.baseColorFactor);
+	for (auto& obj : loadedObjects) {
+		if (!obj.loaded || obj.model.meshes.empty()) continue;
+
+		Model& rtModel = obj.model;
+
+		for (const auto& mesh : rtModel.meshes) {
+			RayTracingMeshInfo meshInfo{};
+			meshInfo.primitiveOffset = globalPrimitiveOffset;
+			meshInfo.primitiveCount = static_cast<uint32_t>(mesh.primitives.size());
+			meshInfo.pad0 = 0;
+			meshInfo.pad1 = 0;
+			meshInfos.push_back(meshInfo);
+
+			for (const auto& primitive : mesh.primitives) {
+				RayTracingPrimitiveInfo primInfo{};
+				primInfo.firstIndex = primitive.firstIndex + indexOffset;
+				primInfo.indexCount = primitive.indexCount;
+				int32_t texIdx = -1;
+				float metallic = 0.0f;
+				float roughness = 1.0f;
+				glm::vec3 baseColor = glm::vec3(1.0f);
+				glm::vec3 emissive = glm::vec3(0.0f);
+				if (primitive.materialIndex >= 0 &&
+					primitive.materialIndex < static_cast<int32_t>(rtModel.materials.size())) {
+					const auto& mat = rtModel.materials[primitive.materialIndex];
+					texIdx = mat.baseColorTextureIndex;
+					metallic = mat.metallicFactor;
+					roughness = mat.roughnessFactor;
+					baseColor = glm::vec3(mat.baseColorFactor);
+					emissive = mat.emissiveFactor;
+					int32_t emissiveTexIdx = mat.emissiveTextureIndex;
+					primInfo.emissionTextureIndex = (emissiveTexIdx >= 0 && textureOffset + static_cast<uint32_t>(emissiveTexIdx) < 32)
+                        ? static_cast<int32_t>(textureOffset) + emissiveTexIdx : -1;
+				}
+				primInfo.textureIndex = (texIdx >= 0 && textureOffset + static_cast<uint32_t>(texIdx) < 32)
+					? static_cast<int32_t>(textureOffset) + texIdx : -1;
+				primInfo.metallicFactor = metallic;
+				primInfo.roughnessFactor = roughness;
+				primInfo.baseColorR = baseColor.r;
+				primInfo.baseColorG = baseColor.g;
+				primInfo.baseColorB = baseColor.b;
+				primInfo.emissiveR = emissive.r;
+				primInfo.emissiveG = emissive.g;
+				primInfo.emissiveB = emissive.b;
+				primInfo.vertexOffset = vertexOffset;
+				primitiveInfos.push_back(primInfo);
 			}
-			primInfo.textureIndex = texIdx;
-			primInfo.metallicFactor = metallic;
-			primInfo.roughnessFactor = roughness;
-			primInfo.baseColorR = baseColor.r;
-			primInfo.baseColorG = baseColor.g;
-			primInfo.baseColorB = baseColor.b;
-			primitiveInfos.push_back(primInfo);
+
+			globalPrimitiveOffset += static_cast<uint32_t>(mesh.primitives.size());
 		}
 
-		primitiveOffset += static_cast<uint32_t>(mesh.primitives.size());
+		allVertices.insert(allVertices.end(), rtModel.rtVertices.begin(), rtModel.rtVertices.end());
+		allIndices.insert(allIndices.end(), rtModel.indices.begin(), rtModel.indices.end());
+
+		vertexOffset += static_cast<uint32_t>(rtModel.rtVertices.size());
+		indexOffset += static_cast<uint32_t>(rtModel.indices.size());
+		globalMeshOffset += static_cast<uint32_t>(rtModel.meshes.size());
+		textureOffset += static_cast<uint32_t>(rtModel.textures.size());
+		if (textureOffset > 32) textureOffset = 32;
 	}
+
+	if (allVertices.empty() || allIndices.empty()) return;
 
 	if (!primitiveInfos.empty()) {
 		VkDeviceSize primBufferSize = sizeof(RayTracingPrimitiveInfo) * primitiveInfos.size();
@@ -138,6 +159,38 @@ void VulkanApplication::createRayTracingGeometryBuffers()
 		memcpy(mapped, meshInfos.data(), meshBufferSize);
 		vkUnmapMemory(device->getDevice(), rayTracingMeshBufferMemory);
 	}
+
+	{
+		VkDeviceSize vbSize = sizeof(RayTracingVertex) * allVertices.size();
+		VkBuffer staging; VkDeviceMemory stagingMem;
+		device->createBuffer(vbSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging, stagingMem);
+		void* data; vkMapMemory(device->getDevice(), stagingMem, 0, vbSize, 0, &data);
+		memcpy(data, allVertices.data(), (size_t)vbSize); vkUnmapMemory(device->getDevice(), stagingMem);
+
+		device->createBuffer(vbSize,
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, rtCombinedVertexBuffer, rtCombinedVertexBufferMemory);
+		device->copyBuffer(staging, rtCombinedVertexBuffer, vbSize);
+		vkDestroyBuffer(device->getDevice(), staging, nullptr);
+		vkFreeMemory(device->getDevice(), stagingMem, nullptr);
+	}
+
+	{
+		VkDeviceSize ibSize = sizeof(uint32_t) * allIndices.size();
+		VkBuffer staging; VkDeviceMemory stagingMem;
+		device->createBuffer(ibSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging, stagingMem);
+		void* data; vkMapMemory(device->getDevice(), stagingMem, 0, ibSize, 0, &data);
+		memcpy(data, allIndices.data(), (size_t)ibSize); vkUnmapMemory(device->getDevice(), stagingMem);
+
+		device->createBuffer(ibSize,
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, rtCombinedIndexBuffer, rtCombinedIndexBufferMemory);
+		device->copyBuffer(staging, rtCombinedIndexBuffer, ibSize);
+		vkDestroyBuffer(device->getDevice(), staging, nullptr);
+		vkFreeMemory(device->getDevice(), stagingMem, nullptr);
+	}
 }
 
 void VulkanApplication::cleanupRayTracingGeometryBuffers()
@@ -157,6 +210,22 @@ void VulkanApplication::cleanupRayTracingGeometryBuffers()
 	if (rayTracingMeshBufferMemory != VK_NULL_HANDLE) {
 		vkFreeMemory(device->getDevice(), rayTracingMeshBufferMemory, nullptr);
 		rayTracingMeshBufferMemory = VK_NULL_HANDLE;
+	}
+	if (rtCombinedVertexBuffer != VK_NULL_HANDLE) {
+		vkDestroyBuffer(device->getDevice(), rtCombinedVertexBuffer, nullptr);
+		rtCombinedVertexBuffer = VK_NULL_HANDLE;
+	}
+	if (rtCombinedVertexBufferMemory != VK_NULL_HANDLE) {
+		vkFreeMemory(device->getDevice(), rtCombinedVertexBufferMemory, nullptr);
+		rtCombinedVertexBufferMemory = VK_NULL_HANDLE;
+	}
+	if (rtCombinedIndexBuffer != VK_NULL_HANDLE) {
+		vkDestroyBuffer(device->getDevice(), rtCombinedIndexBuffer, nullptr);
+		rtCombinedIndexBuffer = VK_NULL_HANDLE;
+	}
+	if (rtCombinedIndexBufferMemory != VK_NULL_HANDLE) {
+		vkFreeMemory(device->getDevice(), rtCombinedIndexBufferMemory, nullptr);
+		rtCombinedIndexBufferMemory = VK_NULL_HANDLE;
 	}
 }
 
@@ -183,32 +252,25 @@ void VulkanApplication::updateRayTracingUniformBuffer()
 		glm::mat4 normalMatrix;
         GPULight lights[MAX_LIGHTS];
 		glm::vec4 lightParams;
+		glm::vec4 jitter;
 	};
 
 	RayTracingCameraUBO ubo{};
 	ubo.invView = invView;
 	ubo.invProj = invProj;
 	ubo.cameraPos = camPos;
-
-	glm::mat4 model = glm::mat4(1.0f);
-	LoadedObject* rtObj = nullptr;
-	for (auto& obj : loadedObjects) {
-		if (obj.loaded) {
-			rtObj = &obj;
-			break;
-		}
-	}
-	if (rtObj) {
-		model = rtObj->transform.getModelMatrix();
-	}
-	ubo.model = model;
-	ubo.invModel = glm::inverse(model);
-	ubo.normalMatrix = glm::transpose(ubo.invModel);
+	ubo.model = glm::mat4(1.0f);
+	ubo.invModel = glm::mat4(1.0f);
+	ubo.normalMatrix = glm::mat4(1.0f);
 
 	ubo.lightParams = glm::vec4(0.0f);
 	ubo.lightParams.y = ambientStrength;
 	ubo.lightParams.z = static_cast<float>(lights.size());
 	ubo.lightParams.w = static_cast<float>(accumulationFrameCount);
+
+	float jx = static_cast<float>((accumulationFrameCount * 3) % 4) / 4.0f - 0.5f;
+	float jy = static_cast<float>((accumulationFrameCount * 7) % 4) / 4.0f - 0.5f;
+	ubo.jitter = glm::vec4(jx, jy, 0.0f, 0.0f);
 
 	int lightCount = 0;
 	for (size_t i = 0; i < lights.size() && lightCount < MAX_LIGHTS; ++i) {
@@ -550,8 +612,10 @@ void VulkanApplication::createDefaultMaterialUniformBuffers()
 	defaultMaterial.roughnessFactor = 1.0f;
 	defaultMaterial.clearCoatFactor = 0.0f;
 	defaultMaterial.clearCoatRoughness = 0.0f;
-	defaultMaterial.clearCoatFactor = 0.0f;
-	defaultMaterial.clearCoatRoughness = 0.0f;
+	defaultMaterial.baseColorR = 1.0f;
+	defaultMaterial.baseColorG = 1.0f;
+	defaultMaterial.baseColorB = 1.0f;
+	defaultMaterial.alpha = 1.0f;
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		device->createBuffer(
 			bufferSize,
@@ -682,9 +746,25 @@ void VulkanApplication::drawFrame()
 	vkResetFences(device->getDevice(), 1, &inFlightFences[currentFrame]);
 
 	if (currentRenderMode == RenderMode::RAYTRACING) {
-		if (cameraMoved) {
+		bool posChanged = glm::distance(camera->position, m_prevCameraPos) > 0.001f;
+		bool dirChanged = glm::distance(camera->front, m_prevCameraFront) > 0.001f;
+		if (cameraMoved || posChanged || dirChanged) {
 			accumulationFrameCount = 0;
 			cameraMoved = false;
+			m_prevCameraPos = camera->position;
+			m_prevCameraFront = camera->front;
+			if (accumOutputImage != VK_NULL_HANDLE) {
+				VkCommandBuffer cmd = commandBufferManager->beginSingleTimeCommands();
+				VkClearColorValue clearValue = { 0.0f, 0.0f, 0.0f, 0.0f };
+				VkImageSubresourceRange range = {};
+				range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+				range.baseMipLevel = 0;
+				range.levelCount = 1;
+				range.baseArrayLayer = 0;
+				range.layerCount = 1;
+				vkCmdClearColorImage(cmd, accumOutputImage, VK_IMAGE_LAYOUT_GENERAL, &clearValue, 1, &range);
+				commandBufferManager->endSingleTimeCommands(cmd);
+			}
 		}
 		updateRayTracingUniformBuffer();
 		++accumulationFrameCount;
@@ -733,6 +813,7 @@ void VulkanApplication::drawFrame()
 			}
 
 			VkPipeline mainPipeline = graphicsPipeline->getGraphicsPipeline();
+			VkPipeline transparentPipe = transparentPipeline ? transparentPipeline->getGraphicsPipeline() : VK_NULL_HANDLE;
 			VkPipeline addPipeline = additivePipeline ? additivePipeline->getGraphicsPipeline() : VK_NULL_HANDLE;
 
 			commandBufferManager->beginModelRenderPass(
@@ -754,7 +835,9 @@ void VulkanApplication::drawFrame()
 						obj.model,
 						pipelineLayout,
 						mainPipeline,
+						transparentPipe,
 						addPipeline,
+						camera->position,
 						obj.descriptorSets,
 						currentFrame);
 				}
@@ -881,6 +964,7 @@ void VulkanApplication::recreateSwapChain()
 
 	// Cleanup old graphics pipeline
 	graphicsPipeline.reset();
+	transparentPipeline.reset();
 	additivePipeline.reset();
 
 	// Cleanup old swap chain
@@ -2065,22 +2149,16 @@ void VulkanApplication::recordRayTracingCommandBuffer(VkCommandBuffer commandBuf
 	vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 	vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-	LoadedObject* rtObj = nullptr;
-	for (auto& obj : loadedObjects) {
-		if (obj.loaded && !obj.descriptorSets.empty() && additivePipeline) {
-			rtObj = &obj;
-			break;
-		}
-	}
-	if (rtObj) {
-		Model& rtModel = rtObj->model;
+	for (auto& rtObj : loadedObjects) {
+		if (!rtObj.loaded || rtObj.descriptorSets.empty() || !additivePipeline) continue;
+
+		Model& rtModel = rtObj.model;
 		VkBuffer vertexBuffers[] = { rtModel.vertexBuffer };
 		VkDeviceSize offsets[] = { 0 };
 		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 		vkCmdBindIndexBuffer(commandBuffer, rtModel.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 		VkPipeline currentPipeline = VK_NULL_HANDLE;
 
-		// Emissive pass with additive blending over ray-traced image
 		for (const auto& mesh : rtModel.transparentMeshIndices) {
 			const auto& meshRef = rtModel.meshes[mesh];
 			for (const auto& primitive : meshRef.primitives) {
@@ -2095,14 +2173,14 @@ void VulkanApplication::recordRayTracingCommandBuffer(VkCommandBuffer commandBuf
 					currentPipeline = additivePipeline->getGraphicsPipeline();
 				}
 
-				if (matIndex < static_cast<int32_t>(rtObj->descriptorSets.size())) {
+				if (matIndex < static_cast<int32_t>(rtObj.descriptorSets.size())) {
 					vkCmdBindDescriptorSets(
 						commandBuffer,
 						VK_PIPELINE_BIND_POINT_GRAPHICS,
 						pipelineLayout,
 						0,
 						1,
-						&rtObj->descriptorSets[matIndex][currentFrame],
+						&rtObj.descriptorSets[matIndex][currentFrame],
 						0,
 						nullptr
 					);
@@ -2135,13 +2213,13 @@ void VulkanApplication::loadSceneObjects()
 	}
 	createRayTracingGeometryBuffers();
 	if (rayTracingAS) {
+		rayTracingAS->clearBLAS();
 		for (auto& obj : loadedObjects) {
 			if (obj.loaded) {
-				rayTracingAS->buildBLAS(obj.model);
-				rayTracingAS->buildTLAS(obj.model);
-				break; // Only first object for RT
+				rayTracingAS->buildBLASWithoutClear(obj.model);
 			}
 		}
+		rayTracingAS->buildTLASAll(loadedObjects, 0);
 		createRayTracingDescriptorSet();
 	}
 }
@@ -2192,6 +2270,10 @@ LoadedObject VulkanApplication::createLoadedObject(const SceneObject& sceneObj)
 			materialData.roughnessFactor = obj.model.materials[matIndex].roughnessFactor;
 			materialData.clearCoatFactor = 1.0f;
 			materialData.clearCoatRoughness = 0.5f;
+			materialData.baseColorR = obj.model.materials[matIndex].baseColorFactor.r;
+			materialData.baseColorG = obj.model.materials[matIndex].baseColorFactor.g;
+			materialData.baseColorB = obj.model.materials[matIndex].baseColorFactor.b;
+			materialData.alpha = obj.model.materials[matIndex].baseColorFactor.a;
 			for (size_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
 				device->createBuffer(
 					matBufferSize,
@@ -2565,7 +2647,7 @@ void VulkanApplication::createRayTracingDescriptorSetLayout()
 
 	bindings[8].binding = 8;
 	bindings[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	bindings[8].descriptorCount = 16;
+	bindings[8].descriptorCount = 32;
 	bindings[8].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 	bindings[8].pImmutableSamplers = nullptr;
 
@@ -2599,7 +2681,7 @@ void VulkanApplication::createRayTracingDescriptorPool()
 	poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	poolSizes[3].descriptorCount = 4;
 	poolSizes[4].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	poolSizes[4].descriptorCount = 17;
+	poolSizes[4].descriptorCount = 33;
 
 	VkDescriptorPoolCreateInfo poolInfo{};
 	poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2619,14 +2701,10 @@ void VulkanApplication::createRayTracingDescriptorSet()
 	if (!rayTracingAS || rayTracingAS->getTLAS().handle == VK_NULL_HANDLE) {
 		return;
 	}
-	LoadedObject* rtObj = nullptr;
-	for (auto& obj : loadedObjects) {
-		if (obj.loaded && obj.model.indexBuffer != VK_NULL_HANDLE && obj.model.rtVertexBuffer != VK_NULL_HANDLE) {
-			rtObj = &obj;
-			break;
-		}
+
+	if (rtCombinedIndexBuffer == VK_NULL_HANDLE || rtCombinedVertexBuffer == VK_NULL_HANDLE) {
+		return;
 	}
-	if (!rtObj) return;
 
 	if (rayTracingPrimitiveBuffer == VK_NULL_HANDLE || rayTracingMeshBuffer == VK_NULL_HANDLE) {
 		return;
@@ -2666,7 +2744,7 @@ void VulkanApplication::createRayTracingDescriptorSet()
 	VkDescriptorBufferInfo cameraBufferInfo{};
 	cameraBufferInfo.buffer = rayTracingUniformBuffer;
 	cameraBufferInfo.offset = 0;
-	cameraBufferInfo.range = sizeof(glm::mat4) * 5 + sizeof(glm::vec4) + sizeof(GPULight) * MAX_LIGHTS + sizeof(glm::vec4);
+	cameraBufferInfo.range = sizeof(glm::mat4) * 5 + sizeof(glm::vec4) + sizeof(GPULight) * MAX_LIGHTS + sizeof(glm::vec4) + sizeof(glm::vec4);
 
 	VkWriteDescriptorSet imageWrite{};
 	imageWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -2685,12 +2763,12 @@ void VulkanApplication::createRayTracingDescriptorSet()
 	cameraWrite.pBufferInfo = &cameraBufferInfo;
 
 	VkDescriptorBufferInfo indexBufferInfo{};
-	indexBufferInfo.buffer = rtObj->model.indexBuffer;
+	indexBufferInfo.buffer = rtCombinedIndexBuffer;
 	indexBufferInfo.offset = 0;
 	indexBufferInfo.range = VK_WHOLE_SIZE;
 
 	VkDescriptorBufferInfo vertexBufferInfo{};
-	vertexBufferInfo.buffer = rtObj->model.rtVertexBuffer;
+	vertexBufferInfo.buffer = rtCombinedVertexBuffer;
 	vertexBufferInfo.offset = 0;
 	vertexBufferInfo.range = VK_WHOLE_SIZE;
 
@@ -2755,23 +2833,29 @@ void VulkanApplication::createRayTracingDescriptorSet()
 	}
 
 	VkWriteDescriptorSet textureWrite{};
-	std::vector<VkDescriptorImageInfo> texImageInfos(16);
-	for (size_t i = 0; i < 16; i++) {
+	std::vector<VkDescriptorImageInfo> texImageInfos(32);
+	for (size_t i = 0; i < 32; i++) {
 		texImageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		texImageInfos[i].imageView = textureImageView;
 		texImageInfos[i].sampler = textureSampler;
 	}
-	for (size_t i = 0; i < rtObj->model.textures.size() && i < 16; i++) {
-		if (rtObj->model.textures[i].imageView != VK_NULL_HANDLE) {
-			texImageInfos[i].imageView = rtObj->model.textures[i].imageView;
-			texImageInfos[i].sampler = rtObj->model.textures[i].sampler;
+
+	uint32_t texSlot = 0;
+	for (auto& obj : loadedObjects) {
+		if (!obj.loaded) continue;
+		for (size_t i = 0; i < obj.model.textures.size() && texSlot < 32; i++) {
+			if (obj.model.textures[i].imageView != VK_NULL_HANDLE) {
+				texImageInfos[texSlot].imageView = obj.model.textures[i].imageView;
+				texImageInfos[texSlot].sampler = obj.model.textures[i].sampler;
+			}
+			texSlot++;
 		}
 	}
 	textureWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 	textureWrite.dstSet = rayTracingDescriptorSet;
 	textureWrite.dstBinding = 8;
 	textureWrite.dstArrayElement = 0;
-	textureWrite.descriptorCount = 16;
+	textureWrite.descriptorCount = 32;
 	textureWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	textureWrite.pImageInfo = texImageInfos.data();
 
@@ -2870,6 +2954,20 @@ void VulkanApplication::createGraphicsPipeline()
 		"Shaders/brdf.frag.spv",
 		pipelineConfig
 	);
+
+	PipelineConfigInfo transparentConfig{};
+	VulkanPipeline::defaultPipelineConfigInfo(transparentConfig);
+	transparentConfig.renderPass = renderPass;
+	transparentConfig.pipelineLayout = pipelineLayout;
+	VulkanPipeline::enableAlphaBlending(transparentConfig);
+	transparentConfig.depthStencilInfo.depthWriteEnable = VK_FALSE;
+	transparentPipeline = std::make_unique<VulkanPipeline>(
+		device.get(),
+		"Shaders/shader.vert.spv",
+		"Shaders/brdf.frag.spv",
+		transparentConfig
+	);
+
 	PipelineConfigInfo additiveConfig{};
 	VulkanPipeline::defaultPipelineConfigInfo(additiveConfig);
 	additiveConfig.renderPass = renderPass;

@@ -28,6 +28,8 @@ struct MaterialUBO {
     float roughnessFactor;
     float clearCoatFactor;
     float clearCoatRoughness;
+    float3 baseColor;
+    float alpha;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<UniformBufferObject> ubo;
@@ -171,7 +173,9 @@ float3 calculateSpotLight(GPULight light, float3 normal, float3 viewDir, float3 
 PSOutput main(PSInput input) {
     PSOutput output;
 
-    float3 albedo = texSampler.Sample(input.fragTexCoord).rgb * input.fragColor;
+    float4 texSample = texSampler.Sample(input.fragTexCoord);
+    float3 albedo = texSample.rgb * material.baseColor * input.fragColor;
+    float alpha = texSample.a * material.alpha;
     float3 normal = normalize(input.fragNormal);
     float3 viewDir = normalize(ubo.viewPos.xyz - input.fragWorldPos);
 
@@ -222,6 +226,6 @@ PSOutput main(PSInput input) {
 
     // Reinhard tone mapping
     result = result / (result + float3(1.0, 1.0, 1.0));
-    output.outColor = float4(result, 1.0);
+    output.outColor = float4(result, alpha);
     return output;
 }
