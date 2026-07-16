@@ -38,7 +38,7 @@ struct PrimitiveInfo
     float emissiveG;
     float emissiveB;
     uint vertexOffset;
-    uint pad0;
+    int emssiveTextureIndex;
 };
 
 struct MeshInfo
@@ -110,10 +110,14 @@ void main()
     } else {
         albedo = baseColor;
     }
-
+    vec3 emissiveColor = vec3(primInfo.emissiveR, primInfo.emissiveG, primInfo.emissiveB);
+    int emissiveTexIdx = primInfo.emssiveTextureIndex;
+    if(emissiveTexIdx >= 0) {
+        emissiveColor *= texture(textures[nonuniformEXT(emissiveTexIdx)], uv).rgb;
+    }
     payload.normal = normal;
     payload.color = albedo;
     payload.metallic = primInfo.metallicFactor;
     payload.roughness = primInfo.roughnessFactor;
-    payload.emissiveColor = vec3(primInfo.emissiveR, primInfo.emissiveG, primInfo.emissiveB);
+    payload.emissiveColor = emissiveColor;
 }

@@ -122,7 +122,7 @@ private:
 		float emissiveG;
 		float emissiveB;
 		uint32_t vertexOffset;
-		uint32_t pad0;
+		int32_t emissionTextureIndex;
 	};
 	struct RayTracingMeshInfo {
 		uint32_t primitiveOffset;

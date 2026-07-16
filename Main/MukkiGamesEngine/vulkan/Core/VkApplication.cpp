@@ -97,6 +97,9 @@ void VulkanApplication::createRayTracingGeometryBuffers()
 					roughness = mat.roughnessFactor;
 					baseColor = glm::vec3(mat.baseColorFactor);
 					emissive = mat.emissiveFactor;
+					int32_t emissiveTexIdx = mat.emissiveTextureIndex;
+					primInfo.emissionTextureIndex = (emissiveTexIdx >= 0 && textureOffset + static_cast<uint32_t>(emissiveTexIdx) < 16)
+                        ? static_cast<int32_t>(textureOffset) + emissiveTexIdx : -1;
 				}
 				primInfo.textureIndex = (texIdx >= 0 && textureOffset + static_cast<uint32_t>(texIdx) < 16)
 					? static_cast<int32_t>(textureOffset) + texIdx : -1;
@@ -109,7 +112,6 @@ void VulkanApplication::createRayTracingGeometryBuffers()
 				primInfo.emissiveG = emissive.g;
 				primInfo.emissiveB = emissive.b;
 				primInfo.vertexOffset = vertexOffset;
-				primInfo.pad0 = 0;
 				primitiveInfos.push_back(primInfo);
 			}
 
