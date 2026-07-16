@@ -3,7 +3,7 @@
 
 #include "MukkiGamesEngine.h"
 #include "Renderer/VulkanRenderer.h"
-using namespace std;
+
 
 int main(int argc, char* argv[])
 {

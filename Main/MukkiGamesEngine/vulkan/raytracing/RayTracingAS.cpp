@@ -392,7 +392,8 @@ void RayTracingAS::buildTLASAll(const std::vector<LoadedObject>& loadedObjects, 
             if (blas.deviceAddress == 0) continue;
 
             VkTransformMatrixKHR transform{};
-            auto matrix = glm::mat3x4(glm::transpose(node.worldTransform));
+            glm::mat4 finalTransform = obj.transform.getModelMatrix() * node.worldTransform;
+            auto matrix = glm::mat3x4(glm::transpose(finalTransform));
             memcpy(transform.matrix, &matrix, sizeof(matrix));
 
             VkAccelerationStructureInstanceKHR instance{};

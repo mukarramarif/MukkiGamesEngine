@@ -610,8 +610,10 @@ void VulkanApplication::createDefaultMaterialUniformBuffers()
 	defaultMaterial.roughnessFactor = 1.0f;
 	defaultMaterial.clearCoatFactor = 0.0f;
 	defaultMaterial.clearCoatRoughness = 0.0f;
-	defaultMaterial.clearCoatFactor = 0.0f;
-	defaultMaterial.clearCoatRoughness = 0.0f;
+	defaultMaterial.baseColorR = 1.0f;
+	defaultMaterial.baseColorG = 1.0f;
+	defaultMaterial.baseColorB = 1.0f;
+	defaultMaterial.alpha = 1.0f;
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		device->createBuffer(
 			bufferSize,
@@ -809,6 +811,7 @@ void VulkanApplication::drawFrame()
 			}
 
 			VkPipeline mainPipeline = graphicsPipeline->getGraphicsPipeline();
+			VkPipeline transparentPipe = transparentPipeline ? transparentPipeline->getGraphicsPipeline() : VK_NULL_HANDLE;
 			VkPipeline addPipeline = additivePipeline ? additivePipeline->getGraphicsPipeline() : VK_NULL_HANDLE;
 
 			commandBufferManager->beginModelRenderPass(
@@ -830,7 +833,9 @@ void VulkanApplication::drawFrame()
 						obj.model,
 						pipelineLayout,
 						mainPipeline,
+						transparentPipe,
 						addPipeline,
+						camera->position,
 						obj.descriptorSets,
 						currentFrame);
 				}
@@ -957,6 +962,7 @@ void VulkanApplication::recreateSwapChain()
 
 	// Cleanup old graphics pipeline
 	graphicsPipeline.reset();
+	transparentPipeline.reset();
 	additivePipeline.reset();
 
 	// Cleanup old swap chain
@@ -2262,6 +2268,10 @@ LoadedObject VulkanApplication::createLoadedObject(const SceneObject& sceneObj)
 			materialData.roughnessFactor = obj.model.materials[matIndex].roughnessFactor;
 			materialData.clearCoatFactor = 1.0f;
 			materialData.clearCoatRoughness = 0.5f;
+			materialData.baseColorR = obj.model.materials[matIndex].baseColorFactor.r;
+			materialData.baseColorG = obj.model.materials[matIndex].baseColorFactor.g;
+			materialData.baseColorB = obj.model.materials[matIndex].baseColorFactor.b;
+			materialData.alpha = obj.model.materials[matIndex].baseColorFactor.a;
 			for (size_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
 				device->createBuffer(
 					matBufferSize,
@@ -2942,6 +2952,20 @@ void VulkanApplication::createGraphicsPipeline()
 		"Shaders/brdf.frag.spv",
 		pipelineConfig
 	);
+
+	PipelineConfigInfo transparentConfig{};
+	VulkanPipeline::defaultPipelineConfigInfo(transparentConfig);
+	transparentConfig.renderPass = renderPass;
+	transparentConfig.pipelineLayout = pipelineLayout;
+	VulkanPipeline::enableAlphaBlending(transparentConfig);
+	transparentConfig.depthStencilInfo.depthWriteEnable = VK_FALSE;
+	transparentPipeline = std::make_unique<VulkanPipeline>(
+		device.get(),
+		"Shaders/shader.vert.spv",
+		"Shaders/brdf.frag.spv",
+		transparentConfig
+	);
+
 	PipelineConfigInfo additiveConfig{};
 	VulkanPipeline::defaultPipelineConfigInfo(additiveConfig);
 	additiveConfig.renderPass = renderPass;

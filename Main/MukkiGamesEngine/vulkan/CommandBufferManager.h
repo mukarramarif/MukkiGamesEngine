@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan.h>
 #include <vector>
+#include <glm/glm.hpp>
 #include "Core/VkDevice.h"
 class UIManager;
 class SkyBox;
@@ -44,7 +45,9 @@ public:
 		const Model& model,
 		VkPipelineLayout pipelineLayout,
 		VkPipeline graphicsPipeline,
+		VkPipeline transparentPipeline,
 		VkPipeline additivePipeline,
+		const glm::vec3& cameraPosition,
 		const std::vector<std::vector<VkDescriptorSet>>& materialDescriptorSets,
 		uint32_t currentFrame);
 

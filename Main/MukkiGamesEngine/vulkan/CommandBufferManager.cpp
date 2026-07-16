@@ -5,6 +5,9 @@
 #include <stdexcept>
 #include <array>
 #include <vector>
+#include <algorithm>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <iostream> // For diagnostics
 
 CommandBufferManager::CommandBufferManager()
@@ -262,7 +265,9 @@ void CommandBufferManager::recordModelDrawCommands(
 	const Model& model,
 	VkPipelineLayout pipelineLayout,
 	VkPipeline graphicsPipeline,
+	VkPipeline transparentPipeline,
 	VkPipeline additivePipeline,
+	const glm::vec3& cameraPosition,
 	const std::vector<std::vector<VkDescriptorSet>>& materialDescriptorSets,
 	uint32_t currentFrame)
 {
@@ -273,16 +278,11 @@ void CommandBufferManager::recordModelDrawCommands(
 
 	VkPipeline currentPipeline = VK_NULL_HANDLE;
 
-	// First pass: Render opaque and standard alpha blended meshes
+	// First pass: Render all opaque meshes
 	for (const auto& mesh : model.opaqueMeshIndices) {
 		const auto& meshRef = model.meshes[mesh];
 		for (const auto& primitive : meshRef.primitives) {
 			int32_t matIndex = primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
-
-			if (matIndex < static_cast<int32_t>(model.materials.size()) &&
-				model.materials[matIndex].isEmissive) {
-				continue;
-			}
 
 			if (currentPipeline != graphicsPipeline) {
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
@@ -305,7 +305,77 @@ void CommandBufferManager::recordModelDrawCommands(
 		}
 	}
 
-	// Second pass: Render emissive/light flare meshes with additive blending
+	// Second pass: Render transparent non-emissive meshes (glass, etc.) back-to-front
+	if (transparentPipeline != VK_NULL_HANDLE) {
+		struct TransparentDraw {
+			size_t meshIndex;
+			float distance;
+		};
+		std::vector<TransparentDraw> transparentDraws;
+
+		for (const auto& meshIdx : model.transparentMeshIndices) {
+			const auto& meshRef = model.meshes[meshIdx];
+			bool hasNonEmissivePrimitive = false;
+			for (const auto& primitive : meshRef.primitives) {
+				int32_t matIndex = primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
+				if (matIndex < static_cast<int32_t>(model.materials.size()) &&
+					!model.materials[matIndex].isEmissive) {
+					hasNonEmissivePrimitive = true;
+					break;
+				}
+			}
+			if (!hasNonEmissivePrimitive) continue;
+
+			float distance = 0.0f;
+			for (const auto& node : model.nodes) {
+				if (static_cast<size_t>(node.meshIndex) == meshIdx) {
+					glm::vec3 worldPos = glm::vec3(node.worldTransform[3]);
+					distance = glm::distance(cameraPosition, worldPos);
+					break;
+				}
+			}
+
+			transparentDraws.push_back({ meshIdx, distance });
+		}
+
+		std::sort(transparentDraws.begin(), transparentDraws.end(),
+			[](const TransparentDraw& a, const TransparentDraw& b) {
+				return a.distance > b.distance;
+			});
+
+		for (const auto& td : transparentDraws) {
+			const auto& meshRef = model.meshes[td.meshIndex];
+			for (const auto& primitive : meshRef.primitives) {
+				int32_t matIndex = primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
+
+				if (matIndex >= static_cast<int32_t>(model.materials.size()) ||
+					model.materials[matIndex].isEmissive) {
+					continue;
+				}
+
+				if (currentPipeline != transparentPipeline) {
+					vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, transparentPipeline);
+					currentPipeline = transparentPipeline;
+				}
+
+				if (matIndex < static_cast<int32_t>(materialDescriptorSets.size())) {
+					vkCmdBindDescriptorSets(
+						commandBuffer,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						pipelineLayout,
+						0,
+						1,
+						&materialDescriptorSets[matIndex][currentFrame],
+						0,
+						nullptr);
+				}
+
+				vkCmdDrawIndexed(commandBuffer, primitive.indexCount, 1, primitive.firstIndex, 0, 0);
+			}
+		}
+	}
+
+	// Third pass: Render emissive/light flare meshes with additive blending
 	for (const auto& mesh : model.transparentMeshIndices) {
 		const auto& meshRef = model.meshes[mesh];
 		for (const auto& primitive : meshRef.primitives) {

@@ -75,6 +75,7 @@ private:
 	std::unique_ptr<VulkanRenderPass> renderPassObj;
 	VkRenderPass renderPass = VK_NULL_HANDLE;
 	std::unique_ptr<VulkanPipeline> graphicsPipeline;
+	std::unique_ptr<VulkanPipeline> transparentPipeline;
 	std::unique_ptr<VulkanPipeline> additivePipeline;
 	// Pipeline layout and descriptor set layout (now managed here)
 	VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;

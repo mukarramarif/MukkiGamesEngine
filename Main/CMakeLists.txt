@@ -126,7 +126,8 @@ target_include_directories(MukkiGamesEngine PRIVATE "${CMAKE_SOURCE_DIR}/MukkiGa
 
 # Helper to compile GLSL to SPIR-V. Usage: add_shaders(<target> Shaders/foo.vert Shaders/bar.frag)
 target_compile_definitions(MukkiGamesEngine PRIVATE
-    ASSETS_PATH="${CMAKE_SOURCE_DIR}/MukkiGamesEngine/Assets/")
+    ASSETS_PATH="${CMAKE_SOURCE_DIR}/MukkiGamesEngine/Assets/"
+    TINYGLTF_USE_STB_IMAGE)
 
 function(add_shaders TARGET_NAME)
   set(SHADER_SOURCE_FILES ${ARGN})
