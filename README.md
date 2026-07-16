@@ -4,15 +4,18 @@
 
 * RayTracing 
 <img width="1270" height="1064" alt="image" src="https://github.com/user-attachments/assets/dc16d9ab-dbad-4029-9b07-7ac9f490b848" />
-<img width="2963" height="1073" alt="image" src="https://github.com/user-attachments/assets/e0f609d8-20f7-495c-a70b-4bbb9ec5359b" />
+<img width="3374" height="1269" alt="Screenshot 2026-07-16 181014" src="https://github.com/user-attachments/assets/6d16b9e0-e32f-410a-bea8-64eb5d91c19f" />
+
 
 
 * Shadows
 <img width="1377" height="868" alt="image" src="https://github.com/user-attachments/assets/57b37e72-8c3d-4592-a70a-0bd81c77bafe" />
 
 * BRDF Basic Shine
+<img width="2347" height="866" alt="Screenshot 2026-07-16 181129" src="https://github.com/user-attachments/assets/3e85b0fc-a9b4-483b-91f8-00d55163a58b" />
 <img width="1558" height="1348" alt="image" src="https://github.com/user-attachments/assets/32bfceeb-bcfc-42e4-bcdb-bc2d0bddc939" />
 
+![Uploading Screenshot 2026-07-16 181129.png…]()
 
 * CubeMap
 
