@@ -89,12 +89,13 @@ cd build-debug
     - [x] SceneObject
     - [ ] Shader hot reloading
 - [x] Basic raytracing pipeline (TLAS/BLAS, SBT, rgen/rmiss/rchit shaders)
-- [ ] RT lighting with shadows and BRDF
-	- [ ] BRDF
- 	- [ ] Shadows	
+- [x] RT lighting with shadows and BRDF
+	- [x] BRDF
+ 	- [] Shadows	
 - [x] RT cubemap skydome fallback
 - [ ] looking into SIMD
 - [ ] multithreading for rendering and resource loading
+	- [x] std::async for model loading	
 
 ## Fixes
 - [x] recreating swapchain on window resize
