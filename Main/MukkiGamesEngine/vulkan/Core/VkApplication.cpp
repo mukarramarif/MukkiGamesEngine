@@ -2203,14 +2203,38 @@ void VulkanApplication::loadSceneObjects()
 {
 	const auto& sceneObjects = sceneLoader->getObjects();
 	destroyAllLoadedObjects();
+
+	// Phase 1: Launch all model loads concurrently
+	struct AsyncLoad {
+		LoadedObject obj;
+		std::future<bool> future;
+	};
+	std::vector<AsyncLoad> asyncLoads;
+	asyncLoads.reserve(sceneObjects.size());
+
 	for (const auto& sceneObj : sceneObjects) {
 		if (!sceneObj.modelPath.empty()) {
-			LoadedObject obj = createLoadedObject(sceneObj);
-			if (obj.loaded) {
-				loadedObjects.push_back(std::move(obj));
+			asyncLoads.emplace_back();
+			AsyncLoad& al = asyncLoads.back();
+			al.obj.transform = sceneObj.modelTransform;
+			al.obj.physics = sceneObj.physics;
+			al.obj.sceneObjectId = sceneObj.id;
+			std::string fullPath = std::string(ASSETS_PATH) + sceneObj.modelPath;
+			al.future = objectLoader->loadGLTFAsync(fullPath, al.obj.model);
+		}
+	}
+
+	// Phase 2: Wait for all loads to complete and create GPU resources
+	for (auto& al : asyncLoads) {
+		if (al.future.get()) {
+			al.obj.loaded = true;
+			createLoadedObjectBuffers(al.obj);
+			if (al.obj.loaded) {
+				loadedObjects.push_back(std::move(al.obj));
 			}
 		}
 	}
+
 	createRayTracingGeometryBuffers();
 	if (rayTracingAS) {
 		rayTracingAS->clearBLAS();
@@ -2224,19 +2248,8 @@ void VulkanApplication::loadSceneObjects()
 	}
 }
 
-LoadedObject VulkanApplication::createLoadedObject(const SceneObject& sceneObj)
+void VulkanApplication::createLoadedObjectBuffers(LoadedObject& obj)
 {
-	LoadedObject obj;
-	obj.transform = sceneObj.modelTransform;
-	obj.physics = sceneObj.physics;
-	obj.sceneObjectId = sceneObj.id;
-
-	std::string fullPath = std::string(ASSETS_PATH) + sceneObj.modelPath;
-	if (!objectLoader->loadGLTF(fullPath, obj.model)) {
-		std::cerr << "Failed to load model: " << fullPath << std::endl;
-		return obj;
-	}
-
 	objectLoader->createModelBuffers(obj.model);
 
 	VkDeviceSize bufferSize = sizeof(UniformBufferObject);
@@ -2382,8 +2395,6 @@ LoadedObject VulkanApplication::createLoadedObject(const SceneObject& sceneObj)
 	}
 
 	obj.loaded = true;
-	std::cout << "Loaded object: " << sceneObj.name << " (" << sceneObj.modelPath << ")" << std::endl;
-	return obj;
 }
 
 void VulkanApplication::destroyLoadedObject(LoadedObject& obj)

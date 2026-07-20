@@ -8,6 +8,8 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <future>
+#include <mutex>
 
 #include "../Core/VkDevice.h"
 #include "../objects/vertex.h"
@@ -104,6 +106,7 @@ public:
 	void cleanup();
 	
 	bool loadGLTF(const std::string& filepath, Model& outModel);
+	std::future<bool> loadGLTFAsync(const std::string& filepath, Model& outModel);
 	void createModelBuffers(Model& model);
 	void destroyModel(Model& model);
 
@@ -112,8 +115,6 @@ private:
 	TextureManager* textureManager = nullptr;
 	BufferManager* bufferManager = nullptr;
 	
-	// Store the base path for resolving relative texture paths
-	std::string basePath;
 	
 	void loadNode(const tinygltf::Model& gltfModel, const tinygltf::Node& gltfNode, 
 	              int nodeIndex, Model& model, const glm::mat4& parentTransform);
@@ -123,12 +124,23 @@ private:
 	void loadTextures(const tinygltf::Model& gltfModel, Model& model);
 	
 	// Texture loading helpers
-	void loadTextureFromGLTF(const tinygltf::Model& gltfModel, int textureIndex, 
-	                         LoadedTexture& outTexture);
-	void createTextureFromBuffer(const unsigned char* buffer, int width, int height, 
-	                             int channels, LoadedTexture& outTexture);
+	void uploadTextureToGPU(const unsigned char* pixelData, int width, int height,
+	                        LoadedTexture& outTexture);
 	VkSamplerAddressMode getVkWrapMode(int wrapMode);
 	VkFilter getVkFilterMode(int filterMode);
 	
 	glm::mat4 getNodeTransform(const tinygltf::Node& node);
+
+	// Primitive data collected in parallel, then merged
+	struct PrimitiveData {
+		std::vector<Vertex> vertices;
+		std::vector<RayTracingVertex> rtVertices;
+		std::vector<uint32_t> indices;
+		uint32_t vertexCount;
+		uint32_t indexCount;
+	};
+	PrimitiveData loadPrimitiveData(const tinygltf::Model& gltfModel,
+	                                const tinygltf::Primitive& primitive,
+	                                const glm::mat4& worldTransform,
+	                                const glm::mat3& normalMatrix);
 };
