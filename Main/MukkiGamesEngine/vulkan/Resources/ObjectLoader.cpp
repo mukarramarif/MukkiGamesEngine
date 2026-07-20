@@ -4,6 +4,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <filesystem>
+#include <future>
 
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
@@ -26,21 +27,21 @@ void ObjectLoader::cleanup()
 {
 }
 
+std::future<bool> ObjectLoader::loadGLTFAsync(const std::string& filepath, Model& outModel)
+{
+	return std::async(std::launch::async, [this, filepath, &outModel]() {
+		return loadGLTF(filepath, outModel);
+	});
+}
+
 bool ObjectLoader::loadGLTF(const std::string& filepath, Model& outModel)
 {
 	tinygltf::Model gltfModel;
 	tinygltf::TinyGLTF loader;
 	std::string err, warn;
 
-	// Store base path for texture loading
-	basePath = std::filesystem::path(filepath).parent_path().string();
-	if (!basePath.empty() && basePath.back() != '/' && basePath.back() != '\\') {
-		basePath += '/';
-	}
-
 	bool result = false;
 
-	// Check file extension to determine binary or ASCII format
 	if (filepath.find(".glb") != std::string::npos) {
 		result = loader.LoadBinaryFromFile(&gltfModel, &err, &warn, filepath);
 	} else {
@@ -68,16 +69,11 @@ bool ObjectLoader::loadGLTF(const std::string& filepath, Model& outModel)
 	std::cout << "  Images: " << gltfModel.images.size() << std::endl;
 	std::cout << "  Nodes: " << gltfModel.nodes.size() << std::endl;
 
-	// Load textures first (materials reference them)
 	loadTextures(gltfModel, outModel);
-
-	// Load materials
 	loadMaterials(gltfModel, outModel);
 
-	// Initialize nodes
 	outModel.nodes.resize(gltfModel.nodes.size());
 
-	// Process the default scene
 	const tinygltf::Scene& scene = gltfModel.scenes[gltfModel.defaultScene > -1 ? gltfModel.defaultScene : 0];
 
 	for (int nodeIndex : scene.nodes) {
@@ -111,110 +107,118 @@ bool ObjectLoader::loadGLTF(const std::string& filepath, Model& outModel)
 
 void ObjectLoader::loadTextures(const tinygltf::Model& gltfModel, Model& model)
 {
-	model.textures.resize(gltfModel.textures.size());
+	size_t textureCount = gltfModel.textures.size();
+	model.textures.resize(textureCount);
 
-	for (size_t i = 0; i < gltfModel.textures.size(); i++) {
-		std::cout << "  Loading texture " << i << "..." << std::endl;
-		loadTextureFromGLTF(gltfModel, static_cast<int>(i), model.textures[i]);
+	// Phase 1: Convert pixel data in parallel
+	std::vector<std::vector<unsigned char>> convertedBuffers(textureCount);
+	std::vector<int> widths(textureCount);
+	std::vector<int> heights(textureCount);
+	std::vector<std::future<void>> conversions;
+
+	for (size_t i = 0; i < textureCount; i++) {
+		const tinygltf::Texture& gltfTexture = gltfModel.textures[i];
+		const tinygltf::Image& gltfImage = gltfModel.images[gltfTexture.source];
+
+		if (gltfImage.image.empty() || gltfImage.width == 0 || gltfImage.height == 0) {
+			continue;
+		}
+
+		widths[i] = gltfImage.width;
+		heights[i] = gltfImage.height;
+
+		conversions.push_back(std::async(std::launch::async, [&gltfImage, &convertedBuffers, i]() {
+			int channels = gltfImage.component;
+			int pixelCount = gltfImage.width * gltfImage.height;
+
+			if (channels == 3) {
+				convertedBuffers[i].resize(pixelCount * 4);
+				for (int j = 0; j < pixelCount; j++) {
+					convertedBuffers[i][j * 4 + 0] = gltfImage.image[j * 3 + 0];
+					convertedBuffers[i][j * 4 + 1] = gltfImage.image[j * 3 + 1];
+					convertedBuffers[i][j * 4 + 2] = gltfImage.image[j * 3 + 2];
+					convertedBuffers[i][j * 4 + 3] = 255;
+				}
+			} else if (channels == 1) {
+				convertedBuffers[i].resize(pixelCount * 4);
+				for (int j = 0; j < pixelCount; j++) {
+					convertedBuffers[i][j * 4 + 0] = gltfImage.image[j];
+					convertedBuffers[i][j * 4 + 1] = gltfImage.image[j];
+					convertedBuffers[i][j * 4 + 2] = gltfImage.image[j];
+					convertedBuffers[i][j * 4 + 3] = 255;
+				}
+			}
+		}));
+	}
+
+	for (auto& f : conversions) {
+		f.get();
+	}
+
+	// Phase 2: Upload textures to GPU sequentially
+	for (size_t i = 0; i < textureCount; i++) {
+		const tinygltf::Texture& gltfTexture = gltfModel.textures[i];
+		const tinygltf::Image& gltfImage = gltfModel.images[gltfTexture.source];
+
+		if (gltfImage.image.empty() || gltfImage.width == 0 || gltfImage.height == 0) {
+			std::cerr << "Invalid image data for texture " << i << std::endl;
+			continue;
+		}
+
+		int channels = gltfImage.component;
+		LoadedTexture& outTexture = model.textures[i];
+		outTexture.width = static_cast<uint32_t>(widths[i]);
+		outTexture.height = static_cast<uint32_t>(heights[i]);
+
+		const unsigned char* pixelData = channels == 4
+			? gltfImage.image.data()
+			: convertedBuffers[i].data();
+
+		uploadTextureToGPU(pixelData, widths[i], heights[i], outTexture);
+
+		VkSamplerCreateInfo samplerInfo{};
+		samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+
+		if (gltfTexture.sampler >= 0 && gltfTexture.sampler < static_cast<int>(gltfModel.samplers.size())) {
+			const tinygltf::Sampler& gltfSampler = gltfModel.samplers[gltfTexture.sampler];
+			samplerInfo.magFilter = getVkFilterMode(gltfSampler.magFilter);
+			samplerInfo.minFilter = getVkFilterMode(gltfSampler.minFilter);
+			samplerInfo.addressModeU = getVkWrapMode(gltfSampler.wrapS);
+			samplerInfo.addressModeV = getVkWrapMode(gltfSampler.wrapT);
+		} else {
+			samplerInfo.magFilter = VK_FILTER_LINEAR;
+			samplerInfo.minFilter = VK_FILTER_LINEAR;
+			samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+			samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		}
+
+		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		samplerInfo.anisotropyEnable = VK_TRUE;
+
+		VkPhysicalDeviceProperties properties{};
+		vkGetPhysicalDeviceProperties(device->getPhysicalDevice(), &properties);
+		samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+
+		samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+		samplerInfo.unnormalizedCoordinates = VK_FALSE;
+		samplerInfo.compareEnable = VK_FALSE;
+		samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		samplerInfo.mipLodBias = 0.0f;
+		samplerInfo.minLod = 0.0f;
+		samplerInfo.maxLod = 0.0f;
+
+		if (vkCreateSampler(device->getDevice(), &samplerInfo, nullptr, &outTexture.sampler) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create texture sampler!");
+		}
 	}
 }
 
-void ObjectLoader::loadTextureFromGLTF(const tinygltf::Model& gltfModel, int textureIndex,
-                                        LoadedTexture& outTexture)
+void ObjectLoader::uploadTextureToGPU(const unsigned char* pixelData, int width, int height,
+                                      LoadedTexture& outTexture)
 {
-	const tinygltf::Texture& gltfTexture = gltfModel.textures[textureIndex];
-	const tinygltf::Image& gltfImage = gltfModel.images[gltfTexture.source];
-
-	// Get image data - tinygltf already decodes the image
-	const unsigned char* buffer = gltfImage.image.data();
-	int width = gltfImage.width;
-	int height = gltfImage.height;
-	int channels = gltfImage.component;
-
-	if (buffer == nullptr || width == 0 || height == 0) {
-		std::cerr << "Invalid image data for texture " << textureIndex << std::endl;
-		return;
-	}
-
-	std::cout << "    Image: " << width << "x" << height << ", " << channels << " channels" << std::endl;
-
-	// Create the texture
-	createTextureFromBuffer(buffer, width, height, channels, outTexture);
-
-	// Create sampler based on glTF sampler settings
-	VkSamplerCreateInfo samplerInfo{};
-	samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-
-	if (gltfTexture.sampler >= 0 && gltfTexture.sampler < static_cast<int>(gltfModel.samplers.size())) {
-		const tinygltf::Sampler& gltfSampler = gltfModel.samplers[gltfTexture.sampler];
-		samplerInfo.magFilter = getVkFilterMode(gltfSampler.magFilter);
-		samplerInfo.minFilter = getVkFilterMode(gltfSampler.minFilter);
-		samplerInfo.addressModeU = getVkWrapMode(gltfSampler.wrapS);
-		samplerInfo.addressModeV = getVkWrapMode(gltfSampler.wrapT);
-	} else {
-		// Default sampler settings
-		samplerInfo.magFilter = VK_FILTER_LINEAR;
-		samplerInfo.minFilter = VK_FILTER_LINEAR;
-		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-	}
-
-	samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-	samplerInfo.anisotropyEnable = VK_TRUE;
-
-	VkPhysicalDeviceProperties properties{};
-	vkGetPhysicalDeviceProperties(device->getPhysicalDevice(), &properties);
-	samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
-
-	samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-	samplerInfo.unnormalizedCoordinates = VK_FALSE;
-	samplerInfo.compareEnable = VK_FALSE;
-	samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-	samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-	samplerInfo.mipLodBias = 0.0f;
-	samplerInfo.minLod = 0.0f;
-	samplerInfo.maxLod = 0.0f;
-
-	if (vkCreateSampler(device->getDevice(), &samplerInfo, nullptr, &outTexture.sampler) != VK_SUCCESS) {
-		throw std::runtime_error("failed to create texture sampler!");
-	}
-}
-
-void ObjectLoader::createTextureFromBuffer(const unsigned char* buffer, int width, int height,
-                                            int channels, LoadedTexture& outTexture)
-{
-	outTexture.width = static_cast<uint32_t>(width);
-	outTexture.height = static_cast<uint32_t>(height);
-
-	// Always use RGBA format - convert if necessary
 	VkDeviceSize imageSize = static_cast<VkDeviceSize>(width) * height * 4;
-	std::vector<unsigned char> rgbaBuffer;
 
-	const unsigned char* pixelData = buffer;
-
-	// Convert to RGBA if not already
-	if (channels == 3) {
-		rgbaBuffer.resize(width * height * 4);
-		for (int i = 0; i < width * height; i++) {
-			rgbaBuffer[i * 4 + 0] = buffer[i * 3 + 0];
-			rgbaBuffer[i * 4 + 1] = buffer[i * 3 + 1];
-			rgbaBuffer[i * 4 + 2] = buffer[i * 3 + 2];
-			rgbaBuffer[i * 4 + 3] = 255;
-		}
-		pixelData = rgbaBuffer.data();
-	} else if (channels == 1) {
-		// Grayscale to RGBA
-		rgbaBuffer.resize(width * height * 4);
-		for (int i = 0; i < width * height; i++) {
-			rgbaBuffer[i * 4 + 0] = buffer[i];
-			rgbaBuffer[i * 4 + 1] = buffer[i];
-			rgbaBuffer[i * 4 + 2] = buffer[i];
-			rgbaBuffer[i * 4 + 3] = 255;
-		}
-		pixelData = rgbaBuffer.data();
-	}
-
-	// Create staging buffer
 	VkBuffer stagingBuffer;
 	VkDeviceMemory stagingBufferMemory;
 
@@ -226,13 +230,11 @@ void ObjectLoader::createTextureFromBuffer(const unsigned char* buffer, int widt
 		stagingBufferMemory
 	);
 
-	// Copy pixel data to staging buffer
 	void* data;
 	vkMapMemory(device->getDevice(), stagingBufferMemory, 0, imageSize, 0, &data);
 	memcpy(data, pixelData, static_cast<size_t>(imageSize));
 	vkUnmapMemory(device->getDevice(), stagingBufferMemory);
 
-	// Create image using TextureManager
 	textureManager->createImage(
 		static_cast<uint32_t>(width),
 		static_cast<uint32_t>(height),
@@ -244,7 +246,6 @@ void ObjectLoader::createTextureFromBuffer(const unsigned char* buffer, int widt
 		outTexture.memory
 	);
 
-	// Transition and copy
 	textureManager->transitionImageLayout(
 		outTexture.image,
 		VK_FORMAT_R8G8B8A8_SRGB,
@@ -266,14 +267,12 @@ void ObjectLoader::createTextureFromBuffer(const unsigned char* buffer, int widt
 		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
 	);
 
-	// Create image view
 	outTexture.imageView = textureManager->createImageView(
 		outTexture.image,
 		VK_FORMAT_R8G8B8A8_SRGB,
 		VK_IMAGE_ASPECT_COLOR_BIT
 	);
 
-	// Cleanup staging buffer
 	bufferManager->destroyBuffer(stagingBuffer, stagingBufferMemory);
 }
 
@@ -385,151 +384,179 @@ void ObjectLoader::loadNode(const tinygltf::Model& gltfModel, const tinygltf::No
 	}
 }
 
+ObjectLoader::PrimitiveData ObjectLoader::loadPrimitiveData(const tinygltf::Model& gltfModel,
+                                                            const tinygltf::Primitive& primitive,
+                                                            const glm::mat4& worldTransform,
+                                                            const glm::mat3& normalMatrix)
+{
+	PrimitiveData result;
+
+	const float* positionBuffer = nullptr;
+	const float* normalBuffer = nullptr;
+	const float* texCoordBuffer = nullptr;
+	const float* colorBuffer = nullptr;
+	int colorComponentCount = 3;
+
+	if (primitive.attributes.find("POSITION") != primitive.attributes.end()) {
+		const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.attributes.find("POSITION")->second];
+		const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
+		positionBuffer = reinterpret_cast<const float*>(&gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset]);
+		result.vertexCount = static_cast<uint32_t>(accessor.count);
+	}
+
+	if (primitive.attributes.find("NORMAL") != primitive.attributes.end()) {
+		const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.attributes.find("NORMAL")->second];
+		const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
+		normalBuffer = reinterpret_cast<const float*>(&gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset]);
+	}
+
+	if (primitive.attributes.find("TEXCOORD_0") != primitive.attributes.end()) {
+		const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.attributes.find("TEXCOORD_0")->second];
+		const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
+		texCoordBuffer = reinterpret_cast<const float*>(&gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset]);
+	}
+
+	if (primitive.attributes.find("COLOR_0") != primitive.attributes.end()) {
+		const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.attributes.find("COLOR_0")->second];
+		const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
+		colorBuffer = reinterpret_cast<const float*>(&gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset]);
+		colorComponentCount = (accessor.type == TINYGLTF_TYPE_VEC4) ? 4 : 3;
+	}
+
+	result.vertices.reserve(result.vertexCount);
+	result.rtVertices.reserve(result.vertexCount);
+
+	for (uint32_t v = 0; v < result.vertexCount; v++) {
+		Vertex vertex{};
+		RayTracingVertex rtVertex{};
+
+		glm::vec3 localPos = glm::vec3(
+			positionBuffer[v * 3 + 0],
+			positionBuffer[v * 3 + 1],
+			positionBuffer[v * 3 + 2]
+		);
+		glm::vec4 worldPos = worldTransform * glm::vec4(localPos, 1.0f);
+		vertex.pos = glm::vec3(worldPos);
+		rtVertex.position = glm::vec4(localPos, 1.0f);
+
+		if (colorBuffer) {
+			vertex.color = glm::vec3(
+				colorBuffer[v * colorComponentCount + 0],
+				colorBuffer[v * colorComponentCount + 1],
+				colorBuffer[v * colorComponentCount + 2]
+			);
+		} else {
+			vertex.color = glm::vec3(1.0f);
+		}
+
+		if (texCoordBuffer) {
+			vertex.texCoord = glm::vec2(
+				texCoordBuffer[v * 2 + 0],
+				texCoordBuffer[v * 2 + 1]
+			);
+		} else {
+			vertex.texCoord = glm::vec2(0.0f);
+		}
+		rtVertex.texCoord = vertex.texCoord;
+
+		glm::vec3 localNormal = glm::vec3(0.0f, 0.0f, 1.0f);
+		if (normalBuffer) {
+			localNormal = glm::vec3(
+				normalBuffer[v * 3 + 0],
+				normalBuffer[v * 3 + 1],
+				normalBuffer[v * 3 + 2]
+			);
+		}
+
+		vertex.normal = normalMatrix * localNormal;
+		rtVertex.normal = glm::vec4(glm::normalize(localNormal), 0.0f);
+
+		result.vertices.push_back(vertex);
+		result.rtVertices.push_back(rtVertex);
+	}
+
+	if (primitive.indices > -1) {
+		const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.indices];
+		const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
+		const void* dataPtr = &gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset];
+
+		result.indexCount = static_cast<uint32_t>(accessor.count);
+		result.indices.reserve(result.indexCount);
+
+		switch (accessor.componentType) {
+		case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: {
+			const uint32_t* buf = static_cast<const uint32_t*>(dataPtr);
+			for (size_t i = 0; i < accessor.count; i++) {
+				result.indices.push_back(buf[i]);
+			}
+			break;
+		}
+		case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
+			const uint16_t* buf = static_cast<const uint16_t*>(dataPtr);
+			for (size_t i = 0; i < accessor.count; i++) {
+				result.indices.push_back(buf[i]);
+			}
+			break;
+		}
+		case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
+			const uint8_t* buf = static_cast<const uint8_t*>(dataPtr);
+			for (size_t i = 0; i < accessor.count; i++) {
+				result.indices.push_back(buf[i]);
+			}
+			break;
+		}
+		default:
+			std::cerr << "Unknown index component type!" << std::endl;
+			break;
+		}
+	}
+
+	return result;
+}
+
 void ObjectLoader::loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Mesh& gltfMesh,
 	Model& model, const glm::mat4& worldTransform)
 {
 	Mesh mesh;
 	mesh.name = gltfMesh.name;
 
-	// Calculate normal matrix for transforming normals (for future lighting)
 	glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
 
+	// Process primitives in parallel
+	size_t primCount = gltfMesh.primitives.size();
+	std::vector<std::future<PrimitiveData>> futures;
+	futures.reserve(primCount);
+
 	for (const auto& primitive : gltfMesh.primitives) {
+		futures.push_back(std::async(std::launch::async, &ObjectLoader::loadPrimitiveData, this,
+		                             std::ref(gltfModel), std::ref(primitive),
+		                             std::ref(worldTransform), std::ref(normalMatrix)));
+	}
+
+	uint32_t vertexOffset = static_cast<uint32_t>(model.vertices.size());
+	uint32_t indexOffset = static_cast<uint32_t>(model.indices.size());
+
+	for (size_t pi = 0; pi < primCount; pi++) {
+		PrimitiveData data = futures[pi].get();
+
 		Primitive prim;
-		prim.firstVertex = static_cast<uint32_t>(model.vertices.size());
-		prim.firstIndex = static_cast<uint32_t>(model.indices.size());
-		prim.materialIndex = primitive.material;
+		prim.firstVertex = vertexOffset;
+		prim.firstIndex = indexOffset;
+		prim.materialIndex = gltfMesh.primitives[pi].material;
+		prim.vertexCount = data.vertexCount;
+		prim.indexCount = data.indexCount;
 
-		uint32_t vertexCount = 0;
-		uint32_t indexCount = 0;
+		// Merge collected data into model
+		model.vertices.insert(model.vertices.end(), data.vertices.begin(), data.vertices.end());
+		model.rtVertices.insert(model.rtVertices.end(), data.rtVertices.begin(), data.rtVertices.end());
 
-		const float* positionBuffer = nullptr;
-		const float* normalBuffer = nullptr;
-		const float* texCoordBuffer = nullptr;
-		const float* colorBuffer = nullptr;
-		int colorComponentCount = 3; // Default to RGB
-
-		if (primitive.attributes.find("POSITION") != primitive.attributes.end()) {
-			const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.attributes.find("POSITION")->second];
-			const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
-			positionBuffer = reinterpret_cast<const float*>(&gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset]);
-			vertexCount = static_cast<uint32_t>(accessor.count);
+		for (uint32_t idx : data.indices) {
+			model.indices.push_back(idx + vertexOffset);
 		}
 
-		if (primitive.attributes.find("NORMAL") != primitive.attributes.end()) {
-			const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.attributes.find("NORMAL")->second];
-			const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
-			normalBuffer = reinterpret_cast<const float*>(&gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset]);
-		}
+		vertexOffset += data.vertexCount;
+		indexOffset += data.indexCount;
 
-		if (primitive.attributes.find("TEXCOORD_0") != primitive.attributes.end()) {
-			const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.attributes.find("TEXCOORD_0")->second];
-			const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
-			texCoordBuffer = reinterpret_cast<const float*>(&gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset]);
-		}
-
-		if (primitive.attributes.find("COLOR_0") != primitive.attributes.end()) {
-			const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.attributes.find("COLOR_0")->second];
-			const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
-			colorBuffer = reinterpret_cast<const float*>(&gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset]);
-			// Check if it's VEC3 or VEC4
-			colorComponentCount = (accessor.type == TINYGLTF_TYPE_VEC4) ? 4 : 3;
-		}
-
-		// Build vertices with world transform applied (raster) and keep local for ray tracing
-		for (uint32_t v = 0; v < vertexCount; v++) {
-			Vertex vertex{};
-			RayTracingVertex rtVertex{};
-
-			glm::vec3 localPos = glm::vec3(
-				positionBuffer[v * 3 + 0],
-				positionBuffer[v * 3 + 1],
-				positionBuffer[v * 3 + 2]
-			);
-			glm::vec4 worldPos = worldTransform * glm::vec4(localPos, 1.0f);
-			vertex.pos = glm::vec3(worldPos);
-			rtVertex.position = glm::vec4(localPos, 1.0f);
-
-			// Vertex color - use actual vertex colors if available, otherwise white
-			// White ensures texture is displayed at full brightness
-			if (colorBuffer) {
-				vertex.color = glm::vec3(
-					colorBuffer[v * colorComponentCount + 0],
-					colorBuffer[v * colorComponentCount + 1],
-					colorBuffer[v * colorComponentCount + 2]
-				);
-			}
-			else {
-				// Default to white so textures render correctly
-				vertex.color = glm::vec3(1.0f);
-			}
-
-			// Texture coordinates
-			if (texCoordBuffer) {
-				vertex.texCoord = glm::vec2(
-					texCoordBuffer[v * 2 + 0],
-					texCoordBuffer[v * 2 + 1]
-				);
-			}
-			else {
-				vertex.texCoord = glm::vec2(0.0f);
-			}
-			rtVertex.texCoord = vertex.texCoord;
-
-			glm::vec3 localNormal = glm::vec3(0.0f, 0.0f, 1.0f);
-			if (normalBuffer) {
-				localNormal = glm::vec3(
-					normalBuffer[v * 3 + 0],
-					normalBuffer[v * 3 + 1],
-					normalBuffer[v * 3 + 2]
-				);
-			}
-
-			vertex.normal = normalMatrix * localNormal;
-			rtVertex.normal = glm::vec4(glm::normalize(localNormal), 0.0f);
-
-			model.vertices.push_back(vertex);
-			model.rtVertices.push_back(rtVertex);
-		}
-
-		// Load indices
-		if (primitive.indices > -1) {
-			const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.indices];
-			const tinygltf::BufferView& bufferView = gltfModel.bufferViews[accessor.bufferView];
-			const void* dataPtr = &gltfModel.buffers[bufferView.buffer].data[accessor.byteOffset + bufferView.byteOffset];
-
-			indexCount = static_cast<uint32_t>(accessor.count);
-
-			switch (accessor.componentType) {
-			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: {
-				const uint32_t* buf = static_cast<const uint32_t*>(dataPtr);
-				for (size_t i = 0; i < accessor.count; i++) {
-					model.indices.push_back(buf[i] + prim.firstVertex);
-				}
-				break;
-			}
-			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
-				const uint16_t* buf = static_cast<const uint16_t*>(dataPtr);
-				for (size_t i = 0; i < accessor.count; i++) {
-					model.indices.push_back(buf[i] + prim.firstVertex);
-				}
-				break;
-			}
-			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
-				const uint8_t* buf = static_cast<const uint8_t*>(dataPtr);
-				for (size_t i = 0; i < accessor.count; i++) {
-					model.indices.push_back(buf[i] + prim.firstVertex);
-				}
-				break;
-			}
-			default:
-				std::cerr << "Unknown index component type!" << std::endl;
-				break;
-			}
-		}
-
-		prim.vertexCount = vertexCount;
-		prim.indexCount = indexCount;
 		mesh.primitives.push_back(prim);
 	}
 

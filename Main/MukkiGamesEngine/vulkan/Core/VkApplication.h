@@ -197,7 +197,7 @@ private:
 	void recordComputeCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
     void recordRayTracingCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 	void loadSceneObjects();
-	LoadedObject createLoadedObject(const SceneObject& sceneObj);
+	void createLoadedObjectBuffers(LoadedObject& obj);
 	void destroyLoadedObject(LoadedObject& obj);
 	void destroyAllLoadedObjects();
 	void initPhysics();
