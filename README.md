@@ -3,7 +3,8 @@
 ## Progress
 
 * RayTracing 
-<img width="1270" height="1064" alt="image" src="https://github.com/user-attachments/assets/dc16d9ab-dbad-4029-9b07-7ac9f490b848" />
+<img width="3427" height="1411" alt="Screenshot 2026-07-20 163526" src="https://github.com/user-attachments/assets/4ad2a080-eced-45fd-8baa-113a11d3a91a" />
+
 <img width="3374" height="1269" alt="Screenshot 2026-07-16 181014" src="https://github.com/user-attachments/assets/6d16b9e0-e32f-410a-bea8-64eb5d91c19f" />
 
 
