@@ -208,8 +208,11 @@ void ObjectLoader::loadTextures(const tinygltf::Model& gltfModel, Model& model)
 		samplerInfo.minLod = 0.0f;
 		samplerInfo.maxLod = 0.0f;
 
-		if (vkCreateSampler(device->getDevice(), &samplerInfo, nullptr, &outTexture.sampler) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create texture sampler!");
+		{
+			std::lock_guard<std::mutex> lock(vulkanMutex);
+			if (vkCreateSampler(device->getDevice(), &samplerInfo, nullptr, &outTexture.sampler) != VK_SUCCESS) {
+				throw std::runtime_error("failed to create texture sampler!");
+			}
 		}
 	}
 }
@@ -217,6 +220,8 @@ void ObjectLoader::loadTextures(const tinygltf::Model& gltfModel, Model& model)
 void ObjectLoader::uploadTextureToGPU(const unsigned char* pixelData, int width, int height,
                                       LoadedTexture& outTexture)
 {
+	std::lock_guard<std::mutex> lock(vulkanMutex);
+
 	VkDeviceSize imageSize = static_cast<VkDeviceSize>(width) * height * 4;
 
 	VkBuffer stagingBuffer;
@@ -598,6 +603,8 @@ glm::mat4 ObjectLoader::getNodeTransform(const tinygltf::Node& node)
 
 void ObjectLoader::createModelBuffers(Model& model)
 {
+	std::lock_guard<std::mutex> lock(vulkanMutex);
+
 	if (model.vertices.empty() || model.indices.empty()) {
 		std::cerr << "Cannot create buffers for empty model!" << std::endl;
 		return;
@@ -675,6 +682,8 @@ void ObjectLoader::createModelBuffers(Model& model)
 
 void ObjectLoader::destroyModel(Model& model)
 {
+	std::lock_guard<std::mutex> lock(vulkanMutex);
+
 	// Destroy buffers
 	if (model.vertexBuffer != VK_NULL_HANDLE) {
 		vkDestroyBuffer(device->getDevice(), model.vertexBuffer, nullptr);

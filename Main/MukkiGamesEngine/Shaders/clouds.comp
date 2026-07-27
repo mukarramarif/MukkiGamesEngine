@@ -1,0 +1,83 @@
+#version 450
+// original shader inspo: Tiny-Cloud Rewrite by demofox https://www.shadertoy.com/view/4tlBz8, clouds by iq: https://www.shadertoy.com/view/XslGRr
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D NoiseTexture;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outputImage;
+
+layout(push_constant) uniform PushConstants {
+    float Time;
+} pc;
+#define NUM_STEP 200
+#define NUM_NOISE_OCTAVES 6
+#define HEIGHT_OFFSET 1.25
+#define WHITE_NOISE_GRID_SIZE 256.0
+
+// from "Hash without Sine" https://www.shadertoy.com/view/4djSRW
+#define HASHSCALE1 443.8975
+//  1 out, 2 in...
+float hash12(vec2 p)
+{
+	vec3 p3  = fract(vec3(p.xyx) * HASHSCALE1);
+    p3 += dot(p3, p3.yzx + 19.19);
+    return fract((p3.x + p3.y) * p3.z);
+}
+float InterpolatedWhiteNoise(vec2 uv){
+    uv = fract(uv);
+    vec2 uvPixels = uv * WHITE_NOISE_GRID_SIZE;
+    vec2 uvFrac = uvPixels- floor(uvPixels);
+
+
+    vec2 uvDiscreteFloor = floor(uvPixels)/WHITE_NOISE_GRID_SIZE;
+    vec2 uvDiscreteCeil = ceil(uvPixels)/WHITE_NOISE_GRID_SIZE;
+
+
+    float noise00 = hash12(vec2(uvDiscreteFloor.x, uvDiscreteFloor.y));
+    float noise01 = hash12(vec2(uvDiscreteFloor.x, uvDiscreteCeil.y ));
+    float noise10 = hash12(vec2(uvDiscreteCeil.x , uvDiscreteFloor.y));
+    float noise11 = hash12(vec2(uvDiscreteCeil.x , uvDiscreteCeil.y ));
+
+    float noise0_ = mix(noise00, noise01, uvFrac.y);
+    float noise1_ = mix(noise10, noise11, uvFrac.y);
+
+    float noise = mix(noise0_, noise1_, uvFrac.x);
+
+    return noise;
+
+}
+// generating random number from noise texture
+float RndNumber(vec3 position){
+    vec2 uv = (position.yz+ceil(position.x))/float(NUM_STEP);
+
+    return InterpolatedWhiteNoise(uv);
+}
+
+
+
+void main(){
+    vec3 direction = vec3(gl_GlobalInvocationID.xy / gl_NumWorkGroups.xy, 1.0);
+    vec3 skyColor = vec3(0.6, 0.8, 1.0);
+
+    vec3 pixelColor = skyColor - direction.z;
+
+    // raymarching part
+    for(int rayStep=0; rayStep < NUM_STEP; ++rayStep){
+        // backtracking
+        vec3 pos = 0.05 * float(NUM_STEP-rayStep)* direction;
+        pos.xy += pc.Time;
+        float noiseScale =0.5;
+        float signedCloudDistance = pos.z + HEIGHT_OFFSET;
+        for (int octaveIdx =0; octaveIdx < NUM_NOISE_OCTAVES; ++octaveIdx){
+            pos*=2.0;
+            noiseScale*=2.0;
+            signedCloudDistance -= RndNumber(pos) / noiseScale;
+        }
+        if (signedCloudDistance < 0.0){
+            float cloudDensity = clamp(-signedCloudDistance, 0.0, 1.0);
+            pixelColor = mix(pixelColor, vec3(1.0), cloudDensity);
+        }
+    }
+    vec4 fragColor = vec4(pixelColor, 1.0);
+    imageStore(outputImage, ivec2(gl_GlobalInvocationID.xy), fragColor);
+
+}

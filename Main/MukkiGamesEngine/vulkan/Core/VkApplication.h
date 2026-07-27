@@ -19,6 +19,7 @@
 #include "../Resources/ShadowMap.h"
 #include "../uiManager/uiManager.h"
 #include "../pipeline/computePipeline.h"
+#include "../pipeline/CloudPipeline.h"
 #include "../objects/lights.h"
 #include <memory>
 #include <vector>
@@ -30,6 +31,7 @@
 #include "../../Renderer/Renderer.h"
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
+const int MAX_RT_TEXTURES = 100;
 
 class VulkanApplication {
 public:
@@ -210,6 +212,10 @@ private:
 	void cleanupTAAPipeline();
 	void updateTAADescriptorSets();
 	void recordShadowPass();
+	void initCloudPipeline();
+	void createCloudResources();
+	void cleanupCloudResources();
+	void recordCloudCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 
 	// New methods for pipeline setup
 	void createDescriptorSetLayout();
@@ -282,6 +288,18 @@ private:
 	//TODO: find a way to automatically update scenes like hot shader reloading
 	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json","WaterExample.json", "showRoom.json"};
 	int currentSceneIndex = 0;
+
+	//Cloud Pipeline
+	std::unique_ptr<CloudPipeline> cloudPipeline;
+	VkImage              cloudNoiseImage    = VK_NULL_HANDLE;
+	VkDeviceMemory       cloudNoiseMemory   = VK_NULL_HANDLE;
+	VkImageView          cloudNoiseImageView = VK_NULL_HANDLE;
+	VkSampler            cloudNoiseSampler  = VK_NULL_HANDLE;
+	VkImage              cloudOutputImage    = VK_NULL_HANDLE;
+	VkDeviceMemory       cloudOutputMemory   = VK_NULL_HANDLE;
+	VkImageView          cloudOutputImageView = VK_NULL_HANDLE;
+    bool cloudsEnabled = true;
+
 
 	// Physics
 	std::unique_ptr<PhysicsEngine> physicsEngine;

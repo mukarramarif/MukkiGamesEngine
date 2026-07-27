@@ -114,6 +114,8 @@ private:
 	Device* device = nullptr;
 	TextureManager* textureManager = nullptr;
 	BufferManager* bufferManager = nullptr;
+
+	std::mutex vulkanMutex;
 	
 	
 	void loadNode(const tinygltf::Model& gltfModel, const tinygltf::Node& gltfNode, 
