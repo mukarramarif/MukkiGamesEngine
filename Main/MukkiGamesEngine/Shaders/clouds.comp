@@ -1,83 +1,90 @@
 #version 450
-// original shader inspo: Tiny-Cloud Rewrite by demofox https://www.shadertoy.com/view/4tlBz8, clouds by iq: https://www.shadertoy.com/view/XslGRr
+// 16x16 workgroup for efficient GPU occupancy
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
-layout(set = 0, binding = 0) uniform sampler2D NoiseTexture;
-layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outputImage;
+// Descriptor bindings — written by CloudPipeline on host side
+layout(set = 0, binding = 0, rgba8) uniform writeonly image2D outputImage;   // composited output
+layout(set = 0, binding = 1) uniform sampler2D sceneColor;                    // captured raster scene
+layout(set = 0, binding = 2) uniform sampler2D depthTexture;                  // depth buffer (sky detection)
+layout(set = 0, binding = 3) uniform sampler3D noise3D;                       // 64³ RG8: perlin(R) + worley(G)
+layout(set = 0, binding = 4) uniform sampler2D weatherMap;                    // 256² R8: cloud coverage
 
 layout(push_constant) uniform PushConstants {
-    float Time;
+    vec2  iResolution;  // render target dimensions
+    float iTime;        // elapsed seconds for cloud drift
 } pc;
-#define NUM_STEP 200
-#define NUM_NOISE_OCTAVES 6
-#define HEIGHT_OFFSET 1.25
-#define WHITE_NOISE_GRID_SIZE 256.0
 
-// from "Hash without Sine" https://www.shadertoy.com/view/4djSRW
-#define HASHSCALE1 443.8975
-//  1 out, 2 in...
-float hash12(vec2 p)
+void main()
 {
-	vec3 p3  = fract(vec3(p.xyx) * HASHSCALE1);
-    p3 += dot(p3, p3.yzx + 19.19);
-    return fract((p3.x + p3.y) * p3.z);
-}
-float InterpolatedWhiteNoise(vec2 uv){
-    uv = fract(uv);
-    vec2 uvPixels = uv * WHITE_NOISE_GRID_SIZE;
-    vec2 uvFrac = uvPixels- floor(uvPixels);
+    // UV in Vulkan framebuffer space: (0,0)=top-left, (1,1)=bottom-right
+    vec2 uv = vec2(gl_GlobalInvocationID.xy) / pc.iResolution;
+    ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy);
 
+    // Read the rasterized scene (geometry + skybox) and depth
+    vec3 sceneCol = textureLod(sceneColor, uv, 0.0).rgb;
+    float depth = textureLod(depthTexture, uv, 0.0).r;
 
-    vec2 uvDiscreteFloor = floor(uvPixels)/WHITE_NOISE_GRID_SIZE;
-    vec2 uvDiscreteCeil = ceil(uvPixels)/WHITE_NOISE_GRID_SIZE;
+    // Determine if this pixel is sky: depth == far-plane (1.0) means no geometry hit
+    bool isSky = (depth >= 0.999);
 
+    // Default: pass scene through unchanged
+    vec3 color = sceneCol;
 
-    float noise00 = hash12(vec2(uvDiscreteFloor.x, uvDiscreteFloor.y));
-    float noise01 = hash12(vec2(uvDiscreteFloor.x, uvDiscreteCeil.y ));
-    float noise10 = hash12(vec2(uvDiscreteCeil.x , uvDiscreteFloor.y));
-    float noise11 = hash12(vec2(uvDiscreteCeil.x , uvDiscreteCeil.y ));
+    if (isSky)
+    {
+        // Reconstruct a view-direction ray from the full-screen UV.
+        // Vulkan flips Y relative to OpenGL, so we invert uv.y so that
+        // the top of the screen maps to positive Y (looking up).
+        vec3 rd = normalize(vec3(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, 2.0));
 
-    float noise0_ = mix(noise00, noise01, uvFrac.y);
-    float noise1_ = mix(noise10, noise11, uvFrac.y);
+        // Only march into the cloud layer when looking above the horizon
+        if (rd.y > 0.1)
+        {
+            // Intersect the ray with a cloud plane at altitude 1200 world-units
+            float t = 1200.0 / rd.y;
 
-    float noise = mix(noise0_, noise1_, uvFrac.x);
+            // World-space position on the cloud plane
+            vec3 cloudPos = rd * t;
 
-    return noise;
+            // Animate clouds drifting horizontally over time
+            cloudPos.xz += pc.iTime * 8.0;
 
-}
-// generating random number from noise texture
-float RndNumber(vec3 position){
-    vec2 uv = (position.yz+ceil(position.x))/float(NUM_STEP);
+            // --- Coverage masking ---
+            // Scale world coordinates down to weather-map texture space.
+            // The weather map controls where clouds appear (0=clear, 1=overcast).
+            vec2 weatherUV = cloudPos.xz * 0.0002;
+            float coverage = texture(weatherMap, weatherUV).r;
 
-    return InterpolatedWhiteNoise(uv);
-}
+            // --- Noise sampling ---
+            // Scale into the 3D noise texture's coordinate range.
+            // The 64³ volume wraps via REPEAT addressing (configured on the sampler).
+            cloudPos *= 0.0008;
 
+            // R channel: base perlin-noise shape (soft billowy forms)
+            float perlin = texture(noise3D, cloudPos).r;
+            // G channel: higher-frequency worley noise (wispy detail)
+            float worley = texture(noise3D, cloudPos * 2.5).g;
 
+            // Blend perlin and worley for cloud-like structure
+            float density = perlin * 0.55 + worley * 0.45;
 
-void main(){
-    vec3 direction = vec3(gl_GlobalInvocationID.xy / gl_NumWorkGroups.xy, 1.0);
-    vec3 skyColor = vec3(0.6, 0.8, 1.0);
+            // Sharpen the density edge so clouds have defined borders
+            density = smoothstep(0.38, 0.72, density);
 
-    vec3 pixelColor = skyColor - direction.z;
+            // Mask out areas where the weather map says 'clear sky'
+            density *= coverage;
 
-    // raymarching part
-    for(int rayStep=0; rayStep < NUM_STEP; ++rayStep){
-        // backtracking
-        vec3 pos = 0.05 * float(NUM_STEP-rayStep)* direction;
-        pos.xy += pc.Time;
-        float noiseScale =0.5;
-        float signedCloudDistance = pos.z + HEIGHT_OFFSET;
-        for (int octaveIdx =0; octaveIdx < NUM_NOISE_OCTAVES; ++octaveIdx){
-            pos*=2.0;
-            noiseScale*=2.0;
-            signedCloudDistance -= RndNumber(pos) / noiseScale;
-        }
-        if (signedCloudDistance < 0.0){
-            float cloudDensity = clamp(-signedCloudDistance, 0.0, 1.0);
-            pixelColor = mix(pixelColor, vec3(1.0), cloudDensity);
+            // Fade clouds toward the horizon so they don't touch the ground
+            float horizonFade = smoothstep(0.05, 0.25, rd.y);
+            density *= horizonFade;
+
+            // Darken dense clouds for depth, brighten thin edges
+            vec3 cloudColor = mix(vec3(0.85, 0.87, 0.92), vec3(1.0, 0.99, 0.96), density);
+
+            // Source-over blend on top of the scene (skybox / sky gradient)
+            color = mix(sceneCol, cloudColor, density * 0.85);
         }
     }
-    vec4 fragColor = vec4(pixelColor, 1.0);
-    imageStore(outputImage, ivec2(gl_GlobalInvocationID.xy), fragColor);
 
+    imageStore(outputImage, pixelCoord, vec4(color, 1.0));
 }

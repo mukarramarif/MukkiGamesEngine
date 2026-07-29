@@ -1,43 +1,45 @@
 #pragma once
 #include <vulkan/vulkan.h>
-#include "../Core/VkDevice.h"
-#include <string>
 #include <vector>
-#include <fstream>
-#include <stdexcept>
+#include <string>
+
 class Device;
 
-struct PC {
-    float time;
+struct CloudPushConstants {
+    float iResolution[2];
+    float iTime;
+    float sunDirX, sunDirY, sunDirZ;
+    float cloudBase;
+    float cloudThickness;
 };
 
-class CloudPipeline {
+class CloudPipeline
+{
 public:
-
     CloudPipeline();
-    CloudPipeline(const CloudPipeline &) = default;
-    CloudPipeline(CloudPipeline &&) = delete;
-    CloudPipeline &operator=(const CloudPipeline &) = default;
-    CloudPipeline &operator=(CloudPipeline &&) = delete;
     ~CloudPipeline();
 
     void createCloudPipeline(Device* device, const std::string& computeShaderPath);
     void createDescriptorSetLayout(Device* device);
-    void createDescriptorPool(Device* device, uint32_t maxSets=1);
-    void createDescriptorSets(Device* device, VkDescriptorPool descriptorPool, VkImageView cloudImageView, VkSampler cloudSampler, uint32_t setCount);
+    void createDescriptorPool(Device* device, uint32_t maxSets);
+    void createDescriptorSets(Device* device, VkImageView outputImageView,
+                              VkImageView sceneColorImageView, VkSampler sceneColorSampler,
+                              VkImageView depthImageView, VkSampler depthSampler,
+                              VkImageView noiseImageView, VkSampler noiseSampler,
+                              VkImageView weatherImageView, VkSampler weatherSampler);
     void resetDescriptorPool(Device* device);
     void cleanup(Device* device);
 
-    [[nodiscard]] VkPipeline getPipeline() const { return computePipeline; }
-    [[nodiscard]] VkPipelineLayout getPipelineLayout() const { return pipelineLayout; }
-    [[nodiscard]] VkDescriptorSetLayout getDescriptorSetLayout() const { return descriptorSetLayout; }
+    VkPipeline       getPipeline()       const { return pipeline;        }
+    VkPipelineLayout getPipelineLayout() const { return pipelineLayout;  }
+    VkDescriptorSet  getDescriptorSet()  const { return descriptorSet;   }
+
 private:
     VkShaderModule createShaderModule(Device* device, const std::vector<char>& code);
 
-	VkPipeline computePipeline;
-	VkPipelineLayout pipelineLayout;
-	VkDescriptorSetLayout descriptorSetLayout;
-	VkDescriptorPool descriptorPool;
-	VkDescriptorSet computeDescriptorSets;
-
+    VkPipeline            pipeline            = VK_NULL_HANDLE;
+    VkPipelineLayout      pipelineLayout      = VK_NULL_HANDLE;
+    VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool      descriptorPool      = VK_NULL_HANDLE;
+    VkDescriptorSet       descriptorSet       = VK_NULL_HANDLE;
 };

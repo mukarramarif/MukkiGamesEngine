@@ -213,6 +213,7 @@ add_shaders(MukkiGamesEngine
     MukkiGamesEngine/Shaders/rt.rmiss
     MukkiGamesEngine/Shaders/rt.rchit
     MukkiGamesEngine/Shaders/taa.comp
+    MukkiGamesEngine/Shaders/clouds.comp
 )
 
 add_slang_fragment_shaders(MukkiGamesEngine

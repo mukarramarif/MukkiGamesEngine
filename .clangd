@@ -1,0 +1,6 @@
+CompileFlags:
+  CompilationDatabase: Main/build-debug/
+
+Diagnostics:
+  Suppress:
+    - "drv-vulkan_*"

@@ -6,6 +6,7 @@
 #include "ShaderCompiler.h"
 #include <iostream>
 #include "../pipeline/computePipeline.h"
+#include "../Resources/CloudNoiseGenerator.h"
 #include "../Physics/VehiclePhysics.h"
 
 
@@ -393,6 +394,7 @@ void VulkanApplication::initVulkan(const RenderConfig& config)
 	createGraphicsPipeline();
 
 	initComputePipeline();
+	initCloudPipeline();
 	createAccumulationImage();
     initRayTracingPipeline();
 	// 13. Create vertex and index buffers
@@ -846,6 +848,8 @@ void VulkanApplication::drawFrame()
 			uiManager->render(commandBuffer);
 			commandBufferManager->endModelRenderPass(commandBuffer);
 
+			recordCloudCommandBuffer(commandBuffer, imageIndex);
+
 			if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 				throw std::runtime_error("failed to record command buffer!");
 			}
@@ -955,6 +959,16 @@ void VulkanApplication::recreateSwapChain()
 		computeOutputImageMemory = VK_NULL_HANDLE;
 	}
 
+	if (cloudOutputImageView)    { vkDestroyImageView(device->getDevice(), cloudOutputImageView, nullptr); cloudOutputImageView = VK_NULL_HANDLE; }
+	if (cloudOutputImage)        { vkDestroyImage(device->getDevice(), cloudOutputImage, nullptr); cloudOutputImage = VK_NULL_HANDLE; }
+	if (cloudOutputMemory)       { vkFreeMemory(device->getDevice(), cloudOutputMemory, nullptr); cloudOutputMemory = VK_NULL_HANDLE; }
+	if (cloudSceneColorImageView){ vkDestroyImageView(device->getDevice(), cloudSceneColorImageView, nullptr); cloudSceneColorImageView = VK_NULL_HANDLE; }
+	if (cloudSceneColorSampler)  { vkDestroySampler(device->getDevice(), cloudSceneColorSampler, nullptr); cloudSceneColorSampler = VK_NULL_HANDLE; }
+	if (cloudSceneColorImage)    { vkDestroyImage(device->getDevice(), cloudSceneColorImage, nullptr); cloudSceneColorImage = VK_NULL_HANDLE; }
+	if (cloudSceneColorMemory)   { vkFreeMemory(device->getDevice(), cloudSceneColorMemory, nullptr); cloudSceneColorMemory = VK_NULL_HANDLE; }
+	if (cloudDepthImageView)     { vkDestroyImageView(device->getDevice(), cloudDepthImageView, nullptr); cloudDepthImageView = VK_NULL_HANDLE; }
+	if (cloudDepthSampler)       { vkDestroySampler(device->getDevice(), cloudDepthSampler, nullptr); cloudDepthSampler = VK_NULL_HANDLE; }
+
 	cleanupAccumulationResources();
 
 	// Cleanup old per-image semaphores
@@ -983,6 +997,9 @@ void VulkanApplication::recreateSwapChain()
 
 	// Recreate compute output image
 	createComputeOutputImage();
+	createCloudOutputImage();
+	createSceneColorImage();
+	createDepthSampler();
 	createAccumulationImage();
 	createRayTracingDescriptorSet();
 
@@ -990,6 +1007,16 @@ void VulkanApplication::recreateSwapChain()
 	if (computePipeline) {
 		computePipeline->resetDesciriptorPool(device.get());
 		computePipeline->createDescriptorSets(device.get(), computeOutputImageView);
+	}
+
+	if (cloudPipeline) {
+		cloudPipeline->resetDescriptorPool(device.get());
+		cloudPipeline->createDescriptorSets(device.get(),
+			cloudOutputImageView,
+			cloudSceneColorImageView, cloudSceneColorSampler,
+			cloudDepthImageView, cloudDepthSampler,
+			cloudNoise3DImageView, cloudNoise3DSampler,
+			cloudWeatherImageView, cloudWeatherSampler);
 	}
 
 	// Recreate per-image semaphores for new swapchain
@@ -1170,6 +1197,7 @@ void VulkanApplication::cleanup()
 
 	// Cleanup in reverse order of creation
 	cleanupComputeResources();
+	cleanupCloudResources();
 
 	// Cleanup per-frame synchronization objects
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -2602,6 +2630,548 @@ void VulkanApplication::cleanupComputeResources()
    if (rayTracingPipeline) {
 		rayTracingPipeline->cleanup();
 	}
+}
+
+void VulkanApplication::initCloudPipeline()
+{
+    try {
+        createCloudNoiseTextures();
+        createCloudOutputImage();
+        createSceneColorImage();
+        createDepthSampler();
+
+        cloudPipeline = std::make_unique<CloudPipeline>();
+        cloudPipeline->createDescriptorSetLayout(device.get());
+        cloudPipeline->createDescriptorPool(device.get(), 1);
+        cloudPipeline->createDescriptorSets(device.get(),
+            cloudOutputImageView,
+            cloudSceneColorImageView, cloudSceneColorSampler,
+            cloudDepthImageView, cloudDepthSampler,
+            cloudNoise3DImageView, cloudNoise3DSampler,
+            cloudWeatherImageView, cloudWeatherSampler);
+        cloudPipeline->createCloudPipeline(device.get(), "Shaders/clouds.comp.spv");
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to init cloud pipeline: " << e.what() << std::endl;
+        cloudsEnabled = false;
+        cleanupCloudResources();
+    }
+}
+
+void VulkanApplication::createCloudNoiseTextures()
+{
+    const int noiseRes = 64;
+    auto noiseData = generatePerlinWorley3D(noiseRes, noiseRes, noiseRes);
+
+    VkDeviceSize imageSize = static_cast<VkDeviceSize>(noiseRes) * noiseRes * noiseRes * 2;
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingMemory;
+    bufferManager->createBuffer(imageSize,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        stagingBuffer, stagingMemory);
+
+    void* mapped;
+    vkMapMemory(device->getDevice(), stagingMemory, 0, imageSize, 0, &mapped);
+    memcpy(mapped, noiseData.data(), static_cast<size_t>(imageSize));
+    vkUnmapMemory(device->getDevice(), stagingMemory);
+
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType     = VK_IMAGE_TYPE_3D;
+    imageInfo.extent.width  = static_cast<uint32_t>(noiseRes);
+    imageInfo.extent.height = static_cast<uint32_t>(noiseRes);
+    imageInfo.extent.depth  = static_cast<uint32_t>(noiseRes);
+    imageInfo.mipLevels     = 1;
+    imageInfo.arrayLayers   = 1;
+    imageInfo.format        = VK_FORMAT_R8G8_UNORM;
+    imageInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+
+    VkDevice vkDev = device->getDevice();
+    if (vkCreateImage(vkDev, &imageInfo, nullptr, &cloudNoise3DImage) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud noise 3D image!");
+
+    VkMemoryRequirements memReq;
+    vkGetImageMemoryRequirements(vkDev, cloudNoise3DImage, &memReq);
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize  = memReq.size;
+    allocInfo.memoryTypeIndex = device->findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(vkDev, &allocInfo, nullptr, &cloudNoise3DMemory) != VK_SUCCESS)
+        throw std::runtime_error("failed to allocate cloud noise 3D memory!");
+    vkBindImageMemory(vkDev, cloudNoise3DImage, cloudNoise3DMemory, 0);
+
+    VkCommandBuffer cmd = commandBufferManager->beginSingleTimeCommands();
+
+    VkImageSubresourceRange range{};
+    range.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    range.baseMipLevel   = 0;
+    range.levelCount     = 1;
+    range.baseArrayLayer = 0;
+    range.layerCount     = 1;
+
+    VkImageMemoryBarrier barrier{};
+    barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcAccessMask       = 0;
+    barrier.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.image               = cloudNoise3DImage;
+    barrier.subresourceRange    = range;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    VkBufferImageCopy copyRegion{};
+    copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copyRegion.imageSubresource.layerCount = 1;
+    copyRegion.imageExtent = { static_cast<uint32_t>(noiseRes), static_cast<uint32_t>(noiseRes), static_cast<uint32_t>(noiseRes) };
+    vkCmdCopyBufferToImage(cmd, stagingBuffer, cloudNoise3DImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+
+    VkImageMemoryBarrier barrier2{};
+    barrier2.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier2.oldLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier2.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier2.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier2.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+    barrier2.image               = cloudNoise3DImage;
+    barrier2.subresourceRange    = range;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier2);
+
+    commandBufferManager->endSingleTimeCommands(cmd);
+    bufferManager->destroyBuffer(stagingBuffer, stagingMemory);
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image    = cloudNoise3DImage;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_3D;
+    viewInfo.format   = VK_FORMAT_R8G8_UNORM;
+    viewInfo.subresourceRange = range;
+    if (vkCreateImageView(vkDev, &viewInfo, nullptr, &cloudNoise3DImageView) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud noise 3D view!");
+
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter    = VK_FILTER_LINEAR;
+    samplerInfo.minFilter    = VK_FILTER_LINEAR;
+    samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.minLod       = 0.0f;
+    samplerInfo.maxLod       = 0.0f;
+    if (vkCreateSampler(vkDev, &samplerInfo, nullptr, &cloudNoise3DSampler) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud noise 3D sampler!");
+
+    auto weatherData = generateWeatherMap2D(256, 256);
+    VkDeviceSize weatherSize = 256 * 256;
+
+    VkBuffer wStaging; VkDeviceMemory wStagingMem;
+    bufferManager->createBuffer(weatherSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        wStaging, wStagingMem);
+    vkMapMemory(vkDev, wStagingMem, 0, weatherSize, 0, &mapped);
+    memcpy(mapped, weatherData.data(), weatherSize);
+    vkUnmapMemory(vkDev, wStagingMem);
+
+    VkImageCreateInfo wImageInfo{};
+    wImageInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    wImageInfo.imageType     = VK_IMAGE_TYPE_2D;
+    wImageInfo.extent.width  = 256;
+    wImageInfo.extent.height = 256;
+    wImageInfo.extent.depth  = 1;
+    wImageInfo.mipLevels     = 1;
+    wImageInfo.arrayLayers   = 1;
+    wImageInfo.format        = VK_FORMAT_R8_UNORM;
+    wImageInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    wImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    wImageInfo.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    wImageInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
+    wImageInfo.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateImage(vkDev, &wImageInfo, nullptr, &cloudWeatherImage) != VK_SUCCESS)
+        throw std::runtime_error("failed to create weather image!");
+    vkGetImageMemoryRequirements(vkDev, cloudWeatherImage, &memReq);
+    VkMemoryAllocateInfo wAlloc{};
+    wAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    wAlloc.allocationSize = memReq.size;
+    wAlloc.memoryTypeIndex = device->findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(vkDev, &wAlloc, nullptr, &cloudWeatherMemory) != VK_SUCCESS)
+        throw std::runtime_error("failed to allocate weather memory!");
+    vkBindImageMemory(vkDev, cloudWeatherImage, cloudWeatherMemory, 0);
+
+    cmd = commandBufferManager->beginSingleTimeCommands();
+    VkImageSubresourceRange wRange{};
+    wRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    wRange.layerCount = 1; wRange.levelCount = 1;
+
+    VkImageMemoryBarrier wb{};
+    wb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    wb.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; wb.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    wb.srcAccessMask = 0; wb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    wb.image = cloudWeatherImage; wb.subresourceRange = wRange;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &wb);
+
+    VkBufferImageCopy wc{};
+    wc.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    wc.imageSubresource.layerCount = 1;
+    wc.imageExtent = { 256, 256, 1 };
+    vkCmdCopyBufferToImage(cmd, wStaging, cloudWeatherImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &wc);
+
+    VkImageMemoryBarrier wb2{};
+    wb2.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    wb2.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; wb2.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    wb2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; wb2.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    wb2.image = cloudWeatherImage; wb2.subresourceRange = wRange;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &wb2);
+    commandBufferManager->endSingleTimeCommands(cmd);
+    bufferManager->destroyBuffer(wStaging, wStagingMem);
+
+    VkImageViewCreateInfo wViewInfo{};
+    wViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    wViewInfo.image = cloudWeatherImage; wViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    wViewInfo.format = VK_FORMAT_R8_UNORM; wViewInfo.subresourceRange = wRange;
+    if (vkCreateImageView(vkDev, &wViewInfo, nullptr, &cloudWeatherImageView) != VK_SUCCESS)
+        throw std::runtime_error("failed to create weather view!");
+
+    VkSamplerCreateInfo wSampler{};
+    wSampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    wSampler.magFilter = VK_FILTER_LINEAR; wSampler.minFilter = VK_FILTER_LINEAR;
+    wSampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    wSampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    wSampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    if (vkCreateSampler(vkDev, &wSampler, nullptr, &cloudWeatherSampler) != VK_SUCCESS)
+        throw std::runtime_error("failed to create weather sampler!");
+}
+
+void VulkanApplication::createCloudOutputImage()
+{
+    VkExtent2D extent = swapChain->getSwapChainExtent();
+    cloudOutputImageExtent = extent;
+
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent = { extent.width, extent.height, 1 };
+    imageInfo.mipLevels = 1; imageInfo.arrayLayers = 1;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VkDevice vkDev = device->getDevice();
+    if (vkCreateImage(vkDev, &imageInfo, nullptr, &cloudOutputImage) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud output image!");
+
+    VkMemoryRequirements memReq;
+    vkGetImageMemoryRequirements(vkDev, cloudOutputImage, &memReq);
+    VkMemoryAllocateInfo alloc{};
+    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc.allocationSize = memReq.size;
+    alloc.memoryTypeIndex = device->findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(vkDev, &alloc, nullptr, &cloudOutputMemory) != VK_SUCCESS)
+        throw std::runtime_error("failed to allocate cloud output image memory!");
+    vkBindImageMemory(vkDev, cloudOutputImage, cloudOutputMemory, 0);
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = cloudOutputImage; viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    if (vkCreateImageView(vkDev, &viewInfo, nullptr, &cloudOutputImageView) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud output image view!");
+
+    VkCommandBuffer cmd = commandBufferManager->beginSingleTimeCommands();
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.srcAccessMask = 0; barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.image = cloudOutputImage;
+    barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+    commandBufferManager->endSingleTimeCommands(cmd);
+}
+
+void VulkanApplication::createSceneColorImage()
+{
+    VkExtent2D extent = swapChain->getSwapChainExtent();
+    VkDevice vkDev = device->getDevice();
+
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent = { extent.width, extent.height, 1 };
+    imageInfo.mipLevels = 1; imageInfo.arrayLayers = 1;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateImage(vkDev, &imageInfo, nullptr, &cloudSceneColorImage) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud scene color image!");
+
+    VkMemoryRequirements memReq;
+    vkGetImageMemoryRequirements(vkDev, cloudSceneColorImage, &memReq);
+    VkMemoryAllocateInfo alloc{};
+    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc.allocationSize = memReq.size;
+    alloc.memoryTypeIndex = device->findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(vkDev, &alloc, nullptr, &cloudSceneColorMemory) != VK_SUCCESS)
+        throw std::runtime_error("failed to allocate cloud scene color memory!");
+    vkBindImageMemory(vkDev, cloudSceneColorImage, cloudSceneColorMemory, 0);
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = cloudSceneColorImage; viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    if (vkCreateImageView(vkDev, &viewInfo, nullptr, &cloudSceneColorImageView) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud scene color view!");
+
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR; samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    if (vkCreateSampler(vkDev, &samplerInfo, nullptr, &cloudSceneColorSampler) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud scene color sampler!");
+
+    VkCommandBuffer cmd = commandBufferManager->beginSingleTimeCommands();
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.srcAccessMask = 0; barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.image = cloudSceneColorImage;
+    barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+    commandBufferManager->endSingleTimeCommands(cmd);
+}
+
+void VulkanApplication::createDepthSampler()
+{
+    VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
+    VkFormatProperties formatProps;
+    vkGetPhysicalDeviceFormatProperties(device->getPhysicalDevice(), depthFormat, &formatProps);
+    if (!(formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT))
+        depthFormat = VK_FORMAT_D24_UNORM_S8_UINT;
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = depthImage; viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = depthFormat;
+    viewInfo.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+    if (vkCreateImageView(device->getDevice(), &viewInfo, nullptr, &cloudDepthImageView) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud depth view!");
+
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_NEAREST; samplerInfo.minFilter = VK_FILTER_NEAREST;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    if (vkCreateSampler(device->getDevice(), &samplerInfo, nullptr, &cloudDepthSampler) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud depth sampler!");
+}
+
+void VulkanApplication::cleanupCloudResources()
+{
+    if (cloudPipeline) cloudPipeline->cleanup(device.get());
+    auto d = device->getDevice();
+    if (cloudOutputImageView)    { vkDestroyImageView(d, cloudOutputImageView, nullptr); cloudOutputImageView = VK_NULL_HANDLE; }
+    if (cloudOutputImage)        { vkDestroyImage(d, cloudOutputImage, nullptr); cloudOutputImage = VK_NULL_HANDLE; }
+    if (cloudOutputMemory)       { vkFreeMemory(d, cloudOutputMemory, nullptr); cloudOutputMemory = VK_NULL_HANDLE; }
+    if (cloudSceneColorImageView)  { vkDestroyImageView(d, cloudSceneColorImageView, nullptr); cloudSceneColorImageView = VK_NULL_HANDLE; }
+    if (cloudSceneColorSampler)    { vkDestroySampler(d, cloudSceneColorSampler, nullptr); cloudSceneColorSampler = VK_NULL_HANDLE; }
+    if (cloudSceneColorImage)      { vkDestroyImage(d, cloudSceneColorImage, nullptr); cloudSceneColorImage = VK_NULL_HANDLE; }
+    if (cloudSceneColorMemory)     { vkFreeMemory(d, cloudSceneColorMemory, nullptr); cloudSceneColorMemory = VK_NULL_HANDLE; }
+    if (cloudDepthImageView)     { vkDestroyImageView(d, cloudDepthImageView, nullptr); cloudDepthImageView = VK_NULL_HANDLE; }
+    if (cloudDepthSampler)       { vkDestroySampler(d, cloudDepthSampler, nullptr); cloudDepthSampler = VK_NULL_HANDLE; }
+    if (cloudNoise3DImageView)   { vkDestroyImageView(d, cloudNoise3DImageView, nullptr); cloudNoise3DImageView = VK_NULL_HANDLE; }
+    if (cloudNoise3DSampler)     { vkDestroySampler(d, cloudNoise3DSampler, nullptr); cloudNoise3DSampler = VK_NULL_HANDLE; }
+    if (cloudNoise3DImage)       { vkDestroyImage(d, cloudNoise3DImage, nullptr); cloudNoise3DImage = VK_NULL_HANDLE; }
+    if (cloudNoise3DMemory)      { vkFreeMemory(d, cloudNoise3DMemory, nullptr); cloudNoise3DMemory = VK_NULL_HANDLE; }
+    if (cloudWeatherImageView)   { vkDestroyImageView(d, cloudWeatherImageView, nullptr); cloudWeatherImageView = VK_NULL_HANDLE; }
+    if (cloudWeatherSampler)     { vkDestroySampler(d, cloudWeatherSampler, nullptr); cloudWeatherSampler = VK_NULL_HANDLE; }
+    if (cloudWeatherImage)       { vkDestroyImage(d, cloudWeatherImage, nullptr); cloudWeatherImage = VK_NULL_HANDLE; }
+    if (cloudWeatherMemory)      { vkFreeMemory(d, cloudWeatherMemory, nullptr); cloudWeatherMemory = VK_NULL_HANDLE; }
+}
+
+void VulkanApplication::recordCloudCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
+{
+    if (!cloudsEnabled || !cloudPipeline) return;
+
+    VkExtent2D extent = swapChain->getSwapChainExtent();
+    VkImage swImage = swapChain->getSwapChainImages()[imageIndex];
+
+    VkImageSubresourceRange cr = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    VkImageSubresourceRange dr = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+
+    // --- Capture: swapchain → sceneColor ---
+    VkImageMemoryBarrier capSw{};
+    capSw.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    capSw.oldLayout     = swapChainImageLayouts[imageIndex];
+    capSw.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    capSw.srcAccessMask = 0;
+    capSw.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    capSw.image         = swImage;
+    capSw.subresourceRange = cr;
+    vkCmdPipelineBarrier(commandBuffer,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &capSw);
+
+    VkImageMemoryBarrier capSc{};
+    capSc.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    capSc.oldLayout     = VK_IMAGE_LAYOUT_GENERAL;
+    capSc.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    capSc.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    capSc.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    capSc.image         = cloudSceneColorImage;
+    capSc.subresourceRange = cr;
+    vkCmdPipelineBarrier(commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &capSc);
+
+    VkImageCopy copy{};
+    copy.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    copy.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    copy.extent = { extent.width, extent.height, 1 };
+    vkCmdCopyImage(commandBuffer,
+        swImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        cloudSceneColorImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+
+    // --- Prepare for compute: sceneColor + depth → SHADER_READ_ONLY ---
+    VkImageMemoryBarrier prepSc{};
+    prepSc.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    prepSc.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    prepSc.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    prepSc.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    prepSc.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    prepSc.image         = cloudSceneColorImage;
+    prepSc.subresourceRange = cr;
+    vkCmdPipelineBarrier(commandBuffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &prepSc);
+
+    VkImageMemoryBarrier prepDepth{};
+    prepDepth.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    prepDepth.oldLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    prepDepth.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    prepDepth.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    prepDepth.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    prepDepth.image         = depthImage;
+    prepDepth.subresourceRange = dr;
+    vkCmdPipelineBarrier(commandBuffer,
+        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &prepDepth);
+
+    // --- Cloud compute ---
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, cloudPipeline->getPipeline());
+    VkDescriptorSet descSet = cloudPipeline->getDescriptorSet();
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+        cloudPipeline->getPipelineLayout(), 0, 1, &descSet, 0, nullptr);
+
+    CloudPushConstants pc{};
+    pc.iResolution[0] = (float)extent.width; pc.iResolution[1] = (float)extent.height;
+    pc.iTime = (float)glfwGetTime();
+    pc.sunDirX = 0.4f; pc.sunDirY = 0.5f; pc.sunDirZ = -0.6f;
+    pc.cloudBase = 600.0f; pc.cloudThickness = 1200.0f;
+    vkCmdPushConstants(commandBuffer, cloudPipeline->getPipelineLayout(),
+        VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CloudPushConstants), &pc);
+
+    vkCmdDispatch(commandBuffer, (extent.width + 15) / 16, (extent.height + 15) / 16, 1);
+
+    // --- Restore sceneColor layout for next frame ---
+    VkImageMemoryBarrier rstSc{};
+    rstSc.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    rstSc.oldLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    rstSc.newLayout     = VK_IMAGE_LAYOUT_GENERAL;
+    rstSc.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    rstSc.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    rstSc.image         = cloudSceneColorImage;
+    rstSc.subresourceRange = cr;
+    vkCmdPipelineBarrier(commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &rstSc);
+
+    // --- Restore depth layout ---
+    VkImageMemoryBarrier rstDepth{};
+    rstDepth.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    rstDepth.oldLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    rstDepth.newLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    rstDepth.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    rstDepth.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    rstDepth.image         = depthImage;
+    rstDepth.subresourceRange = dr;
+    vkCmdPipelineBarrier(commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &rstDepth);
+
+    // --- Blit: cloudOutput → swapchain ---
+    VkImageMemoryBarrier blitCo{};
+    blitCo.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    blitCo.oldLayout     = VK_IMAGE_LAYOUT_GENERAL;
+    blitCo.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    blitCo.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    blitCo.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    blitCo.image         = cloudOutputImage;
+    blitCo.subresourceRange = cr;
+    vkCmdPipelineBarrier(commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &blitCo);
+
+    VkImageMemoryBarrier blitSw{};
+    blitSw.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    blitSw.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    blitSw.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    blitSw.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    blitSw.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    blitSw.image         = swImage;
+    blitSw.subresourceRange = cr;
+    vkCmdPipelineBarrier(commandBuffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &blitSw);
+
+    vkCmdCopyImage(commandBuffer,
+        cloudOutputImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        swImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+
+    // --- Finalize: swapchain → PRESENT, cloudOutput → GENERAL, sceneColor → GENERAL ---
+    VkImageMemoryBarrier finSw{};
+    finSw.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    finSw.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    finSw.newLayout     = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    finSw.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    finSw.dstAccessMask = 0;
+    finSw.image         = swImage;
+    finSw.subresourceRange = cr;
+    vkCmdPipelineBarrier(commandBuffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &finSw);
+
+    VkImageMemoryBarrier finCo{};
+    finCo.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    finCo.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    finCo.newLayout     = VK_IMAGE_LAYOUT_GENERAL;
+    finCo.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    finCo.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    finCo.image         = cloudOutputImage;
+    finCo.subresourceRange = cr;
+    vkCmdPipelineBarrier(commandBuffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &finCo);
+
+    swapChainImageLayouts[imageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 }
 
 void VulkanApplication::createRayTracingDescriptorSetLayout()

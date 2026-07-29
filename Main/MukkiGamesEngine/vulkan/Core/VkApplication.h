@@ -213,7 +213,10 @@ private:
 	void updateTAADescriptorSets();
 	void recordShadowPass();
 	void initCloudPipeline();
-	void createCloudResources();
+	void createCloudOutputImage();
+	void createSceneColorImage();
+	void createDepthSampler();
+	void createCloudNoiseTextures();
 	void cleanupCloudResources();
 	void recordCloudCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 
@@ -291,14 +294,25 @@ private:
 
 	//Cloud Pipeline
 	std::unique_ptr<CloudPipeline> cloudPipeline;
-	VkImage              cloudNoiseImage    = VK_NULL_HANDLE;
-	VkDeviceMemory       cloudNoiseMemory   = VK_NULL_HANDLE;
-	VkImageView          cloudNoiseImageView = VK_NULL_HANDLE;
-	VkSampler            cloudNoiseSampler  = VK_NULL_HANDLE;
 	VkImage              cloudOutputImage    = VK_NULL_HANDLE;
 	VkDeviceMemory       cloudOutputMemory   = VK_NULL_HANDLE;
 	VkImageView          cloudOutputImageView = VK_NULL_HANDLE;
-    bool cloudsEnabled = true;
+	VkExtent2D           cloudOutputImageExtent{};
+	VkImage              cloudSceneColorImage    = VK_NULL_HANDLE;
+	VkDeviceMemory       cloudSceneColorMemory   = VK_NULL_HANDLE;
+	VkImageView          cloudSceneColorImageView = VK_NULL_HANDLE;
+	VkSampler            cloudSceneColorSampler   = VK_NULL_HANDLE;
+	VkImageView          cloudDepthImageView = VK_NULL_HANDLE;
+	VkSampler            cloudDepthSampler  = VK_NULL_HANDLE;
+	VkImage              cloudNoise3DImage = VK_NULL_HANDLE;
+	VkDeviceMemory       cloudNoise3DMemory = VK_NULL_HANDLE;
+	VkImageView          cloudNoise3DImageView = VK_NULL_HANDLE;
+	VkSampler            cloudNoise3DSampler = VK_NULL_HANDLE;
+	VkImage              cloudWeatherImage = VK_NULL_HANDLE;
+	VkDeviceMemory       cloudWeatherMemory = VK_NULL_HANDLE;
+	VkImageView          cloudWeatherImageView = VK_NULL_HANDLE;
+	VkSampler            cloudWeatherSampler = VK_NULL_HANDLE;
+	bool cloudsEnabled = true;
 
 
 	// Physics
