@@ -11,6 +11,19 @@ struct CloudPushConstants {
     float sunDirX, sunDirY, sunDirZ;
     float cloudBase;
     float cloudThickness;
+    // camera Transforms
+    float camPosX;
+    float camPosY;
+    float camPosZ;
+    float camFwdX;
+    float camFwdY;
+    float camFwdZ;
+    float camUpX;
+    float camUpY;
+    float camUpZ;
+    float camRightX;
+    float camRightY;
+    float camRightZ;
 };
 
 class CloudPipeline

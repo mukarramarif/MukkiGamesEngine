@@ -3,16 +3,107 @@
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 // Descriptor bindings — written by CloudPipeline on host side
-layout(set = 0, binding = 0, rgba8) uniform writeonly image2D outputImage;   // composited output
-layout(set = 0, binding = 1) uniform sampler2D sceneColor;                    // captured raster scene
-layout(set = 0, binding = 2) uniform sampler2D depthTexture;                  // depth buffer (sky detection)
-layout(set = 0, binding = 3) uniform sampler3D noise3D;                       // 64³ RG8: perlin(R) + worley(G)
-layout(set = 0, binding = 4) uniform sampler2D weatherMap;                    // 256² R8: cloud coverage
+layout(set = 0, binding = 0, rgba8) uniform writeonly image2D outputImage; // composited output
+layout(set = 0, binding = 1) uniform sampler2D sceneColor; // captured raster scene
+layout(set = 0, binding = 2) uniform sampler2D depthTexture; // depth buffer (sky detection)
+layout(set = 0, binding = 3) uniform sampler3D noise3D; // 64³ RG8: perlin(R) + worley(G)
+layout(set = 0, binding = 4) uniform sampler2D weatherMap; // 256² R8: cloud coverage [0=clear, 1=overcast]
 
+// Must match CloudPushConstants in CloudPipeline.h byte-for-byte.
+// NOTE: vec3 would introduce 4 bytes of std140 alignment padding, so we use
+// three separate floats to exactly match the host-side C struct layout.
 layout(push_constant) uniform PushConstants {
-    vec2  iResolution;  // render target dimensions
-    float iTime;        // elapsed seconds for cloud drift
+    vec2  iResolution;     // offset  0,  render target dimensions
+    float iTime;           // offset  8,  elapsed seconds for cloud drift
+    float sunDirX;         // offset 12,
+    float sunDirY;         // offset 16,  sun direction (normalized)
+    float sunDirZ;         // offset 20,
+    float cloudBase;       // offset 24,  bottom of cloud layer (world-space Y, default 600)
+    float cloudThickness;  // offset 28,  vertical extent of cloud layer (default 1200 → top at 1800)
+    // world space transforms
+    float camPosX;
+    float camPosY;
+    float camPosZ;
+    float camFwdX;
+    float camFwdY;
+    float camFwdZ;
+    float camUpX;
+    float camUpY;
+    float camUpZ;
+    float camRightX;
+    float camRightY;
+    float camRightZ;
 } pc;
+
+// Convenience macros
+#define sunDir vec3(pc.sunDirX, pc.sunDirY, pc.sunDirZ)
+#define sunDir   vec3(pc.sunDirX,  pc.sunDirY,  pc.sunDirZ)
+#define camPos   vec3(pc.camPosX,  pc.camPosY,  pc.camPosZ)
+#define camFwd   vec3(pc.camFwdX,  pc.camFwdY,  pc.camFwdZ)
+#define camRight vec3(pc.camRightX, pc.camRightY, pc.camRightZ)
+#define camUp    vec3(pc.camUpX,   pc.camUpY,   pc.camUpZ)
+// ---------------------------------------------------------------------------
+// Ray-march tuning constants — tweak to adjust look and performance
+// ---------------------------------------------------------------------------
+const float STEP_SIZE       = 30.0;  // target step size in world units
+const int   MAX_STEPS       = 64;    // safety cap per ray
+const float ABSORPTION      = 0.004; // extinction coefficient (per world-unit · density)
+const float WEATHER_SCALE   = 1.0 / 60000.0; // weather map: 60,000 × 60,000 m world
+const float NOISE_SCALE     = 0.0008; // world → noise-texture coordinate space
+
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
+
+// Linear remap from one range to another
+float Remap(float v, float lo, float hi, float newLo, float newHi)
+{
+    return newLo + (v - lo) / (hi - lo) * (newHi - newLo);
+}
+
+// Fractional height of a world-space point within the cloud layer.
+// Returns 0 at cloud base, 1 at cloud top; values outside [0,1] mean the
+// point is above or below the layer.
+float GetHeightFractionForPoint(vec3 worldPos)
+{
+    return (worldPos.y - pc.cloudBase) / max(pc.cloudThickness, 0.001);
+}
+
+// Bell-shaped density profile: clouds are densest in the middle of the
+// layer and fade to zero at the bottom and top edges.
+float GetDensityHeightGradient(float heightFraction)
+{
+    float t = clamp(heightFraction, 0.0, 1.0);
+    // t=0.5 → 1.0,  t=0.0 or 1.0 → 0.0
+    return 1.0 - abs(t - 0.5) * 2.0;
+}
+
+// Sample volumetric cloud density at a noise-space position.
+// noisePos:       position scaled into the 3D noise texture's coordinate range
+// heightFraction: fractional height inside the cloud layer [0,1]
+float sampleCloudDensity(vec3 noisePos, float heightFraction)
+{
+    // R channel: base perlin noise — soft billowy forms
+    float perlin = texture(noise3D, noisePos).r;
+    // G channel: higher-frequency worley noise — wispy detail / erosion
+    float worley  = texture(noise3D, noisePos * 2.5).g;
+
+    // FBM-style blend: perlin dominates the shape, worley adds detail
+    float fbm = perlin * 0.625 + worley * 0.25;
+
+    // Remap from [-1, 1] noise range into [0, 1] density
+    float density = Remap(perlin, -(1.0 - fbm), 1.0, 0.0, 1.0);
+    density = clamp(density, 0.0, 1.0);
+
+    // Apply height-based density falloff (bell curve)
+    density *= GetDensityHeightGradient(heightFraction);
+
+    return density;
+}
+
+// ---------------------------------------------------------------------------
+// Main compute kernel
+// ---------------------------------------------------------------------------
 
 void main()
 {
@@ -35,54 +126,104 @@ void main()
         // Reconstruct a view-direction ray from the full-screen UV.
         // Vulkan flips Y relative to OpenGL, so we invert uv.y so that
         // the top of the screen maps to positive Y (looking up).
-        vec3 rd = normalize(vec3(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, 2.0));
+        float sx = uv.x * 2.0 - 1.0;
+        float sy = (1.0 - uv.y) * 2.0 - 1.0;
+        float sz = 2.0; // focal length -> FOV
+        vec3 rd =  normalize(camFwd * sz + camRight * sx + camUp * sy);
 
         // Only march into the cloud layer when looking above the horizon
-        if (rd.y > 0.1)
+        if (rd.y > 0.05)
         {
-            // Intersect the ray with a cloud plane at altitude 1200 world-units
-            float t = 1200.0 / rd.y;
+            // ---- 1.  Cloud-layer slab intersection ----
+            // The cloud layer is a horizontal slab from cloudBase to cloudBase+cloudThickness.
+            float cloudTop = pc.cloudBase + pc.cloudThickness;
+            float tMin    = (pc.cloudBase - camPos.y) / rd.y; // distance to enter the slab
+            float tMax    = (cloudTop -camPos.y) / rd.y;      // distance to exit the slab
 
-            // World-space position on the cloud plane
-            vec3 cloudPos = rd * t;
+            // Clamp to forward-facing hemisphere (camera may be inside / above layer)
+            tMin = max(tMin, 0.0);
 
-            // Animate clouds drifting horizontally over time
-            cloudPos.xz += pc.iTime * 8.0;
+            if (tMax > tMin)
+            {
+                // ---- 2.  Sample the weather map once for the whole ray ----
+                // The coverage value controls whether this column of sky has clouds.
+                // Sampling once at the layer mid-point is a standard optimisation;
+                // the weather map is low-resolution anyway (256²).
+                vec3  worldMid  = rd * (tMin + tMax) * 0.5;
+                worldMid.xz     += pc.iTime * 8.0; // animate drift
+                vec2  weatherUV = worldMid.xz * WEATHER_SCALE;
+                float coverage  = texture(weatherMap, weatherUV).r;
 
-            // --- Coverage masking ---
-            // Scale world coordinates down to weather-map texture space.
-            // The weather map controls where clouds appear (0=clear, 1=overcast).
-            vec2 weatherUV = cloudPos.xz * 0.0002;
-            float coverage = texture(weatherMap, weatherUV).r;
+                // Early-out: weather map says "clear sky" for this column
+                if (coverage <= 0.001)
+                {
+                    imageStore(outputImage, pixelCoord, vec4(color, 1.0));
+                    return;
+                }
 
-            // --- Noise sampling ---
-            // Scale into the 3D noise texture's coordinate range.
-            // The 64³ volume wraps via REPEAT addressing (configured on the sampler).
-            cloudPos *= 0.0008;
+                // ---- 3.  Ray-march setup ----
+                // Adaptive step count: target STEP_SIZE world-units per step,
+                // capped at MAX_STEPS to bound worst-case cost near the horizon.
+                float rayLength = tMax - tMin;
+                int   numSteps  = min(int(rayLength / STEP_SIZE) + 1, MAX_STEPS);
+                float stepSize  = rayLength / float(numSteps);
 
-            // R channel: base perlin-noise shape (soft billowy forms)
-            float perlin = texture(noise3D, cloudPos).r;
-            // G channel: higher-frequency worley noise (wispy detail)
-            float worley = texture(noise3D, cloudPos * 2.5).g;
+                // Per-pixel jitter on the first sample to break up banding artifacts.
+                // Uses a simple screen-space hash.
+                float jitter = fract(sin(dot(uv, vec2(12.9898, 78.233))) * 43758.5453);
+                float t = tMin + stepSize * jitter;
 
-            // Blend perlin and worley for cloud-like structure
-            float density = perlin * 0.55 + worley * 0.45;
+                // ---- 4.  Beer's-law ray march ----
+                // Accumulate optical depth by sampling density at each step.
+                // opacity = 1 - exp(-opticalDepth)
+                float opticalDepth = 0.0;
 
-            // Sharpen the density edge so clouds have defined borders
-            density = smoothstep(0.38, 0.72, density);
+                for (int i = 0; i < MAX_STEPS; i++)
+                {
+                    if (i >= numSteps) break;
 
-            // Mask out areas where the weather map says 'clear sky'
-            density *= coverage;
+                    vec3 worldPos = rd * t;
+                    float heightFraction = GetHeightFractionForPoint(worldPos);
 
-            // Fade clouds toward the horizon so they don't touch the ground
-            float horizonFade = smoothstep(0.05, 0.25, rd.y);
-            density *= horizonFade;
+                    // Only accumulate when inside the cloud layer
+                    if (heightFraction >= 0.0 && heightFraction <= 1.0)
+                    {
+                        // Apply horizontal drift for animated clouds
+                        vec3 noisePos = worldPos;
+                        noisePos.xz += pc.iTime * 8.0;
 
-            // Darken dense clouds for depth, brighten thin edges
-            vec3 cloudColor = mix(vec3(0.85, 0.87, 0.92), vec3(1.0, 0.99, 0.96), density);
+                        // Transform to noise-texture coordinate space
+                        noisePos *= NOISE_SCALE;
 
-            // Source-over blend on top of the scene (skybox / sky gradient)
-            color = mix(sceneCol, cloudColor, density * 0.85);
+                        // Sample volumetric density
+                        float density = sampleCloudDensity(noisePos, heightFraction);
+
+                        // Sharpen density edge → clouds get defined borders.
+                        // Without this they look like a diffuse fog.
+                        density = smoothstep(0.35, 0.70, density);
+
+                        // Beer's law: dτ = σ · ds
+                        opticalDepth += density * stepSize * ABSORPTION;
+                    }
+
+                    t += stepSize;
+                    if (t > tMax) break;
+                }
+
+                // ---- 5.  Composite ----
+                float opacity = 1.0 - exp(-opticalDepth);
+                opacity = clamp(opacity, 0.0, 1.0);
+
+                // Fade clouds toward the horizon so they don't touch the ground
+                float horizonFade = smoothstep(0.02, 0.15, rd.y);
+                opacity *= horizonFade;
+
+                // Cloud colour: slightly blue-tinted white
+                vec3 cloudColor = vec3(0.92, 0.94, 0.97);
+
+                // Source-over blend on top of the scene
+                color = mix(sceneCol, cloudColor, opacity);
+            }
         }
     }
 

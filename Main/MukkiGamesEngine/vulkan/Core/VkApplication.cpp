@@ -1593,6 +1593,7 @@ void VulkanApplication::mouseCallback(GLFWwindow* window, double xpos, double yp
 	app->lastY = static_cast<float>(ypos);
 
 	app->camera->processMouseMovement(xoffset, yoffset);
+	app->camera->processMouseScroll(0.0f); // No scroll input, but can be used for zoom if needed
 	app->cameraMoved = true;
 }
 
@@ -3086,9 +3087,13 @@ void VulkanApplication::recordCloudCommandBuffer(VkCommandBuffer commandBuffer, 
     pc.iTime = (float)glfwGetTime();
     pc.sunDirX = 0.4f; pc.sunDirY = 0.5f; pc.sunDirZ = -0.6f;
     pc.cloudBase = 600.0f; pc.cloudThickness = 1200.0f;
+    // --- camera transform ---
+    pc.camPosX = camera->position.x;  pc.camPosY = camera->position.y;  pc.camPosZ = camera->position.z;
+    pc.camFwdX = camera->front.x;     pc.camFwdY = camera->front.y;     pc.camFwdZ = camera->front.z;
+    pc.camRightX = camera->right.x;   pc.camRightY = camera->right.y;   pc.camRightZ = camera->right.z;
+    pc.camUpX = camera->up.x;         pc.camUpY = camera->up.y;         pc.camUpZ = camera->up.z;
     vkCmdPushConstants(commandBuffer, cloudPipeline->getPipelineLayout(),
         VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CloudPushConstants), &pc);
-
     vkCmdDispatch(commandBuffer, (extent.width + 15) / 16, (extent.height + 15) / 16, 1);
 
     // --- Restore sceneColor layout for next frame ---
