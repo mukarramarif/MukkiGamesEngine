@@ -33,10 +33,10 @@ layout(push_constant) uniform PushConstants {
     float camRightX;
     float camRightY;
     float camRightZ;
+    float fovYRadians;     // offset 44,  camera vertical FOV in radians
 } pc;
 
 // Convenience macros
-#define sunDir vec3(pc.sunDirX, pc.sunDirY, pc.sunDirZ)
 #define sunDir   vec3(pc.sunDirX,  pc.sunDirY,  pc.sunDirZ)
 #define camPos   vec3(pc.camPosX,  pc.camPosY,  pc.camPosZ)
 #define camFwd   vec3(pc.camFwdX,  pc.camFwdY,  pc.camFwdZ)
@@ -49,7 +49,7 @@ const float STEP_SIZE       = 30.0;  // target step size in world units
 const int   MAX_STEPS       = 64;    // safety cap per ray
 const float ABSORPTION      = 0.004; // extinction coefficient (per world-unit · density)
 const float WEATHER_SCALE   = 1.0 / 60000.0; // weather map: 60,000 × 60,000 m world
-const float NOISE_SCALE     = 0.0008; // world → noise-texture coordinate space
+const float NOISE_SCALE     = 0.006; // world → noise-texture coordinate space
 
 // ---------------------------------------------------------------------------
 // Helper functions
@@ -64,42 +64,53 @@ float Remap(float v, float lo, float hi, float newLo, float newHi)
 // Fractional height of a world-space point within the cloud layer.
 // Returns 0 at cloud base, 1 at cloud top; values outside [0,1] mean the
 // point is above or below the layer.
-float GetHeightFractionForPoint(vec3 worldPos)
+float GetHeightFractionForPoint(vec3 worldPos, float cloudType)
 {
-    return (worldPos.y - pc.cloudBase) / max(pc.cloudThickness, 0.001);
+    float effectiveBase = pc.cloudBase;
+    float effectiveThickness = mix(pc.cloudThickness * 0.33, pc.cloudThickness,cloudType);
+
+    return (worldPos.y - effectiveBase) / max(effectiveThickness, 0.001);
 }
 
-// Bell-shaped density profile: clouds are densest in the middle of the
-// layer and fade to zero at the bottom and top edges.
-float GetDensityHeightGradient(float heightFraction)
+// Height-based density profile. Varies by cloud type:
+//   Stratus  (type=0): dense near base, thin layer
+//   Cumulus  (type=1): dense through full depth, tall puffy clouds
+float GetDensityHeightGradient(float heightFraction, float cloudType)
 {
     float t = clamp(heightFraction, 0.0, 1.0);
-    // t=0.5 → 1.0,  t=0.0 or 1.0 → 0.0
-    return 1.0 - abs(t - 0.5) * 2.0;
+    float center = mix(0.15, 0.6, cloudType);
+    float spread = mix(0.50, 0.6, cloudType);
+    float grad = 1.0 - abs(t - center) / spread;
+    return clamp(grad, 0.0, 1.0);
 }
 
 // Sample volumetric cloud density at a noise-space position.
 // noisePos:       position scaled into the 3D noise texture's coordinate range
 // heightFraction: fractional height inside the cloud layer [0,1]
-float sampleCloudDensity(vec3 noisePos, float heightFraction)
+float sampleCloudDensity(vec3 noisePos, float heightFraction, float cloudType)
 {
-    // R channel: base perlin noise — soft billowy forms
-    float perlin = texture(noise3D, noisePos).r;
-    // G channel: higher-frequency worley noise — wispy detail / erosion
-    float worley  = texture(noise3D, noisePos * 2.5).g;
+    // --- Multi-frequency Worley FBM ---
+    // Sample Worley (G channel) at three frequency scales to build
+    // a low-frequency FBM that dilates/erodes the Perlin base shape.
+    float worley1 = texture(noise3D, noisePos).g;
+    float worley2 = texture(noise3D, noisePos * 2.0).g;
+    float worley3 = texture(noise3D, noisePos * 4.0).g;
+    float lowFreqFBM = worley1 * 0.625 + worley2 * 0.25 + worley3 * 0.125;
 
-    // FBM-style blend: perlin dominates the shape, worley adds detail
-    float fbm = perlin * 0.625 + worley * 0.25;
-
-    // Remap from [-1, 1] noise range into [0, 1] density
-    float density = Remap(perlin, -(1.0 - fbm), 1.0, 0.0, 1.0);
+    // Base cloud shape: Perlin (R) dilated by the Worley FBM.
+    // The lowFreqFBM controls how much the Perlin range is stretched,
+    // creating billowy erosion detail.
+    float perlin  = texture(noise3D, noisePos).r * 2.0;
+    float lowBound = worley1 * worley2 * worley3 - 0.5;
+    float density = Remap(perlin, lowBound, 1.0, 0.0, 1.0);
     density = clamp(density, 0.0, 1.0);
 
-    // Apply height-based density falloff (bell curve)
-    density *= GetDensityHeightGradient(heightFraction);
+    // Apply height gradient (stratus hugs the base, cumulus fills the layer)
+    density *= GetDensityHeightGradient(heightFraction, cloudType);
 
     return density;
 }
+
 
 // ---------------------------------------------------------------------------
 // Main compute kernel
@@ -107,7 +118,7 @@ float sampleCloudDensity(vec3 noisePos, float heightFraction)
 
 void main()
 {
-    // UV in Vulkan framebuffer space: (0,0)=top-left, (1,1)=bottom-right
+    //   UV in Vulkan framebuffer space: (0,0)=top-left, (1,1)=bottom-right
     vec2 uv = vec2(gl_GlobalInvocationID.xy) / pc.iResolution;
     ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy);
 
@@ -128,17 +139,20 @@ void main()
         // the top of the screen maps to positive Y (looking up).
         float sx = uv.x * 2.0 - 1.0;
         float sy = (1.0 - uv.y) * 2.0 - 1.0;
-        float sz = 2.0; // focal length -> FOV
-        vec3 rd =  normalize(camFwd * sz + camRight * sx + camUp * sy);
+        float aspect = pc.iResolution.x / pc.iResolution.y;
+        float tanHalfFovY = tan(pc.fovYRadians * 0.5);
+        vec3 rd =  normalize(camFwd + camRight * sx * aspect * tanHalfFovY + camUp * sy * tanHalfFovY);
 
         // Only march into the cloud layer when looking above the horizon
-        if (rd.y > 0.05)
+        if (abs(rd.y) > 0.05)
         {
             // ---- 1.  Cloud-layer slab intersection ----
             // The cloud layer is a horizontal slab from cloudBase to cloudBase+cloudThickness.
             float cloudTop = pc.cloudBase + pc.cloudThickness;
-            float tMin    = (pc.cloudBase - camPos.y) / rd.y; // distance to enter the slab
-            float tMax    = (cloudTop -camPos.y) / rd.y;      // distance to exit the slab
+            float t0 = (pc.cloudBase - pc.camPosY) / rd.y;
+            float t1 = (cloudTop     - pc.camPosY) / rd.y;
+            float tMin = min(t0, t1);  // entry (whichever comes first)
+            float tMax = max(t0, t1);  // exit
 
             // Clamp to forward-facing hemisphere (camera may be inside / above layer)
             tMin = max(tMin, 0.0);
@@ -149,11 +163,19 @@ void main()
                 // The coverage value controls whether this column of sky has clouds.
                 // Sampling once at the layer mid-point is a standard optimisation;
                 // the weather map is low-resolution anyway (256²).
-                vec3  worldMid  = rd * (tMin + tMax) * 0.5;
+                vec3  worldMid  = camPos + rd * (tMin + tMax) * 0.5;
                 worldMid.xz     += pc.iTime * 8.0; // animate drift
                 vec2  weatherUV = worldMid.xz * WEATHER_SCALE;
-                float coverage  = texture(weatherMap, weatherUV).r;
+                vec4 weather = texture(weatherMap, weatherUV);
+                float coverage  = weather.r;
+                float precipitation = weather.g;
+                float cloudType = weather.b;
 
+                if (precipitation > 0.7)
+                {
+                    cloudType = max(cloudType, 1.0);
+                    coverage  = max(coverage, 0.7);
+                }
                 // Early-out: weather map says "clear sky" for this column
                 if (coverage <= 0.001)
                 {
@@ -178,12 +200,15 @@ void main()
                 // opacity = 1 - exp(-opticalDepth)
                 float opticalDepth = 0.0;
 
+                float edgeLow  = mix(0.25, 0.40, cloudType);
+                float edgeHigh = mix(0.50, 0.70, cloudType);
+
                 for (int i = 0; i < MAX_STEPS; i++)
                 {
                     if (i >= numSteps) break;
 
-                    vec3 worldPos = rd * t;
-                    float heightFraction = GetHeightFractionForPoint(worldPos);
+                    vec3 worldPos = camPos + rd * t;
+                    float heightFraction = GetHeightFractionForPoint(worldPos,cloudType);
 
                     // Only accumulate when inside the cloud layer
                     if (heightFraction >= 0.0 && heightFraction <= 1.0)
@@ -196,11 +221,15 @@ void main()
                         noisePos *= NOISE_SCALE;
 
                         // Sample volumetric density
-                        float density = sampleCloudDensity(noisePos, heightFraction);
 
-                        // Sharpen density edge → clouds get defined borders.
-                        // Without this they look like a diffuse fog.
-                        density = smoothstep(0.35, 0.70, density);
+                        float density = sampleCloudDensity(noisePos, heightFraction, cloudType);
+                        density = smoothstep(edgeLow, edgeHigh, density);
+
+                        // Apply cloud coverage: remap to shrink range,
+                        // then multiply for natural fade at weather-cell edges
+                        density = Remap(density, coverage, 1.0, 0.0, 1.0);
+                        density *= coverage;
+
 
                         // Beer's law: dτ = σ · ds
                         opticalDepth += density * stepSize * ABSORPTION;
@@ -215,11 +244,13 @@ void main()
                 opacity = clamp(opacity, 0.0, 1.0);
 
                 // Fade clouds toward the horizon so they don't touch the ground
-                float horizonFade = smoothstep(0.02, 0.15, rd.y);
+                float horizonFade = smoothstep(0.02, 0.15, abs(rd.y));
                 opacity *= horizonFade;
 
-                // Cloud colour: slightly blue-tinted white
-                vec3 cloudColor = vec3(0.92, 0.94, 0.97);
+                // Cloud colour: rainy clouds are usually darker
+                vec3 cloudColor = mix(vec3(0.92, 0.94, 0.97),
+                                      vec3(0.55, 0.57, 0.60), precipitation);
+
 
                 // Source-over blend on top of the scene
                 color = mix(sceneCol, cloudColor, opacity);

@@ -110,7 +110,7 @@ void RayTracingAS::createAccelerationStructureBuffer(VkDeviceSize size, Accelera
 void RayTracingAS::destroyAccelerationStructure(AccelerationStructure& as)
 {
     if (as.handle != VK_NULL_HANDLE) {
-     vkDestroyAccelerationStructureKHRFunc(device->getDevice(), as.handle, nullptr);
+        vkDestroyAccelerationStructureKHRFunc(device->getDevice(), as.handle, nullptr);
         as.handle = VK_NULL_HANDLE;
     }
     if (as.buffer != VK_NULL_HANDLE) {

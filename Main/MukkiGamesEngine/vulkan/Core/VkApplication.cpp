@@ -1,3 +1,10 @@
+#ifdef TRACY_ENABLE
+#include <tracy/Tracy.hpp>
+#else
+#define ZoneScoped
+#define ZoneScopedN(name)
+#define FrameMark
+#endif
 #include "VkApplication.h"
 #include "EngineWindow.h"
 #include "../objects/vertex.h"
@@ -635,6 +642,7 @@ void VulkanApplication::createDefaultMaterialUniformBuffers()
 
 void VulkanApplication::updateUniformBuffer(uint32_t currentImage)
 {
+    ZoneScopedN("Update Uniform Buffer");
 	UniformBufferObject ubo{};
 	ubo.model = glm::mat4(1.0f);
 	ubo.view = camera->getViewMatrix();
@@ -716,6 +724,7 @@ void VulkanApplication::createTextureResources()
 
 void VulkanApplication::drawFrame()
 {
+    ZoneScopedN("Frame");
 	// 1. Wait for the current frame's fence
 	vkWaitForFences(device->getDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
@@ -918,7 +927,7 @@ void VulkanApplication::drawFrame()
 	} else if (result != VK_SUCCESS) {
 		throw std::runtime_error("failed to present swap chain image!");
 	}
-
+	FrameMark;
 	currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 	m_frameCount++;
 }
@@ -1367,6 +1376,7 @@ glm::mat4 VulkanApplication::computeDirectionalLightSpaceMatrix(const Light& lig
 
 void VulkanApplication::recordShadowPass()
 {
+    ZoneScopedN("Shadow Pass");
     if (!shadowMap) return;
 
     // Find first enabled directional light
@@ -2768,8 +2778,8 @@ void VulkanApplication::createCloudNoiseTextures()
     if (vkCreateSampler(vkDev, &samplerInfo, nullptr, &cloudNoise3DSampler) != VK_SUCCESS)
         throw std::runtime_error("failed to create cloud noise 3D sampler!");
 
-    auto weatherData = generateWeatherMap2D(256, 256);
-    VkDeviceSize weatherSize = 256 * 256;
+    auto weatherData = generateWeatherMap2D(256, 256,4);
+    VkDeviceSize weatherSize = 256 * 256 * 4;
 
     VkBuffer wStaging; VkDeviceMemory wStagingMem;
     bufferManager->createBuffer(weatherSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -2787,7 +2797,7 @@ void VulkanApplication::createCloudNoiseTextures()
     wImageInfo.extent.depth  = 1;
     wImageInfo.mipLevels     = 1;
     wImageInfo.arrayLayers   = 1;
-    wImageInfo.format        = VK_FORMAT_R8_UNORM;
+    wImageInfo.format        = VK_FORMAT_R8G8B8A8_UNORM;
     wImageInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
     wImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     wImageInfo.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -2837,7 +2847,7 @@ void VulkanApplication::createCloudNoiseTextures()
     VkImageViewCreateInfo wViewInfo{};
     wViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     wViewInfo.image = cloudWeatherImage; wViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    wViewInfo.format = VK_FORMAT_R8_UNORM; wViewInfo.subresourceRange = wRange;
+    wViewInfo.format =  VK_FORMAT_R8G8B8A8_UNORM; wViewInfo.subresourceRange = wRange;
     if (vkCreateImageView(vkDev, &wViewInfo, nullptr, &cloudWeatherImageView) != VK_SUCCESS)
         throw std::runtime_error("failed to create weather view!");
 
@@ -3010,6 +3020,7 @@ void VulkanApplication::cleanupCloudResources()
 
 void VulkanApplication::recordCloudCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
 {
+    ZoneScopedN("CloudCompute");
     if (!cloudsEnabled || !cloudPipeline) return;
 
     VkExtent2D extent = swapChain->getSwapChainExtent();
@@ -3083,15 +3094,16 @@ void VulkanApplication::recordCloudCommandBuffer(VkCommandBuffer commandBuffer, 
         cloudPipeline->getPipelineLayout(), 0, 1, &descSet, 0, nullptr);
 
     CloudPushConstants pc{};
-    pc.iResolution[0] = (float)extent.width; pc.iResolution[1] = (float)extent.height;
-    pc.iTime = (float)glfwGetTime();
+    pc.iResolution[0] = static_cast<float>(extent.width); pc.iResolution[1] = static_cast<float>(extent.height);
+    pc.iTime = static_cast<float>(glfwGetTime());
     pc.sunDirX = 0.4f; pc.sunDirY = 0.5f; pc.sunDirZ = -0.6f;
-    pc.cloudBase = 600.0f; pc.cloudThickness = 1200.0f;
-    // --- camera transform ---
-    pc.camPosX = camera->position.x;  pc.camPosY = camera->position.y;  pc.camPosZ = camera->position.z;
-    pc.camFwdX = camera->front.x;     pc.camFwdY = camera->front.y;     pc.camFwdZ = camera->front.z;
-    pc.camRightX = camera->right.x;   pc.camRightY = camera->right.y;   pc.camRightZ = camera->right.z;
-    pc.camUpX = camera->up.x;         pc.camUpY = camera->up.y;         pc.camUpZ = camera->up.z;
+    pc.cloudBase = 15000.0f; pc.cloudThickness = 36000.0f;
+    // // --- camera transform ---
+    // pc.camPosX = camera->position.x;  pc.camPosY = camera->position.y;  pc.camPosZ = camera->position.z;
+    // pc.camFwdX = camera->front.x;     pc.camFwdY = camera->front.y;     pc.camFwdZ = camera->front.z;
+    // pc.camRightX = camera->right.x;   pc.camRightY = camera->right.y;   pc.camRightZ = camera->right.z;
+    // pc.camUpX = camera->up.x;         pc.camUpY = camera->up.y;         pc.camUpZ = camera->up.z;
+    pc.fovYRadians = glm::radians(camera->zoom);
     vkCmdPushConstants(commandBuffer, cloudPipeline->getPipelineLayout(),
         VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CloudPushConstants), &pc);
     vkCmdDispatch(commandBuffer, (extent.width + 15) / 16, (extent.height + 15) / 16, 1);

@@ -24,6 +24,7 @@ struct CloudPushConstants {
     float camRightX;
     float camRightY;
     float camRightZ;
+    float fovYRadians;
 };
 
 class CloudPipeline

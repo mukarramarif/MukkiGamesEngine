@@ -106,8 +106,8 @@ float fbmWorley3D(float x, float y, float z, int octaves) {
 
 std::vector<uint8_t> generatePerlinWorley3D(int width, int height, int depth) {
     std::vector<uint8_t> data(width * height * depth * 2);
-    const int perlinOctaves = 4;
-    const int worleyOctaves = 3;
+    const int perlinOctaves = 8;
+    const int worleyOctaves = 6;
 
     float scaleX = 4.0f / static_cast<float>(width);
     float scaleY = 4.0f / static_cast<float>(height);
@@ -132,10 +132,9 @@ std::vector<uint8_t> generatePerlinWorley3D(int width, int height, int depth) {
     return data;
 }
 
-std::vector<uint8_t> generateWeatherMap2D(int width, int height) {
-    std::vector<uint8_t> data(width * height);
+std::vector<uint8_t> generateWeatherMap2D(int width, int height, int channels) {
+    std::vector<uint8_t> data(width * height * channels);
     std::mt19937 rng(42);
-    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
 
     float scaleX = 3.0f / static_cast<float>(width);
     float scaleY = 3.0f / static_cast<float>(height);
@@ -144,10 +143,31 @@ std::vector<uint8_t> generateWeatherMap2D(int width, int height) {
         for (int x = 0; x < width; x++) {
             float px = static_cast<float>(x) * scaleX;
             float py = static_cast<float>(y) * scaleY;
-            float v = fbm3D(px, py, 0.0f, 3);
-            v = std::clamp(v * 1.2f - 0.1f, 0.0f, 1.0f);
-            v = std::pow(v, 0.7f);
-            data[y * width + x] = floatToByte(v);
+
+            // --- R: Cloud coverage (0=clear, 1=overcast) ---
+            float coverage = fbm3D(px, py, 0.0f, 3);
+            coverage = std::clamp(coverage * 1.2f - 0.1f, 0.0f, 1.0f);
+            coverage = std::pow(coverage, 0.7f);
+
+            // --- G: Precipitation chance (0=dry, 1=raining) ---
+            // Higher-frequency, sparser — rain is localised
+            float precip = fbm3D(px * 2.0f, py * 2.0f, 1.0f, 4);
+            precip = std::clamp(precip * 1.5f - 0.3f, 0.0f, 1.0f);
+            precip *= coverage;                  // rain only where there are clouds
+            precip = std::pow(precip, 1.5f);     // sparse rain cells
+
+            // --- B: Cloud type (0=stratus, 0.5=stratocumulus, 1=cumulus) ---
+            // Independent noise field so types vary across the map
+            float cloudType = fbm3D(px * 1.5f + 5.0f, py * 1.5f + 5.0f, 2.0f, 3);
+            cloudType = std::clamp(cloudType * 1.0f + 0.5f, 0.0f, 1.0f);
+
+            // --- A: unused (set to 1.0) ---
+            size_t idx = (y * width + x) * channels;
+            data[idx + 0] = floatToByte(coverage);
+            data[idx + 1] = floatToByte(precip);
+            data[idx + 2] = floatToByte(cloudType);
+            if (channels >= 4)
+                data[idx + 3] = 255;  // alpha = 1.0
         }
     }
     return data;
