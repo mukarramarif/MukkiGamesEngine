@@ -17,6 +17,7 @@
 #include "../Resources/Sceneloader.h"
 #include "../Resources/DeletionQueue.h"
 #include "../Resources/ShadowMap.h"
+#include "../Resources/CloudNoiseGenerator.h"
 #include "../uiManager/uiManager.h"
 #include "../pipeline/computePipeline.h"
 #include "../pipeline/CloudPipeline.h"
@@ -217,6 +218,7 @@ private:
 	void createSceneColorImage();
 	void createDepthSampler();
 	void createCloudNoiseTextures();
+	void regenerateCloudNoiseTextures();
 	void cleanupCloudResources();
 	void recordCloudCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 
@@ -313,6 +315,8 @@ private:
 	VkImageView          cloudWeatherImageView = VK_NULL_HANDLE;
 	VkSampler            cloudWeatherSampler = VK_NULL_HANDLE;
 	bool cloudsEnabled = true;
+	CloudNoiseParams cloudNoiseParams;
+	ImTextureID cloudWeatherTexID = nullptr;
 
 
 	// Physics

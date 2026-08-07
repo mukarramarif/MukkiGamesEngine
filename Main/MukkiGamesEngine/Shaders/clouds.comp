@@ -101,7 +101,7 @@ float sampleCloudDensity(vec3 noisePos, float heightFraction, float cloudType)
     // The lowFreqFBM controls how much the Perlin range is stretched,
     // creating billowy erosion detail.
     float perlin  = texture(noise3D, noisePos).r * 2.0;
-    float lowBound = worley1 * worley2 * worley3 - 0.5;
+    float lowBound = worley1 * worley2 * worley3 * 0.5 - 0.5;
     float density = Remap(perlin, lowBound, 1.0, 0.0, 1.0);
     density = clamp(density, 0.0, 1.0);
 

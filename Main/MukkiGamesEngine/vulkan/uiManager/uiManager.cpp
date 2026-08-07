@@ -1,5 +1,6 @@
 #include "uiManager.h"
 #include "uiThemes.h"
+#include "../Resources/CloudNoiseGenerator.h"
 #include <stdexcept>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -691,6 +692,88 @@ void UIManager::renderRayTracingControls(bool& resetAccumulation)
 
 	if (ImGui::Button("Reset Accumulation")) {
 		resetAccumulation = true;
+	}
+
+	ImGui::End();
+}
+
+void UIManager::renderCloudNoiseWindow(struct CloudNoiseParams& params, bool& regenerate, ImTextureID weatherTexID)
+{
+	ImGui::Begin("Cloud Noise", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+
+	if (ImGui::CollapsingHeader("Perlin-Worley 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Indent(10.0f);
+		ImGui::SliderFloat("Scale", &params.perlinWorleyScale, 0.5f, 16.0f);
+		ImGui::SliderInt("Perlin Octaves", &params.perlinOctaves, 1, 16);
+		ImGui::SliderInt("Worley Octaves", &params.worleyOctaves, 1, 16);
+		ImGui::Unindent(10.0f);
+	}
+
+	ImGui::Separator();
+
+	if (ImGui::CollapsingHeader("Weather Map 2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Indent(10.0f);
+		ImGui::SliderFloat("Scale", &params.weatherScale, 0.5f, 16.0f);
+		ImGui::Unindent(10.0f);
+
+		ImGui::Spacing();
+
+		// ── Coverage (R) ──
+		if (ImGui::CollapsingHeader("Coverage (R)")) {
+			ImGui::Indent(10.0f);
+			ImGui::SliderInt("Octaves", &params.coverageOctaves, 1, 12);
+			ImGui::SliderFloat("Multiplier", &params.coverageMultiplier, 0.0f, 3.0f);
+			ImGui::SliderFloat("Offset", &params.coverageOffset, -1.0f, 1.0f);
+			ImGui::SliderFloat("Power", &params.coveragePower, 0.1f, 3.0f);
+			ImGui::Unindent(10.0f);
+		}
+
+		// ── Precipitation (G) ──
+		if (ImGui::CollapsingHeader("Precipitation (G)")) {
+			ImGui::Indent(10.0f);
+			ImGui::SliderInt("Octaves", &params.precipOctaves, 1, 12);
+			ImGui::SliderFloat("Freq Multiplier", &params.precipFreqMultiplier, 0.5f, 8.0f);
+			ImGui::SliderFloat("Multiplier", &params.precipMultiplier, 0.0f, 3.0f);
+			ImGui::SliderFloat("Offset", &params.precipOffset, -1.0f, 1.0f);
+			ImGui::SliderFloat("Power", &params.precipPower, 0.1f, 3.0f);
+			ImGui::Unindent(10.0f);
+		}
+
+		// ── Cloud Type (B) ──
+		if (ImGui::CollapsingHeader("Cloud Type (B)")) {
+			ImGui::Indent(10.0f);
+			ImGui::SliderInt("Octaves", &params.cloudTypeOctaves, 1, 12);
+			ImGui::SliderFloat("Freq Multiplier", &params.cloudTypeFreqMultiplier, 0.5f, 8.0f);
+			ImGui::SliderFloat("Offset", &params.cloudTypeOffset, 0.0f, 20.0f);
+			ImGui::SliderFloat("Multiplier", &params.cloudTypeMultiplier, 0.0f, 3.0f);
+			ImGui::Unindent(10.0f);
+		}
+	}
+
+	ImGui::Separator();
+
+	// ── Texture preview ──
+	if (weatherTexID) {
+		ImGui::Text("Weather Map (R=Coverage, G=Precip, B=Type):");
+		ImGui::Image(weatherTexID, ImVec2(256, 256));
+		ImGui::Spacing();
+	}
+
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	float buttonWidth = 200.0f;
+	float windowWidth = ImGui::GetWindowSize().x;
+	ImGui::SetCursorPosX((windowWidth - buttonWidth) * 0.5f);
+	if (ImGui::Button("Regenerate Cloud Noise", ImVec2(buttonWidth, 30))) {
+		regenerate = true;
+	}
+
+	ImGui::Spacing();
+
+	ImGui::SetCursorPosX((windowWidth - 150.0f) * 0.5f);
+	if (ImGui::Button("Reset to Defaults", ImVec2(150, 0))) {
+		params = CloudNoiseParams{};
 	}
 
 	ImGui::End();

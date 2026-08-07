@@ -3099,10 +3099,10 @@ void VulkanApplication::recordCloudCommandBuffer(VkCommandBuffer commandBuffer, 
     pc.sunDirX = 0.4f; pc.sunDirY = 0.5f; pc.sunDirZ = -0.6f;
     pc.cloudBase = 15000.0f; pc.cloudThickness = 36000.0f;
     // // --- camera transform ---
-    // pc.camPosX = camera->position.x;  pc.camPosY = camera->position.y;  pc.camPosZ = camera->position.z;
-    // pc.camFwdX = camera->front.x;     pc.camFwdY = camera->front.y;     pc.camFwdZ = camera->front.z;
-    // pc.camRightX = camera->right.x;   pc.camRightY = camera->right.y;   pc.camRightZ = camera->right.z;
-    // pc.camUpX = camera->up.x;         pc.camUpY = camera->up.y;         pc.camUpZ = camera->up.z;
+    pc.camPosX = camera->position.x;  pc.camPosY = camera->position.y;  pc.camPosZ = camera->position.z;
+    pc.camFwdX = camera->front.x;     pc.camFwdY = camera->front.y;     pc.camFwdZ = camera->front.z;
+    pc.camRightX = camera->right.x;   pc.camRightY = camera->right.y;   pc.camRightZ = camera->right.z;
+    pc.camUpX = camera->up.x;         pc.camUpY = camera->up.y;         pc.camUpZ = camera->up.z;
     pc.fovYRadians = glm::radians(camera->zoom);
     vkCmdPushConstants(commandBuffer, cloudPipeline->getPipelineLayout(),
         VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CloudPushConstants), &pc);
