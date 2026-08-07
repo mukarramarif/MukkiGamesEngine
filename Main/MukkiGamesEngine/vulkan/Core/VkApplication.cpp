@@ -14,6 +14,7 @@
 #include <iostream>
 #include "../pipeline/computePipeline.h"
 #include "../Resources/CloudNoiseGenerator.h"
+#include <bindings/imgui_impl_vulkan.h>
 #include "../Physics/VehiclePhysics.h"
 
 
@@ -454,6 +455,13 @@ void VulkanApplication::initVulkan(const RenderConfig& config)
 	glfwSetInputMode(window->getGLFWwindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	glfwSetCursorPosCallback(window->getGLFWwindow(), mouseCallback);
 	SetupUIManager();
+
+	// Register cloud noise textures with ImGui for preview
+	if (cloudWeatherSampler && cloudWeatherImageView) {
+		cloudWeatherTexID = ImGui_ImplVulkan_AddTexture(
+			cloudWeatherSampler, cloudWeatherImageView,
+			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	}
 }
 
 void VulkanApplication::createSyncObjects()
@@ -1116,10 +1124,18 @@ void VulkanApplication::mainLoop()
 			}
 		}
 		uiManager->renderLightingWindow(lights, ambientStrength);
-		{	bool resetAcc = false;
+		{ bool resetAcc = false;
 			uiManager->renderRayTracingControls(resetAcc);
 			if (resetAcc) {
 				accumulationFrameCount = 0;
+			}
+		}
+		{
+			bool regenNoise = false;
+			uiManager->renderCloudNoiseWindow(cloudNoiseParams, regenNoise, cloudWeatherTexID);
+			if (regenNoise) {
+				vkDeviceWaitIdle(device->getDevice());
+				regenerateCloudNoiseTextures();
 			}
 		}
 		bool loadSceneFlag = false;
@@ -2671,7 +2687,7 @@ void VulkanApplication::initCloudPipeline()
 void VulkanApplication::createCloudNoiseTextures()
 {
     const int noiseRes = 64;
-    auto noiseData = generatePerlinWorley3D(noiseRes, noiseRes, noiseRes);
+    auto noiseData = generatePerlinWorley3D(noiseRes, noiseRes, noiseRes, cloudNoiseParams);
 
     VkDeviceSize imageSize = static_cast<VkDeviceSize>(noiseRes) * noiseRes * noiseRes * 2;
 
@@ -2778,7 +2794,7 @@ void VulkanApplication::createCloudNoiseTextures()
     if (vkCreateSampler(vkDev, &samplerInfo, nullptr, &cloudNoise3DSampler) != VK_SUCCESS)
         throw std::runtime_error("failed to create cloud noise 3D sampler!");
 
-    auto weatherData = generateWeatherMap2D(256, 256,4);
+    auto weatherData = generateWeatherMap2D(256, 256, 4, cloudNoiseParams);
     VkDeviceSize weatherSize = 256 * 256 * 4;
 
     VkBuffer wStaging; VkDeviceMemory wStagingMem;
@@ -2859,6 +2875,47 @@ void VulkanApplication::createCloudNoiseTextures()
     wSampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     if (vkCreateSampler(vkDev, &wSampler, nullptr, &cloudWeatherSampler) != VK_SUCCESS)
         throw std::runtime_error("failed to create weather sampler!");
+}
+
+void VulkanApplication::regenerateCloudNoiseTextures()
+{
+    // Remove old ImGui texture before destroying Vulkan resources
+    if (cloudWeatherTexID) {
+        ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)cloudWeatherTexID);
+        cloudWeatherTexID = nullptr;
+    }
+
+    // Clean up old noise resources (preserve output/scene/depth)
+    VkDevice vkDev = device->getDevice();
+    if (cloudNoise3DImageView)   { vkDestroyImageView(vkDev, cloudNoise3DImageView, nullptr); cloudNoise3DImageView = VK_NULL_HANDLE; }
+    if (cloudNoise3DSampler)     { vkDestroySampler(vkDev, cloudNoise3DSampler, nullptr); cloudNoise3DSampler = VK_NULL_HANDLE; }
+    if (cloudNoise3DImage)       { vkDestroyImage(vkDev, cloudNoise3DImage, nullptr); cloudNoise3DImage = VK_NULL_HANDLE; }
+    if (cloudNoise3DMemory)      { vkFreeMemory(vkDev, cloudNoise3DMemory, nullptr); cloudNoise3DMemory = VK_NULL_HANDLE; }
+    if (cloudWeatherImageView)   { vkDestroyImageView(vkDev, cloudWeatherImageView, nullptr); cloudWeatherImageView = VK_NULL_HANDLE; }
+    if (cloudWeatherSampler)     { vkDestroySampler(vkDev, cloudWeatherSampler, nullptr); cloudWeatherSampler = VK_NULL_HANDLE; }
+    if (cloudWeatherImage)       { vkDestroyImage(vkDev, cloudWeatherImage, nullptr); cloudWeatherImage = VK_NULL_HANDLE; }
+    if (cloudWeatherMemory)      { vkFreeMemory(vkDev, cloudWeatherMemory, nullptr); cloudWeatherMemory = VK_NULL_HANDLE; }
+
+    // Regenerate
+    createCloudNoiseTextures();
+
+    // Register new texture with ImGui
+    if (cloudWeatherSampler && cloudWeatherImageView) {
+        cloudWeatherTexID = ImGui_ImplVulkan_AddTexture(
+            cloudWeatherSampler, cloudWeatherImageView,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    // Rebind descriptor sets
+    if (cloudPipeline) {
+        cloudPipeline->resetDescriptorPool(device.get());
+        cloudPipeline->createDescriptorSets(device.get(),
+            cloudOutputImageView,
+            cloudSceneColorImageView, cloudSceneColorSampler,
+            cloudDepthImageView, cloudDepthSampler,
+            cloudNoise3DImageView, cloudNoise3DSampler,
+            cloudWeatherImageView, cloudWeatherSampler);
+    }
 }
 
 void VulkanApplication::createCloudOutputImage()
@@ -2997,6 +3054,10 @@ void VulkanApplication::createDepthSampler()
 
 void VulkanApplication::cleanupCloudResources()
 {
+    if (cloudWeatherTexID) {
+        ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)cloudWeatherTexID);
+        cloudWeatherTexID = nullptr;
+    }
     if (cloudPipeline) cloudPipeline->cleanup(device.get());
     auto d = device->getDevice();
     if (cloudOutputImageView)    { vkDestroyImageView(d, cloudOutputImageView, nullptr); cloudOutputImageView = VK_NULL_HANDLE; }
