@@ -220,6 +220,9 @@ private:
 	void createCloudNoiseTextures();
 	void regenerateCloudNoiseTextures();
 	void cleanupCloudResources();
+	void createCloudNoiseGenPipeline();
+	void cleanupCloudNoiseGenPipeline();
+
 	void recordCloudCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 
 	// New methods for pipeline setup
@@ -314,6 +317,12 @@ private:
 	VkDeviceMemory       cloudWeatherMemory = VK_NULL_HANDLE;
 	VkImageView          cloudWeatherImageView = VK_NULL_HANDLE;
 	VkSampler            cloudWeatherSampler = VK_NULL_HANDLE;
+	//GPU Noise
+	VkPipeline            cloudNoiseGenPipeline       = VK_NULL_HANDLE;
+	VkPipelineLayout      cloudNoiseGenPipelineLayout = VK_NULL_HANDLE;
+	VkDescriptorSetLayout cloudNoiseGenDescSetLayout  = VK_NULL_HANDLE;
+	VkDescriptorPool      cloudNoiseGenDescPool       = VK_NULL_HANDLE;
+	VkDescriptorSet       cloudNoiseGenDescSet        = VK_NULL_HANDLE;
 	bool cloudsEnabled = true;
 	CloudNoiseParams cloudNoiseParams;
 	ImTextureID cloudWeatherTexID = nullptr;

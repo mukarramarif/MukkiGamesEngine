@@ -9,8 +9,9 @@ struct CloudPushConstants {
     float iResolution[2];
     float iTime;
     float sunDirX, sunDirY, sunDirZ;
-    float cloudBase;
-    float cloudThickness;
+    float boxMinX, boxMinY, boxMinZ;
+    float boxMaxX, boxMaxY, boxMaxZ;
+
     // camera Transforms
     float camPosX;
     float camPosY;

@@ -8,6 +8,7 @@
 #include "VkApplication.h"
 #include "EngineWindow.h"
 #include "../objects/vertex.h"
+#include "../utils/Utils.h"
 #include <stdexcept>
 #include <array>
 #include "ShaderCompiler.h"
@@ -2658,11 +2659,97 @@ void VulkanApplication::cleanupComputeResources()
 		rayTracingPipeline->cleanup();
 	}
 }
+struct CloudNoiseGenPushConstants {
+    int   noiseResX, noiseResY, noiseResZ;
+    float perlinFreq;
+    int   perlinOctaves;
+};
 
+void VulkanApplication::createCloudNoiseGenPipeline()
+{
+    VkDevice vkDev = device->getDevice();
+
+    // --- Descriptor set layout (binding 0 = storage image) ---
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding         = 0;
+    binding.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    binding.descriptorCount = 1;
+    binding.stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings    = &binding;
+    if (vkCreateDescriptorSetLayout(vkDev, &layoutInfo, nullptr, &cloudNoiseGenDescSetLayout) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud noise gen desc set layout!");
+
+    // --- Descriptor pool ---
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSize.descriptorCount = 1;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes    = &poolSize;
+    poolInfo.maxSets       = 1;
+    if (vkCreateDescriptorPool(vkDev, &poolInfo, nullptr, &cloudNoiseGenDescPool) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud noise gen desc pool!");
+
+    // --- Shader module ---
+    auto code = EngineUtils::readFile("Shaders/cloudNoise.comp.spv");
+    VkShaderModuleCreateInfo smInfo{};
+    smInfo.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    smInfo.codeSize = code.size();
+    smInfo.pCode    = reinterpret_cast<const uint32_t*>(code.data());
+    VkShaderModule sm;
+    if (vkCreateShaderModule(vkDev, &smInfo, nullptr, &sm) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud noise gen shader module!");
+
+    VkPipelineShaderStageCreateInfo stage{};
+    stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    stage.module = sm;
+    stage.pName  = "main";
+
+    VkPushConstantRange pcr{};
+    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pcr.offset     = 0;
+    pcr.size       = sizeof(CloudNoiseGenPushConstants);
+
+    VkPipelineLayoutCreateInfo plInfo{};
+    plInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plInfo.setLayoutCount         = 1;
+    plInfo.pSetLayouts            = &cloudNoiseGenDescSetLayout;
+    plInfo.pushConstantRangeCount = 1;
+    plInfo.pPushConstantRanges    = &pcr;
+    if (vkCreatePipelineLayout(vkDev, &plInfo, nullptr, &cloudNoiseGenPipelineLayout) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud noise gen pipeline layout!");
+
+    VkComputePipelineCreateInfo cpInfo{};
+    cpInfo.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpInfo.stage  = stage;
+    cpInfo.layout = cloudNoiseGenPipelineLayout;
+    if (vkCreateComputePipelines(vkDev, VK_NULL_HANDLE, 1, &cpInfo, nullptr, &cloudNoiseGenPipeline) != VK_SUCCESS)
+        throw std::runtime_error("failed to create cloud noise gen pipeline!");
+
+    vkDestroyShaderModule(vkDev, sm, nullptr);
+}
+
+void VulkanApplication::cleanupCloudNoiseGenPipeline()
+{
+    VkDevice d = device->getDevice();
+    if (cloudNoiseGenPipeline)       { vkDestroyPipeline(d, cloudNoiseGenPipeline, nullptr);       cloudNoiseGenPipeline       = VK_NULL_HANDLE; }
+    if (cloudNoiseGenPipelineLayout) { vkDestroyPipelineLayout(d, cloudNoiseGenPipelineLayout, nullptr); cloudNoiseGenPipelineLayout = VK_NULL_HANDLE; }
+    if (cloudNoiseGenDescPool)       { vkDestroyDescriptorPool(d, cloudNoiseGenDescPool, nullptr);       cloudNoiseGenDescPool       = VK_NULL_HANDLE; }
+    if (cloudNoiseGenDescSetLayout)  { vkDestroyDescriptorSetLayout(d, cloudNoiseGenDescSetLayout, nullptr);  cloudNoiseGenDescSetLayout  = VK_NULL_HANDLE; }
+}
 void VulkanApplication::initCloudPipeline()
 {
     try {
+        createCloudNoiseGenPipeline();
         createCloudNoiseTextures();
+
         createCloudOutputImage();
         createSceneColorImage();
         createDepthSampler();
@@ -2687,38 +2774,29 @@ void VulkanApplication::initCloudPipeline()
 void VulkanApplication::createCloudNoiseTextures()
 {
     const int noiseRes = 64;
-    auto noiseData = generatePerlinWorley3D(noiseRes, noiseRes, noiseRes, cloudNoiseParams);
+    VkDevice vkDev = device->getDevice();
 
-    VkDeviceSize imageSize = static_cast<VkDeviceSize>(noiseRes) * noiseRes * noiseRes * 2;
+    VkImageSubresourceRange range{};
+    range.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    range.baseMipLevel   = 0;
+    range.levelCount     = 1;
+    range.baseArrayLayer = 0;
+    range.layerCount     = 1;
 
-    VkBuffer stagingBuffer;
-    VkDeviceMemory stagingMemory;
-    bufferManager->createBuffer(imageSize,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        stagingBuffer, stagingMemory);
-
-    void* mapped;
-    vkMapMemory(device->getDevice(), stagingMemory, 0, imageSize, 0, &mapped);
-    memcpy(mapped, noiseData.data(), static_cast<size_t>(imageSize));
-    vkUnmapMemory(device->getDevice(), stagingMemory);
-
+    // --- 1. Create 3D noise image (RGBA8, STORAGE + SAMPLED) ---
     VkImageCreateInfo imageInfo{};
     imageInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType     = VK_IMAGE_TYPE_3D;
-    imageInfo.extent.width  = static_cast<uint32_t>(noiseRes);
-    imageInfo.extent.height = static_cast<uint32_t>(noiseRes);
-    imageInfo.extent.depth  = static_cast<uint32_t>(noiseRes);
+    imageInfo.extent        = { uint32_t(noiseRes), uint32_t(noiseRes), uint32_t(noiseRes) };
     imageInfo.mipLevels     = 1;
     imageInfo.arrayLayers   = 1;
-    imageInfo.format        = VK_FORMAT_R8G8_UNORM;
+    imageInfo.format        = VK_FORMAT_R8G8B8A8_UNORM;
     imageInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
 
-    VkDevice vkDev = device->getDevice();
     if (vkCreateImage(vkDev, &imageInfo, nullptr, &cloudNoise3DImage) != VK_SUCCESS)
         throw std::runtime_error("failed to create cloud noise 3D image!");
 
@@ -2732,55 +2810,85 @@ void VulkanApplication::createCloudNoiseTextures()
         throw std::runtime_error("failed to allocate cloud noise 3D memory!");
     vkBindImageMemory(vkDev, cloudNoise3DImage, cloudNoise3DMemory, 0);
 
-    VkCommandBuffer cmd = commandBufferManager->beginSingleTimeCommands();
-
-    VkImageSubresourceRange range{};
-    range.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-    range.baseMipLevel   = 0;
-    range.levelCount     = 1;
-    range.baseArrayLayer = 0;
-    range.layerCount     = 1;
-
-    VkImageMemoryBarrier barrier{};
-    barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.srcAccessMask       = 0;
-    barrier.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.image               = cloudNoise3DImage;
-    barrier.subresourceRange    = range;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-        0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    VkBufferImageCopy copyRegion{};
-    copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    copyRegion.imageSubresource.layerCount = 1;
-    copyRegion.imageExtent = { static_cast<uint32_t>(noiseRes), static_cast<uint32_t>(noiseRes), static_cast<uint32_t>(noiseRes) };
-    vkCmdCopyBufferToImage(cmd, stagingBuffer, cloudNoise3DImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
-
-    VkImageMemoryBarrier barrier2{};
-    barrier2.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier2.oldLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier2.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier2.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier2.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
-    barrier2.image               = cloudNoise3DImage;
-    barrier2.subresourceRange    = range;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        0, 0, nullptr, 0, nullptr, 1, &barrier2);
-
-    commandBufferManager->endSingleTimeCommands(cmd);
-    bufferManager->destroyBuffer(stagingBuffer, stagingMemory);
-
+    // --- 2. Create image view (used for both storage + sampled access) ---
     VkImageViewCreateInfo viewInfo{};
-    viewInfo.sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image    = cloudNoise3DImage;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_3D;
-    viewInfo.format   = VK_FORMAT_R8G8_UNORM;
+    viewInfo.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image            = cloudNoise3DImage;
+    viewInfo.viewType         = VK_IMAGE_VIEW_TYPE_3D;
+    viewInfo.format           = VK_FORMAT_R8G8B8A8_UNORM;
     viewInfo.subresourceRange = range;
     if (vkCreateImageView(vkDev, &viewInfo, nullptr, &cloudNoise3DImageView) != VK_SUCCESS)
         throw std::runtime_error("failed to create cloud noise 3D view!");
 
+    // --- 3. Allocate & write descriptor set (storage image for noise gen) ---
+    vkResetDescriptorPool(vkDev, cloudNoiseGenDescPool, 0);
+
+    VkDescriptorSetAllocateInfo dsAlloc{};
+    dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool     = cloudNoiseGenDescPool;
+    dsAlloc.descriptorSetCount = 1;
+    dsAlloc.pSetLayouts        = &cloudNoiseGenDescSetLayout;
+    if (vkAllocateDescriptorSets(vkDev, &dsAlloc, &cloudNoiseGenDescSet) != VK_SUCCESS)
+        throw std::runtime_error("failed to allocate cloud noise gen descriptor set!");
+
+    VkDescriptorImageInfo storageImgInfo{};
+    storageImgInfo.imageView   = cloudNoise3DImageView;
+    storageImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkWriteDescriptorSet writeDs{};
+    writeDs.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writeDs.dstSet          = cloudNoiseGenDescSet;
+    writeDs.dstBinding      = 0;
+    writeDs.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writeDs.descriptorCount = 1;
+    writeDs.pImageInfo      = &storageImgInfo;
+    vkUpdateDescriptorSets(vkDev, 1, &writeDs, 0, nullptr);
+
+    // --- 4. Generate noise on GPU ---
+    VkCommandBuffer cmd = commandBufferManager->beginSingleTimeCommands();
+
+    VkImageMemoryBarrier toGeneral{};
+    toGeneral.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toGeneral.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+    toGeneral.newLayout           = VK_IMAGE_LAYOUT_GENERAL;
+    toGeneral.srcAccessMask       = 0;
+    toGeneral.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+    toGeneral.image               = cloudNoise3DImage;
+    toGeneral.subresourceRange    = range;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &toGeneral);
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cloudNoiseGenPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+        cloudNoiseGenPipelineLayout, 0, 1, &cloudNoiseGenDescSet, 0, nullptr);
+
+    CloudNoiseGenPushConstants npc{};
+    npc.noiseResX     = noiseRes;
+    npc.noiseResY     = noiseRes;
+    npc.noiseResZ     = noiseRes;
+    npc.perlinFreq    = 8.0f;
+    npc.perlinOctaves = 3;
+    vkCmdPushConstants(cmd, cloudNoiseGenPipelineLayout,
+        VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CloudNoiseGenPushConstants), &npc);
+
+    vkCmdDispatch(cmd, (noiseRes + 7) / 8, (noiseRes + 7) / 8, (noiseRes + 7) / 8);
+
+    VkImageMemoryBarrier toReadOnly{};
+    toReadOnly.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toReadOnly.oldLayout           = VK_IMAGE_LAYOUT_GENERAL;
+    toReadOnly.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    toReadOnly.srcAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+    toReadOnly.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+    toReadOnly.image               = cloudNoise3DImage;
+    toReadOnly.subresourceRange    = range;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &toReadOnly);
+
+    commandBufferManager->endSingleTimeCommands(cmd);
+
+    // --- 5. Create sampler ---
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     samplerInfo.magFilter    = VK_FILTER_LINEAR;
@@ -2794,6 +2902,7 @@ void VulkanApplication::createCloudNoiseTextures()
     if (vkCreateSampler(vkDev, &samplerInfo, nullptr, &cloudNoise3DSampler) != VK_SUCCESS)
         throw std::runtime_error("failed to create cloud noise 3D sampler!");
 
+    // --- 6. Weather map (unchanged) ---
     auto weatherData = generateWeatherMap2D(256, 256, 4, cloudNoiseParams);
     VkDeviceSize weatherSize = 256 * 256 * 4;
 
@@ -2801,6 +2910,7 @@ void VulkanApplication::createCloudNoiseTextures()
     bufferManager->createBuffer(weatherSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         wStaging, wStagingMem);
+    void* mapped;
     vkMapMemory(vkDev, wStagingMem, 0, weatherSize, 0, &mapped);
     memcpy(mapped, weatherData.data(), weatherSize);
     vkUnmapMemory(vkDev, wStagingMem);
@@ -2831,11 +2941,11 @@ void VulkanApplication::createCloudNoiseTextures()
         throw std::runtime_error("failed to allocate weather memory!");
     vkBindImageMemory(vkDev, cloudWeatherImage, cloudWeatherMemory, 0);
 
-    cmd = commandBufferManager->beginSingleTimeCommands();
     VkImageSubresourceRange wRange{};
     wRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     wRange.layerCount = 1; wRange.levelCount = 1;
 
+    cmd = commandBufferManager->beginSingleTimeCommands();
     VkImageMemoryBarrier wb{};
     wb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     wb.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; wb.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -2863,7 +2973,7 @@ void VulkanApplication::createCloudNoiseTextures()
     VkImageViewCreateInfo wViewInfo{};
     wViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     wViewInfo.image = cloudWeatherImage; wViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    wViewInfo.format =  VK_FORMAT_R8G8B8A8_UNORM; wViewInfo.subresourceRange = wRange;
+    wViewInfo.format = VK_FORMAT_R8G8B8A8_UNORM; wViewInfo.subresourceRange = wRange;
     if (vkCreateImageView(vkDev, &wViewInfo, nullptr, &cloudWeatherImageView) != VK_SUCCESS)
         throw std::runtime_error("failed to create weather view!");
 
@@ -2877,6 +2987,7 @@ void VulkanApplication::createCloudNoiseTextures()
         throw std::runtime_error("failed to create weather sampler!");
 }
 
+
 void VulkanApplication::regenerateCloudNoiseTextures()
 {
     // Remove old ImGui texture before destroying Vulkan resources
@@ -2887,6 +2998,9 @@ void VulkanApplication::regenerateCloudNoiseTextures()
 
     // Clean up old noise resources (preserve output/scene/depth)
     VkDevice vkDev = device->getDevice();
+
+    // Also free the noise-gen descriptor set (pool reset will handle it,
+    // but destroy the old image/view/sampler first)
     if (cloudNoise3DImageView)   { vkDestroyImageView(vkDev, cloudNoise3DImageView, nullptr); cloudNoise3DImageView = VK_NULL_HANDLE; }
     if (cloudNoise3DSampler)     { vkDestroySampler(vkDev, cloudNoise3DSampler, nullptr); cloudNoise3DSampler = VK_NULL_HANDLE; }
     if (cloudNoise3DImage)       { vkDestroyImage(vkDev, cloudNoise3DImage, nullptr); cloudNoise3DImage = VK_NULL_HANDLE; }
@@ -2896,7 +3010,11 @@ void VulkanApplication::regenerateCloudNoiseTextures()
     if (cloudWeatherImage)       { vkDestroyImage(vkDev, cloudWeatherImage, nullptr); cloudWeatherImage = VK_NULL_HANDLE; }
     if (cloudWeatherMemory)      { vkFreeMemory(vkDev, cloudWeatherMemory, nullptr); cloudWeatherMemory = VK_NULL_HANDLE; }
 
-    // Regenerate
+    // Recreate noise-gen pipeline (pools+layouts are persistent; we just reset)
+    cleanupCloudNoiseGenPipeline();
+    createCloudNoiseGenPipeline();
+
+    // Regenerate noise textures
     createCloudNoiseTextures();
 
     // Register new texture with ImGui
@@ -2917,6 +3035,7 @@ void VulkanApplication::regenerateCloudNoiseTextures()
             cloudWeatherImageView, cloudWeatherSampler);
     }
 }
+
 
 void VulkanApplication::createCloudOutputImage()
 {
@@ -3058,6 +3177,7 @@ void VulkanApplication::cleanupCloudResources()
         ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)cloudWeatherTexID);
         cloudWeatherTexID = nullptr;
     }
+    cleanupCloudNoiseGenPipeline();
     if (cloudPipeline) cloudPipeline->cleanup(device.get());
     auto d = device->getDevice();
     if (cloudOutputImageView)    { vkDestroyImageView(d, cloudOutputImageView, nullptr); cloudOutputImageView = VK_NULL_HANDLE; }
@@ -3077,6 +3197,7 @@ void VulkanApplication::cleanupCloudResources()
     if (cloudWeatherSampler)     { vkDestroySampler(d, cloudWeatherSampler, nullptr); cloudWeatherSampler = VK_NULL_HANDLE; }
     if (cloudWeatherImage)       { vkDestroyImage(d, cloudWeatherImage, nullptr); cloudWeatherImage = VK_NULL_HANDLE; }
     if (cloudWeatherMemory)      { vkFreeMemory(d, cloudWeatherMemory, nullptr); cloudWeatherMemory = VK_NULL_HANDLE; }
+
 }
 
 void VulkanApplication::recordCloudCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
@@ -3158,7 +3279,8 @@ void VulkanApplication::recordCloudCommandBuffer(VkCommandBuffer commandBuffer, 
     pc.iResolution[0] = static_cast<float>(extent.width); pc.iResolution[1] = static_cast<float>(extent.height);
     pc.iTime = static_cast<float>(glfwGetTime());
     pc.sunDirX = 0.4f; pc.sunDirY = 0.5f; pc.sunDirZ = -0.6f;
-    pc.cloudBase = 15000.0f; pc.cloudThickness = 36000.0f;
+    pc.boxMinX = -30000.0f; pc.boxMinY = 0.0f; pc.boxMinZ = -30000.0f;
+    pc.boxMaxX =  30000.0f; pc.boxMaxY = 35000.0f; pc.boxMaxZ =  30000.0f;
     // // --- camera transform ---
     pc.camPosX = camera->position.x;  pc.camPosY = camera->position.y;  pc.camPosZ = camera->position.z;
     pc.camFwdX = camera->front.x;     pc.camFwdY = camera->front.y;     pc.camFwdZ = camera->front.z;

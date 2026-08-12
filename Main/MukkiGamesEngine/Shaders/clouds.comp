@@ -1,262 +1,196 @@
 #version 450
-// 16x16 workgroup for efficient GPU occupancy
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
-// Descriptor bindings — written by CloudPipeline on host side
-layout(set = 0, binding = 0, rgba8) uniform writeonly image2D outputImage; // composited output
-layout(set = 0, binding = 1) uniform sampler2D sceneColor; // captured raster scene
-layout(set = 0, binding = 2) uniform sampler2D depthTexture; // depth buffer (sky detection)
-layout(set = 0, binding = 3) uniform sampler3D noise3D; // 64³ RG8: perlin(R) + worley(G)
-layout(set = 0, binding = 4) uniform sampler2D weatherMap; // 256² R8: cloud coverage [0=clear, 1=overcast]
+layout(set = 0, binding = 0, rgba8) uniform writeonly image2D outputImage;
+layout(set = 0, binding = 1) uniform sampler2D sceneColor;
+layout(set = 0, binding = 2) uniform sampler2D depthTexture;
+layout(set = 0, binding = 3) uniform sampler3D noise3D;
+layout(set = 0, binding = 4) uniform sampler2D weatherMap;
 
-// Must match CloudPushConstants in CloudPipeline.h byte-for-byte.
-// NOTE: vec3 would introduce 4 bytes of std140 alignment padding, so we use
-// three separate floats to exactly match the host-side C struct layout.
 layout(push_constant) uniform PushConstants {
-    vec2  iResolution;     // offset  0,  render target dimensions
-    float iTime;           // offset  8,  elapsed seconds for cloud drift
-    float sunDirX;         // offset 12,
-    float sunDirY;         // offset 16,  sun direction (normalized)
-    float sunDirZ;         // offset 20,
-    float cloudBase;       // offset 24,  bottom of cloud layer (world-space Y, default 600)
-    float cloudThickness;  // offset 28,  vertical extent of cloud layer (default 1200 → top at 1800)
-    // world space transforms
-    float camPosX;
-    float camPosY;
-    float camPosZ;
-    float camFwdX;
-    float camFwdY;
-    float camFwdZ;
-    float camUpX;
-    float camUpY;
-    float camUpZ;
-    float camRightX;
-    float camRightY;
-    float camRightZ;
-    float fovYRadians;     // offset 44,  camera vertical FOV in radians
+    vec2  iResolution;
+    float iTime;
+    float sunDirX, sunDirY, sunDirZ;
+    float boxMinX, boxMinY, boxMinZ;
+    float boxMaxX, boxMaxY, boxMaxZ;
+    float camPosX, camPosY, camPosZ;
+    float camFwdX, camFwdY, camFwdZ;
+    float camUpX, camUpY, camUpZ;
+    float camRightX, camRightY, camRightZ;
+    float fovYRadians;
 } pc;
 
-// Convenience macros
 #define sunDir   vec3(pc.sunDirX,  pc.sunDirY,  pc.sunDirZ)
 #define camPos   vec3(pc.camPosX,  pc.camPosY,  pc.camPosZ)
 #define camFwd   vec3(pc.camFwdX,  pc.camFwdY,  pc.camFwdZ)
 #define camRight vec3(pc.camRightX, pc.camRightY, pc.camRightZ)
 #define camUp    vec3(pc.camUpX,   pc.camUpY,   pc.camUpZ)
-// ---------------------------------------------------------------------------
-// Ray-march tuning constants — tweak to adjust look and performance
-// ---------------------------------------------------------------------------
-const float STEP_SIZE       = 30.0;  // target step size in world units
-const int   MAX_STEPS       = 64;    // safety cap per ray
-const float ABSORPTION      = 0.004; // extinction coefficient (per world-unit · density)
-const float WEATHER_SCALE   = 1.0 / 60000.0; // weather map: 60,000 × 60,000 m world
-const float NOISE_SCALE     = 0.006; // world → noise-texture coordinate space
+#define boxMin   vec3(pc.boxMinX,  pc.boxMinY,  pc.boxMinZ)
+#define boxMax   vec3(pc.boxMaxX,  pc.boxMaxY,  pc.boxMaxZ)
 
-// ---------------------------------------------------------------------------
-// Helper functions
-// ---------------------------------------------------------------------------
+const float STEP_SIZE       = 100.0;
+const int   MAX_STEPS       = 384;
+const float ABSORPTION      = 0.0007;
+const float WEATHER_SCALE   = 1.0 / 60000.0;
+const float NOISE_SCALE     = 0.002;
 
-// Linear remap from one range to another
-float Remap(float v, float lo, float hi, float newLo, float newHi)
-{
+const float LIGHT_STEP      = 200.0;
+const int   MAX_LIGHT_STEPS = 16;
+const vec3  SUN_COLOR       = vec3(1.0, 0.96, 0.88);
+const float AMBIENT         = 0.25;
+const float RIM_POWER       = 4.0;
+const float RIM_STRENGTH    = 0.40;
+// Each vec4: (bottomFadeInStart, bottomFadeInEnd, topFadeOutStart, topFadeOutEnd)
+// Siggraph 2017 Decima Engine
+const vec4 STRATUS_GRADIENT       = vec4(0.0, 0.10, 0.20, 0.30);
+const vec4 STRATOCUMULUS_GRADIENT = vec4(0.02, 0.20, 0.48, 0.625);
+const vec4 CUMULUS_GRADIENT       = vec4(0.0, 0.1625, 0.88, 0.98);
+
+float Remap(float v, float lo, float hi, float newLo, float newHi) {
     return newLo + (v - lo) / (hi - lo) * (newHi - newLo);
 }
-
-// Fractional height of a world-space point within the cloud layer.
-// Returns 0 at cloud base, 1 at cloud top; values outside [0,1] mean the
-// point is above or below the layer.
-float GetHeightFractionForPoint(vec3 worldPos, float cloudType)
-{
-    float effectiveBase = pc.cloudBase;
-    float effectiveThickness = mix(pc.cloudThickness * 0.33, pc.cloudThickness,cloudType);
-
-    return (worldPos.y - effectiveBase) / max(effectiveThickness, 0.001);
+/*
+* Box ray intersection from Sebastian Launge's volumetric clouds
+*/
+bool RayAABB(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax, out float tNear, out float tFar) {
+    vec3 invDir = 1.0 / rd;
+    vec3 t0 = (bmin - ro) * invDir;
+    vec3 t1 = (bmax - ro) * invDir;
+    vec3 tmin = min(t0, t1);
+    vec3 tmax = max(t0, t1);
+    tNear = max(max(tmin.x, tmin.y), tmin.z);
+    tFar  = min(min(tmax.x, tmax.y), tmax.z);
+    return tFar > max(tNear, 0.0);
 }
 
-// Height-based density profile. Varies by cloud type:
-//   Stratus  (type=0): dense near base, thin layer
-//   Cumulus  (type=1): dense through full depth, tall puffy clouds
-float GetDensityHeightGradient(float heightFraction, float cloudType)
-{
-    float t = clamp(heightFraction, 0.0, 1.0);
-    float center = mix(0.15, 0.6, cloudType);
-    float spread = mix(0.50, 0.6, cloudType);
-    float grad = 1.0 - abs(t - center) / spread;
-    return clamp(grad, 0.0, 1.0);
+float GetHeightFrac(vec3 worldPos, float cloudType) {
+    float boxHeight = boxMax.y - boxMin.y;
+    return (worldPos.y - boxMin.y) / max(boxHeight, 0.001);
 }
 
-// Sample volumetric cloud density at a noise-space position.
-// noisePos:       position scaled into the 3D noise texture's coordinate range
-// heightFraction: fractional height inside the cloud layer [0,1]
-float sampleCloudDensity(vec3 noisePos, float heightFraction, float cloudType)
-{
-    // --- Multi-frequency Worley FBM ---
-    // Sample Worley (G channel) at three frequency scales to build
-    // a low-frequency FBM that dilates/erodes the Perlin base shape.
-    float worley1 = texture(noise3D, noisePos).g;
-    float worley2 = texture(noise3D, noisePos * 2.0).g;
-    float worley3 = texture(noise3D, noisePos * 4.0).g;
-    float lowFreqFBM = worley1 * 0.625 + worley2 * 0.25 + worley3 * 0.125;
+float GetHeightGradient(float h, float cloudType) {
+    float t = clamp(h, 0.0, 1.0);
 
-    // Base cloud shape: Perlin (R) dilated by the Worley FBM.
-    // The lowFreqFBM controls how much the Perlin range is stretched,
-    // creating billowy erosion detail.
-    float perlin  = texture(noise3D, noisePos).r * 2.0;
-    float lowBound = worley1 * worley2 * worley3 * 0.5 - 0.5;
-    float density = Remap(perlin, lowBound, 1.0, 0.0, 1.0);
-    density = clamp(density, 0.0, 1.0);
+    // Blend weights between the three cloud archetypes (always sum to 1.0)
+    float stratusFactor       = 1.0 - clamp(cloudType * 2.0,          0.0, 1.0);
+    float stratoCumulusFactor = 1.0 - abs(cloudType - 0.5) * 2.0;
+    float cumulusFactor       =        clamp(cloudType - 0.5, 0.0, 1.0) * 2.0;
 
-    // Apply height gradient (stratus hugs the base, cumulus fills the layer)
-    density *= GetDensityHeightGradient(heightFraction, cloudType);
+    vec4 gradient = stratusFactor       * STRATUS_GRADIENT
+                  + stratoCumulusFactor * STRATOCUMULUS_GRADIENT
+                  + cumulusFactor       * CUMULUS_GRADIENT;
 
+    // Nubis-Decima: fade in at bottom, fade out at top → plateau in between
+    return smoothstep(gradient.x, gradient.y, t) - smoothstep(gradient.z, gradient.w, t);
+}
+
+float SampleDensity(vec3 noisePos, float hFrac, float cloudType) {
+    vec4  n0      = texture(noise3D, noisePos);
+    float perlin  = n0.r;                 // base noise (0..1)
+    float detail  = n0.g;                 // detail channel (0..1)
+
+    // Erosion mask: multiply two higher-octave samples for crevice detail
+    float w2      = texture(noise3D, noisePos * 2.0).g;
+    float w3      = texture(noise3D, noisePos * 4.0).b;
+    float erosion = detail * w2 * w3;
+
+    // Low bound controls how much of the base noise survives:
+    //   erosion=1.0 → lowBound= 0.0  (full density)
+    //   erosion=0.0 → lowBound=-0.25 (sparse, lots of holes)
+    float lowBound = erosion * 0.25 - 0.25;
+
+    float density  = Remap(perlin, lowBound, 1.0, 0.0, 1.0);
+    density        = clamp(density, 0.0, 1.0);
+    density       *= GetHeightGradient(hFrac, cloudType);
     return density;
 }
 
+float LightOcclusion(vec3 worldPos, float cloudType) {
+    float od = 0.0;
+    float boxHeight = boxMax.y - boxMin.y;
+    int steps = min(int(boxHeight / LIGHT_STEP) + 1, MAX_LIGHT_STEPS);
+    for (int j = 0; j < MAX_LIGHT_STEPS; j++) {
+        if (j >= steps) break;
+        float tL = (float(j) + 0.5) * LIGHT_STEP;
+        vec3  lp = worldPos + sunDir * tL;
+        float hf = GetHeightFrac(lp, cloudType);
+        if (hf > 1.05) break;
+        vec3 nd = lp * NOISE_SCALE;
+        nd.xz += pc.iTime * 8.0;
+        float d = clamp(texture(noise3D, nd).g * 2.0 - 0.3, 0.0, 1.0);
+        d *= GetHeightGradient(clamp(hf, 0.0, 1.0), cloudType);
+        od += d * LIGHT_STEP * 0.00008;
+    }
+    return exp(-od);
+}
 
-// ---------------------------------------------------------------------------
-// Main compute kernel
-// ---------------------------------------------------------------------------
-
-void main()
-{
-    //   UV in Vulkan framebuffer space: (0,0)=top-left, (1,1)=bottom-right
+void main() {
     vec2 uv = vec2(gl_GlobalInvocationID.xy) / pc.iResolution;
     ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy);
-
-    // Read the rasterized scene (geometry + skybox) and depth
     vec3 sceneCol = textureLod(sceneColor, uv, 0.0).rgb;
-    float depth = textureLod(depthTexture, uv, 0.0).r;
+    float depth   = textureLod(depthTexture, uv, 0.0).r;
+    if (depth < 0.999) { imageStore(outputImage, pixelCoord, vec4(sceneCol, 1.0)); return; }
 
-    // Determine if this pixel is sky: depth == far-plane (1.0) means no geometry hit
-    bool isSky = (depth >= 0.999);
+    float sx = uv.x * 2.0 - 1.0;
+    float sy = (1.0 - uv.y) * 2.0 - 1.0;
+    float aspect = pc.iResolution.x / pc.iResolution.y;
+    float tanHalfFovY = tan(pc.fovYRadians * 0.5);
+    vec3 rd = normalize(camFwd + camRight * sx * aspect * tanHalfFovY + camUp * sy * tanHalfFovY);
 
-    // Default: pass scene through unchanged
-    vec3 color = sceneCol;
-
-    if (isSky)
-    {
-        // Reconstruct a view-direction ray from the full-screen UV.
-        // Vulkan flips Y relative to OpenGL, so we invert uv.y so that
-        // the top of the screen maps to positive Y (looking up).
-        float sx = uv.x * 2.0 - 1.0;
-        float sy = (1.0 - uv.y) * 2.0 - 1.0;
-        float aspect = pc.iResolution.x / pc.iResolution.y;
-        float tanHalfFovY = tan(pc.fovYRadians * 0.5);
-        vec3 rd =  normalize(camFwd + camRight * sx * aspect * tanHalfFovY + camUp * sy * tanHalfFovY);
-
-        // Only march into the cloud layer when looking above the horizon
-        if (abs(rd.y) > 0.05)
-        {
-            // ---- 1.  Cloud-layer slab intersection ----
-            // The cloud layer is a horizontal slab from cloudBase to cloudBase+cloudThickness.
-            float cloudTop = pc.cloudBase + pc.cloudThickness;
-            float t0 = (pc.cloudBase - pc.camPosY) / rd.y;
-            float t1 = (cloudTop     - pc.camPosY) / rd.y;
-            float tMin = min(t0, t1);  // entry (whichever comes first)
-            float tMax = max(t0, t1);  // exit
-
-            // Clamp to forward-facing hemisphere (camera may be inside / above layer)
-            tMin = max(tMin, 0.0);
-
-            if (tMax > tMin)
-            {
-                // ---- 2.  Sample the weather map once for the whole ray ----
-                // The coverage value controls whether this column of sky has clouds.
-                // Sampling once at the layer mid-point is a standard optimisation;
-                // the weather map is low-resolution anyway (256²).
-                vec3  worldMid  = camPos + rd * (tMin + tMax) * 0.5;
-                worldMid.xz     += pc.iTime * 8.0; // animate drift
-                vec2  weatherUV = worldMid.xz * WEATHER_SCALE;
-                vec4 weather = texture(weatherMap, weatherUV);
-                float coverage  = weather.r;
-                float precipitation = weather.g;
-                float cloudType = weather.b;
-
-                if (precipitation > 0.7)
-                {
-                    cloudType = max(cloudType, 1.0);
-                    coverage  = max(coverage, 0.7);
-                }
-                // Early-out: weather map says "clear sky" for this column
-                if (coverage <= 0.001)
-                {
-                    imageStore(outputImage, pixelCoord, vec4(color, 1.0));
-                    return;
-                }
-
-                // ---- 3.  Ray-march setup ----
-                // Adaptive step count: target STEP_SIZE world-units per step,
-                // capped at MAX_STEPS to bound worst-case cost near the horizon.
-                float rayLength = tMax - tMin;
-                int   numSteps  = min(int(rayLength / STEP_SIZE) + 1, MAX_STEPS);
-                float stepSize  = rayLength / float(numSteps);
-
-                // Per-pixel jitter on the first sample to break up banding artifacts.
-                // Uses a simple screen-space hash.
-                float jitter = fract(sin(dot(uv, vec2(12.9898, 78.233))) * 43758.5453);
-                float t = tMin + stepSize * jitter;
-
-                // ---- 4.  Beer's-law ray march ----
-                // Accumulate optical depth by sampling density at each step.
-                // opacity = 1 - exp(-opticalDepth)
-                float opticalDepth = 0.0;
-
-                float edgeLow  = mix(0.25, 0.40, cloudType);
-                float edgeHigh = mix(0.50, 0.70, cloudType);
-
-                for (int i = 0; i < MAX_STEPS; i++)
-                {
-                    if (i >= numSteps) break;
-
-                    vec3 worldPos = camPos + rd * t;
-                    float heightFraction = GetHeightFractionForPoint(worldPos,cloudType);
-
-                    // Only accumulate when inside the cloud layer
-                    if (heightFraction >= 0.0 && heightFraction <= 1.0)
-                    {
-                        // Apply horizontal drift for animated clouds
-                        vec3 noisePos = worldPos;
-                        noisePos.xz += pc.iTime * 8.0;
-
-                        // Transform to noise-texture coordinate space
-                        noisePos *= NOISE_SCALE;
-
-                        // Sample volumetric density
-
-                        float density = sampleCloudDensity(noisePos, heightFraction, cloudType);
-                        density = smoothstep(edgeLow, edgeHigh, density);
-
-                        // Apply cloud coverage: remap to shrink range,
-                        // then multiply for natural fade at weather-cell edges
-                        density = Remap(density, coverage, 1.0, 0.0, 1.0);
-                        density *= coverage;
-
-
-                        // Beer's law: dτ = σ · ds
-                        opticalDepth += density * stepSize * ABSORPTION;
-                    }
-
-                    t += stepSize;
-                    if (t > tMax) break;
-                }
-
-                // ---- 5.  Composite ----
-                float opacity = 1.0 - exp(-opticalDepth);
-                opacity = clamp(opacity, 0.0, 1.0);
-
-                // Fade clouds toward the horizon so they don't touch the ground
-                float horizonFade = smoothstep(0.02, 0.15, abs(rd.y));
-                opacity *= horizonFade;
-
-                // Cloud colour: rainy clouds are usually darker
-                vec3 cloudColor = mix(vec3(0.92, 0.94, 0.97),
-                                      vec3(0.55, 0.57, 0.60), precipitation);
-
-
-                // Source-over blend on top of the scene
-                color = mix(sceneCol, cloudColor, opacity);
-            }
-        }
+    float tMin, tMax;
+    if (!RayAABB(camPos, rd, boxMin, boxMax, tMin, tMax)) {
+        imageStore(outputImage, pixelCoord, vec4(sceneCol, 1.0)); return;
     }
 
+    vec3 worldMid = camPos + rd * (tMin + tMax) * 0.5;
+    worldMid.xz  += pc.iTime * 8.0;
+    vec4 weather   = texture(weatherMap, worldMid.xz * WEATHER_SCALE);
+    float coverage = weather.r, precipitation = weather.g, cloudType = weather.b;
+    if (precipitation > 0.7) { cloudType = max(cloudType, 1.0); coverage = max(coverage, 0.7); }
+    if (coverage <= 0.001) { imageStore(outputImage, pixelCoord, vec4(sceneCol, 1.0)); return; }
+
+    float rayLength = tMax - tMin;
+    int   numSteps  = min(int(rayLength / STEP_SIZE) + 1, MAX_STEPS);
+    float stepSize  = rayLength / float(numSteps);
+    float jitter = fract(sin(dot(uv, vec2(12.9898, 78.233)) + pc.iTime) * 43758.5453);
+    float t         = tMin + stepSize * jitter;
+    float edgeLow   = mix(0.25, 0.40, cloudType);
+    float edgeHigh  = mix(0.50, 0.70, cloudType);
+
+    float opticalDepth = 0.0;
+
+    for (int i = 0; i < MAX_STEPS; i++) {
+        if (i >= numSteps) break;
+        vec3 worldPos = camPos + rd * t;
+        float hFrac   = GetHeightFrac(worldPos, cloudType);
+        if (hFrac >= 0.0 && hFrac <= 1.0) {
+            vec3 noisePos = worldPos;
+            noisePos.xz  += pc.iTime * 8.0;
+            noisePos     *= NOISE_SCALE;
+            float density = SampleDensity(noisePos, hFrac, cloudType);
+            density = smoothstep(edgeLow, edgeHigh, density);
+            density = Remap(density, coverage, 1.0, 0.0, 1.0) * coverage;
+            opticalDepth += density * stepSize * ABSORPTION;
+        }
+        t += stepSize;
+        if (t > tMax) break;
+    }
+
+    float lightOcclusion = LightOcclusion(worldMid, cloudType);
+    float rimDot   = abs(dot(rd, sunDir));
+    float rimLight = pow(1.0 - rimDot, RIM_POWER);
+    float cosSun   = dot(sunDir, vec3(0.0, 1.0, 0.0));
+    float directLight = smoothstep(-0.2, 0.5, cosSun);
+
+    float lightFactor = lightOcclusion * 0.4 + rimLight * RIM_STRENGTH + AMBIENT + directLight * 0.2;
+    lightFactor = clamp(lightFactor, 0.1, 1.0);
+
+    float opacity = 1.0 - exp(-opticalDepth);
+    opacity = clamp(opacity, 0.0, 1.0);
+
+    vec3 cloudTint = mix(vec3(0.94, 0.95, 0.98), vec3(0.55, 0.60, 0.65), precipitation);
+    vec3 litCloud  = cloudTint * lightFactor;
+
+    vec3 color = mix(sceneCol, litCloud, opacity);
     imageStore(outputImage, pixelCoord, vec4(color, 1.0));
 }
