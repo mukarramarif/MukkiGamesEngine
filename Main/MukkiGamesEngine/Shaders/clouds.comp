@@ -28,7 +28,7 @@ layout(push_constant) uniform PushConstants {
 #define boxMin   vec3(pc.boxMinX,  pc.boxMinY,  pc.boxMinZ)
 #define boxMax   vec3(pc.boxMaxX,  pc.boxMaxY,  pc.boxMaxZ)
 
-const float STEP_SIZE       = 100.0;
+const float STEP_SIZE       = 150.0;
 const int   MAX_STEPS       = 384;
 const float ABSORPTION      = 0.0007;
 const float WEATHER_SCALE   = 1.0 / 60000.0;
@@ -65,16 +65,16 @@ bool RayAABB(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax, out float tNear, out float 
 
 float GetHeightFrac(vec3 worldPos, float cloudType) {
     float boxHeight = boxMax.y - boxMin.y;
-    return (worldPos.y - boxMin.y) / max(boxHeight, 0.001);
+    return (boxMax.y - worldPos.y) / max(boxHeight, 0.001);
 }
 
 float GetHeightGradient(float h, float cloudType) {
     float t = clamp(h, 0.0, 1.0);
 
     // Blend weights between the three cloud archetypes (always sum to 1.0)
-    float stratusFactor       = 1.0 - clamp(cloudType * 2.0,          0.0, 1.0);
+    float stratusFactor       = 1.0 - clamp(cloudType * 2.0, 0.0, 1.0);
     float stratoCumulusFactor = 1.0 - abs(cloudType - 0.5) * 2.0;
-    float cumulusFactor       =        clamp(cloudType - 0.5, 0.0, 1.0) * 2.0;
+    float cumulusFactor       = clamp(cloudType - 0.5, 0.0, 1.0) * 2.0;
 
     vec4 gradient = stratusFactor       * STRATUS_GRADIENT
                   + stratoCumulusFactor * STRATOCUMULUS_GRADIENT
@@ -104,7 +104,9 @@ float SampleDensity(vec3 noisePos, float hFrac, float cloudType) {
     density       *= GetHeightGradient(hFrac, cloudType);
     return density;
 }
+/*
 
+*/
 float LightOcclusion(vec3 worldPos, float cloudType) {
     float od = 0.0;
     float boxHeight = boxMax.y - boxMin.y;
@@ -114,7 +116,7 @@ float LightOcclusion(vec3 worldPos, float cloudType) {
         float tL = (float(j) + 0.5) * LIGHT_STEP;
         vec3  lp = worldPos + sunDir * tL;
         float hf = GetHeightFrac(lp, cloudType);
-        if (hf > 1.05) break;
+        if (hf < -0.05) break;
         vec3 nd = lp * NOISE_SCALE;
         nd.xz += pc.iTime * 8.0;
         float d = clamp(texture(noise3D, nd).g * 2.0 - 0.3, 0.0, 1.0);

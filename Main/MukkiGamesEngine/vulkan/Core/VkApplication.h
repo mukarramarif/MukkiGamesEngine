@@ -324,6 +324,7 @@ private:
 	VkDescriptorPool      cloudNoiseGenDescPool       = VK_NULL_HANDLE;
 	VkDescriptorSet       cloudNoiseGenDescSet        = VK_NULL_HANDLE;
 	bool cloudsEnabled = true;
+	bool regenNoiseRequested = false;
 	CloudNoiseParams cloudNoiseParams;
 	ImTextureID cloudWeatherTexID = nullptr;
 

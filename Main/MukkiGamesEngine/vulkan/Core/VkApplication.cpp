@@ -1092,7 +1092,11 @@ void VulkanApplication::mainLoop()
 			syncPhysicsTransforms();
 			// physicsEngine->drawDebug();
 		}
-
+		if(regenNoiseRequested){
+		    vkDeviceWaitIdle(device->getDevice());
+            regenerateCloudNoiseTextures();
+            regenNoiseRequested = false;
+		}
 		uiManager->newFrame();
 		float fps = 1.0f / deltaTime;
 		uiManager->renderDebugWindow(fps, deltaTime);
@@ -1135,8 +1139,7 @@ void VulkanApplication::mainLoop()
 			bool regenNoise = false;
 			uiManager->renderCloudNoiseWindow(cloudNoiseParams, regenNoise, cloudsEnabled, cloudWeatherTexID);
 			if (regenNoise) {
-				vkDeviceWaitIdle(device->getDevice());
-				regenerateCloudNoiseTextures();
+				regenNoiseRequested = true;
 			}
 		}
 
@@ -3280,7 +3283,7 @@ void VulkanApplication::recordCloudCommandBuffer(VkCommandBuffer commandBuffer, 
     pc.iResolution[0] = static_cast<float>(extent.width); pc.iResolution[1] = static_cast<float>(extent.height);
     pc.iTime = static_cast<float>(glfwGetTime());
     pc.sunDirX = 0.4f; pc.sunDirY = 0.5f; pc.sunDirZ = -0.6f;
-    pc.boxMinX = -30000.0f; pc.boxMinY = 0.0f; pc.boxMinZ = -30000.0f;
+    pc.boxMinX = -30000.0f; pc.boxMinY = 10000.0f; pc.boxMinZ = -30000.0f;
     pc.boxMaxX =  30000.0f; pc.boxMaxY = 35000.0f; pc.boxMaxZ =  30000.0f;
     // // --- camera transform ---
     pc.camPosX = camera->position.x;  pc.camPosY = camera->position.y;  pc.camPosZ = camera->position.z;
