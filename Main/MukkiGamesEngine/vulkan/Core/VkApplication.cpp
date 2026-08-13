@@ -1133,12 +1133,13 @@ void VulkanApplication::mainLoop()
 		}
 		{
 			bool regenNoise = false;
-			uiManager->renderCloudNoiseWindow(cloudNoiseParams, regenNoise, cloudWeatherTexID);
+			uiManager->renderCloudNoiseWindow(cloudNoiseParams, regenNoise, cloudsEnabled, cloudWeatherTexID);
 			if (regenNoise) {
 				vkDeviceWaitIdle(device->getDevice());
 				regenerateCloudNoiseTextures();
 			}
 		}
+
 		bool loadSceneFlag = false;
 		uiManager->renderSceneLoader(
 			loadSceneFlag,

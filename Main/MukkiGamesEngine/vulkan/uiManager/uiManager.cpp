@@ -697,11 +697,20 @@ void UIManager::renderRayTracingControls(bool& resetAccumulation)
 	ImGui::End();
 }
 
-void UIManager::renderCloudNoiseWindow(struct CloudNoiseParams& params, bool& regenerate, ImTextureID weatherTexID)
+void UIManager::renderCloudNoiseWindow(struct CloudNoiseParams& params, bool& regenerate, bool& cloudsEnabled, ImTextureID weatherTexID)
 {
 	ImGui::Begin("Cloud Noise", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
 
+	// ── Master toggle ──
+	ImGui::Checkbox("Enable Cloud System", &cloudsEnabled);
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	// Grey out all controls when the cloud system is off
+	ImGui::BeginDisabled(!cloudsEnabled);
+
 	if (ImGui::CollapsingHeader("Perlin-Worley 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+
 		ImGui::Indent(10.0f);
 		ImGui::SliderFloat("Scale", &params.perlinWorleyScale, 0.5f, 16.0f);
 		ImGui::SliderInt("Perlin Octaves", &params.perlinOctaves, 1, 16);
@@ -775,6 +784,6 @@ void UIManager::renderCloudNoiseWindow(struct CloudNoiseParams& params, bool& re
 	if (ImGui::Button("Reset to Defaults", ImVec2(150, 0))) {
 		params = CloudNoiseParams{};
 	}
-
+	ImGui::EndDisabled();
 	ImGui::End();
 }

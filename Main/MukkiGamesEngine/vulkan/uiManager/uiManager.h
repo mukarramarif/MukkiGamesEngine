@@ -59,7 +59,7 @@ public:
 	int getSelectedLight() const { return selectedLightIndex; }
 	void renderSceneLoader(bool& loadSceneFlag, const std::vector<std::string>& scenes, int sceneNum, const std::function<void(int)>& onLoad);
 	void renderRayTracingControls(bool& resetAccumulation);
-	void renderCloudNoiseWindow(struct CloudNoiseParams& params, bool& regenerate, ImTextureID weatherTexID = nullptr);
+	void renderCloudNoiseWindow(struct CloudNoiseParams& params, bool& regenerate, bool& cloudsEnabled, ImTextureID weatherTexID = nullptr);
 	void renderPhysicsDebug(int bodyCount, const std::vector<std::string>& objectNames,
 		const std::vector<glm::vec3>& bodyPositions, const std::vector<float>& speeds,
 		const std::vector<float>& rpms, const std::vector<int>& gears);
