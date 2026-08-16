@@ -12,7 +12,8 @@ struct UniformBufferObject {
     GPULight lights[MAX_LIGHTS];
     int numLights{};
     float ambientStrength{};
-    float padding[2]{};               // alignment to 16 bytes
+    float padding[2]{};
+    glm::vec4 pointShadowParams;
 };
 
 

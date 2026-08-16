@@ -129,7 +129,10 @@ target_include_directories(MukkiGamesEngine PRIVATE "${CMAKE_SOURCE_DIR}/MukkiGa
 # Helper to compile GLSL to SPIR-V. Usage: add_shaders(<target> Shaders/foo.vert Shaders/bar.frag)
 target_compile_definitions(MukkiGamesEngine PRIVATE
     ASSETS_PATH="${CMAKE_SOURCE_DIR}/MukkiGamesEngine/Assets/"
-    TINYGLTF_USE_STB_IMAGE)
+    TINYGLTF_USE_STB_IMAGE
+    $<$<CONFIG:Debug>:RENDERDOC_DEBUG>)
+
+
 
 function(add_shaders TARGET_NAME)
   set(SHADER_SOURCE_FILES ${ARGN})
@@ -216,6 +219,8 @@ add_shaders(MukkiGamesEngine
     MukkiGamesEngine/Shaders/taa.comp
     MukkiGamesEngine/Shaders/clouds.comp
     MukkiGamesEngine/Shaders/cloudNoise.comp
+    MukkiGamesEngine/Shaders/shadowCube.frag
+
 )
 
 add_slang_fragment_shaders(MukkiGamesEngine

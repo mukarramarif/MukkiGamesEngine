@@ -346,7 +346,8 @@ void VulkanApplication::initVulkan(const RenderConfig& config)
 	swapChain->createImageViews();
 	shadowMap = std::make_unique<ShadowMap>();
 	shadowMap->init(device.get(), 2048);
-
+	shadowCubeMap = std::make_unique<ShadowCubeMap>();
+	shadowCubeMap->init(device.get(), 1024, 100.0f);
 	// 6. Create render pass (defines how rendering operations are performed)
 	renderPassObj = std::make_unique<VulkanRenderPass>(device.get(), swapChain->getSwapChainImageFormat());
 	renderPass = renderPassObj->getRenderPass();
@@ -436,7 +437,9 @@ void VulkanApplication::initVulkan(const RenderConfig& config)
 		textureImageView,
 		textureSampler,
 		shadowMap ? shadowMap->getShadowMapImageView() : VK_NULL_HANDLE,
-		shadowMap ? shadowMap->getShadowSampler() : VK_NULL_HANDLE
+		shadowMap ? shadowMap->getShadowSampler() : VK_NULL_HANDLE,
+		shadowCubeMap ? shadowCubeMap->getCubeMapImageView() : VK_NULL_HANDLE,
+        shadowCubeMap ? shadowCubeMap->getCubeMapSampler() : VK_NULL_HANDLE
 	);
 
 	createRayTracingDescriptorPool();
@@ -683,7 +686,16 @@ void VulkanApplication::updateUniformBuffer(uint32_t currentImage)
 	if (shadowMap) {
 		ubo.padding[0] = 1.0f / static_cast<float>(shadowMap->getShadowMapSize());
 	}
-
+	ubo.pointShadowParams = glm::vec4(0.0f);
+    if (shadowCubeMap) {
+        for (const auto& light : lights) {
+            if (light.enabled && light.type == LightType::Point) {
+                ubo.pointShadowParams = glm::vec4(light.position,
+                                                  1.0f / shadowCubeMap->getFarPlane());
+                break;
+            }
+        }
+    }
 	memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 }
 
@@ -722,7 +734,16 @@ void VulkanApplication::updatePerObjectUBO(LoadedObject& obj, uint32_t currentIm
 	if (shadowMap) {
 		ubo.padding[0] = 1.0f / static_cast<float>(shadowMap->getShadowMapSize());
 	}
-
+	ubo.pointShadowParams = glm::vec4(0.0f);
+    if (shadowCubeMap) {
+        for (const auto& light : lights) {
+            if (light.enabled && light.type == LightType::Point) {
+                ubo.pointShadowParams = glm::vec4(light.position,
+                                                  1.0f / shadowCubeMap->getFarPlane());
+                break;
+            }
+        }
+    }
 	memcpy(obj.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 }
 void VulkanApplication::createTextureResources()
@@ -812,7 +833,7 @@ void VulkanApplication::drawFrame()
 
 	// Record shadow pass for directional light shadow mapping
 	recordShadowPass();
-
+	recordPointShadowPass();
 	// 5. Record command buffer
 	commandBufferManager->resetCommandBuffer(currentFrame);
 	VkCommandBuffer commandBuffer = commandBufferManager->getCommandBuffer(currentFrame);
@@ -1359,6 +1380,10 @@ void VulkanApplication::cleanup()
 	if (shadowMap) {
 		shadowMap->cleanup();
 		shadowMap.reset();
+	}
+	if (shadowCubeMap) {                     // ← ADD
+		shadowCubeMap->cleanup();
+		shadowCubeMap.reset();
 	}
 	textureManager.reset();
 	bufferManager.reset();
@@ -2296,7 +2321,7 @@ void VulkanApplication::loadSceneObjects()
 	}
 
 	createRayTracingGeometryBuffers();
-	if (rayTracingAS) {
+	if (rayTracingAS  && currentRenderMode == RenderMode::RAYTRACING) {
 		rayTracingAS->clearBLAS();
 		for (auto& obj : loadedObjects) {
 			if (obj.loaded) {
@@ -2447,7 +2472,24 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject& obj)
 			shadowWrite.descriptorCount = 1;
 			shadowWrite.pImageInfo = &shadowImageInfo;
 			descriptorWrites.push_back(shadowWrite);
+			VkDescriptorImageInfo cubeShadowImageInfo{};
+            cubeShadowImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            if (shadowCubeMap) {
+                cubeShadowImageInfo.imageView = shadowCubeMap->getCubeMapImageView();
+                cubeShadowImageInfo.sampler = shadowCubeMap->getCubeMapSampler();
+            } else {
+                cubeShadowImageInfo.imageView = textureImageView;
+                cubeShadowImageInfo.sampler = textureSampler;
+            }
 
+            VkWriteDescriptorSet cubeShadowWrite{};
+            cubeShadowWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            cubeShadowWrite.dstSet = obj.descriptorSets[matIndex][frame];
+            cubeShadowWrite.dstBinding = 4;
+            cubeShadowWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            cubeShadowWrite.descriptorCount = 1;
+            cubeShadowWrite.pImageInfo = &cubeShadowImageInfo;
+            descriptorWrites.push_back(cubeShadowWrite);
 			vkUpdateDescriptorSets(device->getDevice(),
 				static_cast<uint32_t>(descriptorWrites.size()),
 				descriptorWrites.data(), 0, nullptr);
@@ -2632,7 +2674,17 @@ void VulkanApplication::toggleRenderMode()
 		currentRenderMode = RenderMode::RAYTRACING;
 		accumulationFrameCount = 0;
 		std::cout << "Switched to Raytracing rendering mode" << std::endl;
+		// Lazy AS build on first entry into RT mode
+		if (rayTracingAS && rayTracingAS->getTLAS().handle == VK_NULL_HANDLE) {
+			rayTracingAS->clearBLAS();
+			for (auto& obj : loadedObjects) {
+				if (obj.loaded) rayTracingAS->buildBLASWithoutClear(obj.model);
+			}
+			rayTracingAS->buildTLASAll(loadedObjects, 0);
+			createRayTracingDescriptorSet();
+		}
 	}
+
 	//else if (currentRenderMode == RenderMode::COMPUTE) {
 	//	currentRenderMode = RenderMode::RAYTRACING;
 	//	std::cout << "Switched to Raytracing rendering mode" << std::endl;
@@ -3691,11 +3743,19 @@ void VulkanApplication::createDescriptorSetLayout()
 	shadowLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	shadowLayoutBinding.descriptorCount = 1;
 	shadowLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-	std::array<VkDescriptorSetLayoutBinding, 4> bindings = {
+	//Point-Light Shadows (binding = 4)
+	VkDescriptorSetLayoutBinding cubeShadowBinding{};
+	cubeShadowBinding.binding = 4;
+	cubeShadowBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	cubeShadowBinding.descriptorCount = 1;
+	cubeShadowBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+	std::array<VkDescriptorSetLayoutBinding, 5> bindings = {
 		uboLayoutBinding,
 		samplerLayoutBinding,
 		materialLayoutBinding,
-		shadowLayoutBinding
+		shadowLayoutBinding,
+		cubeShadowBinding
 	};
 
 	VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -3708,6 +3768,177 @@ void VulkanApplication::createDescriptorSetLayout()
 		throw std::runtime_error("failed to create descriptor set layout!");
 	}
 	m_deletionQueue.pushDescriptorSetLayout(vkDev, descriptorSetLayout);
+}
+void VulkanApplication::recordPointShadowPass()
+{
+    ZoneScopedN("Point Shadow Pass");
+    if (!shadowCubeMap) return;
+
+    // Find first enabled point light
+    const Light* pointLight = nullptr;
+    for (const auto& light : lights) {
+        if (light.enabled && light.type == LightType::Point) {
+            pointLight = &light;
+            break;
+        }
+    }
+    if (!pointLight) {
+        // No shadowed point light this frame. The raster shader statically
+        // uses binding 4, so the image must still be in a valid sampled
+        // layout — leaving it UNDEFINED trips VUID-vkCmdDraw-None-09600.
+        VkCommandBuffer cmd = commandBufferManager->beginSingleTimeCommands();
+
+        VkImageMemoryBarrier toSampled{};
+        toSampled.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toSampled.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+        toSampled.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        toSampled.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toSampled.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toSampled.image               = shadowCubeMap->getCubeMapImage();
+        toSampled.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+        toSampled.subresourceRange.baseMipLevel   = 0;
+        toSampled.subresourceRange.levelCount     = 1;
+        toSampled.subresourceRange.baseArrayLayer = 0;
+        toSampled.subresourceRange.layerCount     = 6;
+        toSampled.srcAccessMask       = 0;
+        toSampled.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &toSampled);
+
+        commandBufferManager->endSingleTimeCommands(cmd);
+        return;
+    }
+
+
+    VkCommandBuffer cmd = commandBufferManager->beginSingleTimeCommands();
+
+    const uint32_t size = shadowCubeMap->getSize();
+    const float farPlane = shadowCubeMap->getFarPlane();
+
+    // ── Barrier 1: whole cube map (all 6 layers) → depth attachment ──
+    VkImageMemoryBarrier toDepthAttachment{};
+    toDepthAttachment.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toDepthAttachment.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+    toDepthAttachment.newLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    toDepthAttachment.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDepthAttachment.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDepthAttachment.image               = shadowCubeMap->getCubeMapImage();
+    toDepthAttachment.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+    toDepthAttachment.subresourceRange.baseMipLevel   = 0;
+    toDepthAttachment.subresourceRange.levelCount     = 1;
+    toDepthAttachment.subresourceRange.baseArrayLayer = 0;
+    toDepthAttachment.subresourceRange.layerCount     = 6;      // all faces at once
+    toDepthAttachment.srcAccessMask       = 0;
+    toDepthAttachment.dstAccessMask       = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+    vkCmdPipelineBarrier(
+        cmd,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &toDepthAttachment
+    );
+
+    // ── Render all 6 faces ──
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width  = static_cast<float>(size);
+    viewport.height = static_cast<float>(size);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = { size, size };
+
+    for (uint32_t face = 0; face < 6; face++) {
+        // Begin render pass on this face's framebuffer + bind pipeline
+        shadowCubeMap->BindForWriting(cmd, face);
+
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        // Depth bias against shadow acne (pipeline must declare
+        // VK_DYNAMIC_STATE_DEPTH_BIAS, same as the directional shadow pipeline)
+        vkCmdSetDepthBias(cmd, 1.25f, 0.0f, 1.75f);
+
+        // Push per-face view-projection matrix + light data
+        struct PointShadowPush {
+            glm::mat4 viewProj;
+            glm::vec4 lightData;   // xyz = position, w = 1 / farPlane
+        };
+        PointShadowPush push{};
+        push.viewProj   = ShadowCubeMap::computeFaceViewProj(face, pointLight->position, farPlane);
+        push.lightData  = glm::vec4(pointLight->position, 1.0f / farPlane);
+        vkCmdPushConstants(cmd,
+            shadowCubeMap->getPipelineLayout(),
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            0, sizeof(push), &push);
+
+
+        // Draw geometry into the face
+        bool drewAnyModel = false;
+        for (const auto& obj : loadedObjects) {
+            if (obj.loaded && obj.model.vertexBuffer != VK_NULL_HANDLE) {
+                VkBuffer vertexBuffers[] = { obj.model.vertexBuffer };
+                VkDeviceSize offsets[] = { 0 };
+                vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+                vkCmdBindIndexBuffer(cmd, obj.model.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+                for (const auto& meshIndex : obj.model.opaqueMeshIndices) {
+                    const auto& meshRef = obj.model.meshes[meshIndex];
+                    for (const auto& primitive : meshRef.primitives) {
+                        vkCmdDrawIndexed(cmd, primitive.indexCount, 1,
+                                         primitive.firstIndex, 0, 0);
+                    }
+                }
+                drewAnyModel = true;
+            }
+        }
+        if (!drewAnyModel) {
+            VkBuffer vertexBuffers[] = { vertexBuffer };
+            VkDeviceSize offsets[] = { 0 };
+            vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+            vkCmdBindIndexBuffer(cmd, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 0);
+        }
+
+        vkCmdEndRenderPass(cmd);
+    }
+
+    // ── Barrier 2: cube map → shader read (sampled in main pass) ──
+    VkImageMemoryBarrier toShaderRead{};
+    toShaderRead.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toShaderRead.oldLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    toShaderRead.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    toShaderRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toShaderRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toShaderRead.image               = shadowCubeMap->getCubeMapImage();
+    toShaderRead.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+    toShaderRead.subresourceRange.baseMipLevel   = 0;
+    toShaderRead.subresourceRange.levelCount     = 1;
+    toShaderRead.subresourceRange.baseArrayLayer = 0;
+    toShaderRead.subresourceRange.layerCount     = 6;
+    toShaderRead.srcAccessMask       = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    toShaderRead.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(
+        cmd,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &toShaderRead
+    );
+
+    commandBufferManager->endSingleTimeCommands(cmd);
 }
 
 void VulkanApplication::createPipelineLayout()

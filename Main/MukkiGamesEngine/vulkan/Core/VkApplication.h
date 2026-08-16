@@ -30,7 +30,7 @@
 #include "../raytracing/RayTracingPipeline.h"
 #include "../Physics/PhysicsEngine.h"
 #include "../../Renderer/Renderer.h"
-
+#include "../Resources/ShadowCubeMap.h"
 const int MAX_FRAMES_IN_FLIGHT = 2;
 const int MAX_RT_TEXTURES = 100;
 
@@ -213,6 +213,7 @@ private:
 	void cleanupTAAPipeline();
 	void updateTAADescriptorSets();
 	void recordShadowPass();
+	void recordPointShadowPass();
 	void initCloudPipeline();
 	void createCloudOutputImage();
 	void createSceneColorImage();
@@ -293,6 +294,9 @@ private:
 
 	//ShadowMap
 	std::unique_ptr<ShadowMap> shadowMap;
+	std::unique_ptr<ShadowCubeMap> shadowCubeMap;
+
+
 	//TODO: find a way to automatically update scenes like hot shader reloading
 	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json","WaterExample.json", "showRoom.json"};
 	int currentSceneIndex = 0;
