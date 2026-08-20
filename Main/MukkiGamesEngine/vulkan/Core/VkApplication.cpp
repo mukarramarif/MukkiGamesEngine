@@ -99,6 +99,8 @@ void VulkanApplication::createRayTracingGeometryBuffers()
 				float roughness = 1.0f;
 				glm::vec3 baseColor = glm::vec3(1.0f);
 				glm::vec3 emissive = glm::vec3(0.0f);
+				float transmission = 0.0f;
+				float ior = 1.5f;
 				if (primitive.materialIndex >= 0 &&
 					primitive.materialIndex < static_cast<int32_t>(rtModel.materials.size())) {
 					const auto& mat = rtModel.materials[primitive.materialIndex];
@@ -107,6 +109,8 @@ void VulkanApplication::createRayTracingGeometryBuffers()
 					roughness = mat.roughnessFactor;
 					baseColor = glm::vec3(mat.baseColorFactor);
 					emissive = mat.emissiveFactor;
+					transmission = mat.transmissionFactor;
+                    ior = mat.idxReflect;
 					int32_t emissiveTexIdx = mat.emissiveTextureIndex;
 					primInfo.emissionTextureIndex = (emissiveTexIdx >= 0 && textureOffset + static_cast<uint32_t>(emissiveTexIdx) < MAX_RT_TEXTURES)
                         ? static_cast<int32_t>(textureOffset) + emissiveTexIdx : -1;
@@ -122,6 +126,8 @@ void VulkanApplication::createRayTracingGeometryBuffers()
 				primInfo.emissiveG = emissive.g;
 				primInfo.emissiveB = emissive.b;
 				primInfo.vertexOffset = vertexOffset;
+				primInfo.transmissionFactor = transmission;
+                primInfo.idxReflect = ior;
 				primitiveInfos.push_back(primInfo);
 			}
 
@@ -3467,14 +3473,15 @@ void VulkanApplication::createRayTracingDescriptorSetLayout()
 	bindings[5].binding = 5;
 	bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	bindings[5].descriptorCount = 1;
-	bindings[5].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+	bindings[5].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
 	bindings[5].pImmutableSamplers = nullptr;
 
 	bindings[6].binding = 6;
 	bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	bindings[6].descriptorCount = 1;
-	bindings[6].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+	bindings[6].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
 	bindings[6].pImmutableSamplers = nullptr;
+
 
 	bindings[7].binding = 7;
 	bindings[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;

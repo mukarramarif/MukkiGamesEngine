@@ -158,6 +158,8 @@ function(add_shaders TARGET_NAME)
       list(APPEND SHADER_ARGS -fshader-stage=rmiss --target-env=vulkan1.4 --target-spv=spv1.4)
     elseif(SHADER_NAME MATCHES "\\.rchit$")
       list(APPEND SHADER_ARGS -fshader-stage=rchit --target-env=vulkan1.4 --target-spv=spv1.4)
+    elseif(SHADER_NAME MATCHES "\\.rahit$")
+      list(APPEND SHADER_ARGS -fshader-stage=rahit --target-env=vulkan1.4 --target-spv=spv1.4)
     endif()
 
     add_custom_command(
@@ -216,6 +218,8 @@ add_shaders(MukkiGamesEngine
     MukkiGamesEngine/Shaders/rt.rgen
     MukkiGamesEngine/Shaders/rt.rmiss
     MukkiGamesEngine/Shaders/rt.rchit
+    MukkiGamesEngine/Shaders/rt.rahit
+
     MukkiGamesEngine/Shaders/taa.comp
     MukkiGamesEngine/Shaders/clouds.comp
     MukkiGamesEngine/Shaders/cloudNoise.comp

@@ -11,6 +11,10 @@ struct Payload
     float metallic;
     float roughness;
     vec3 emissiveColor;
+    float transmission;
+    float idxReflect;
+    int frontFace;
+    float hitT;
 };
 
 layout(location = 0) rayPayloadInEXT Payload payload;

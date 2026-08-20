@@ -66,11 +66,11 @@ void RayTracingPipeline::createPipeline(VkDescriptorSetLayout descriptorSetLayou
     auto rgenCode = EngineUtils::readFile("Shaders/rt.rgen.spv");
     auto rmissCode = EngineUtils::readFile("Shaders/rt.rmiss.spv");
     auto rchitCode = EngineUtils::readFile("Shaders/rt.rchit.spv");
-
+    auto rahitCode = EngineUtils::readFile("Shaders/rt.rahit.spv");
     VkShaderModule rgenModule = createShaderModule(rgenCode);
     VkShaderModule rmissModule = createShaderModule(rmissCode);
     VkShaderModule rchitModule = createShaderModule(rchitCode);
-
+    VkShaderModule rahitModule = createShaderModule(rahitCode);
     VkPipelineShaderStageCreateInfo rgenStage{};
     rgenStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     rgenStage.stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
@@ -88,8 +88,12 @@ void RayTracingPipeline::createPipeline(VkDescriptorSetLayout descriptorSetLayou
     rchitStage.stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
     rchitStage.module = rchitModule;
     rchitStage.pName = "main";
-
-    std::array<VkPipelineShaderStageCreateInfo, 3> stages{ rgenStage, rmissStage, rchitStage };
+    VkPipelineShaderStageCreateInfo rahitStage{};
+    rahitStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    rahitStage.stage = VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
+    rahitStage.module = rahitModule;
+    rahitStage.pName = "main";
+    std::array<VkPipelineShaderStageCreateInfo, 4> stages{ rgenStage, rmissStage, rchitStage, rahitStage};
 
     VkRayTracingShaderGroupCreateInfoKHR rgenGroup{};
     rgenGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
@@ -114,8 +118,14 @@ void RayTracingPipeline::createPipeline(VkDescriptorSetLayout descriptorSetLayou
     rchitGroup.closestHitShader = 2;
     rchitGroup.anyHitShader = VK_SHADER_UNUSED_KHR;
     rchitGroup.intersectionShader = VK_SHADER_UNUSED_KHR;
-
-    std::array<VkRayTracingShaderGroupCreateInfoKHR, 3> groups{ rgenGroup, rmissGroup, rchitGroup };
+    VkRayTracingShaderGroupCreateInfoKHR rahitGroup{};
+    rahitGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    rahitGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+    rahitGroup.generalShader = VK_SHADER_UNUSED_KHR;
+    rahitGroup.closestHitShader = VK_SHADER_UNUSED_KHR;
+    rahitGroup.anyHitShader = 3;
+    rahitGroup.intersectionShader = VK_SHADER_UNUSED_KHR;
+    std::array<VkRayTracingShaderGroupCreateInfoKHR, 4> groups{ rgenGroup, rmissGroup, rchitGroup, rahitGroup };
 
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -148,6 +158,7 @@ void RayTracingPipeline::createPipeline(VkDescriptorSetLayout descriptorSetLayou
     vkDestroyShaderModule(device->getDevice(), rgenModule, nullptr);
     vkDestroyShaderModule(device->getDevice(), rmissModule, nullptr);
     vkDestroyShaderModule(device->getDevice(), rchitModule, nullptr);
+    vkDestroyShaderModule(device->getDevice(), rahitModule, nullptr);
 }
 
 void RayTracingPipeline::createShaderBindingTable()
@@ -161,11 +172,20 @@ void RayTracingPipeline::createShaderBindingTable()
 
     sbt.handleSize = rtProperties.shaderGroupHandleSize;
     sbt.handleSizeAligned = (rtProperties.shaderGroupHandleSize + rtProperties.shaderGroupHandleAlignment - 1) & ~(rtProperties.shaderGroupHandleAlignment - 1);
- sbt.baseAlignment = rtProperties.shaderGroupBaseAlignment;
+    sbt.baseAlignment = rtProperties.shaderGroupBaseAlignment;
     sbt.groupCount = 3;
+    std::array<uint32_t,3> groupHandleCounts = {1u,1u,2u};
 
-  uint32_t sbtStride = (sbt.handleSizeAligned + sbt.baseAlignment - 1) & ~(sbt.baseAlignment - 1);
-    uint32_t sbtSize = sbt.groupCount * sbtStride;
+    uint32_t sbtStride = (sbt.handleSizeAligned + sbt.baseAlignment - 1) & ~(sbt.baseAlignment - 1);
+    std::array<uint32_t, 3> groupStrides{};
+    std::array<uint32_t, 3> groupOffsets{};
+    uint32_t offset = 0;
+    for (uint32_t g = 0; g < 3; ++g) {
+        groupStrides[g] = (groupHandleCounts[g] * sbt.handleSizeAligned + sbt.baseAlignment - 1) & ~(sbt.baseAlignment - 1);
+        groupOffsets[g] = offset;
+        offset += groupStrides[g];
+    }
+    uint32_t sbtSize = offset;
     std::vector<uint8_t> shaderHandleStorage(sbtSize);
 
     auto vkGetRayTracingShaderGroupHandlesKHRFunc = reinterpret_cast<PFN_vkGetRayTracingShaderGroupHandlesKHR>(

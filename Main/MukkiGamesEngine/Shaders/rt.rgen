@@ -41,6 +41,14 @@ struct Payload
     float metallic;
     float roughness;
     vec3 emissiveColor;
+    float transmission;
+    float idxReflect;
+    int frontFace;
+    float hitT;
+    float attenuationR;
+    float attenuationG;
+    float attenuationB;
+    float attenuationDistance;
 };
 
 layout(location = 0) rayPayloadEXT Payload payload;
@@ -90,7 +98,7 @@ void main()
 
     vec3 result = vec3(0.0);
     vec3 throughput = vec3(1.0);
-    const int maxBounces = 3;
+    const int maxBounces = 5;
     int frameCount = int(sceneData.lightParams.w + 0.5);
     uint rngState = (gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x) ^ (uint(frameCount) * 9781u);
     rngState = pcgHash(rngState);
@@ -231,30 +239,62 @@ void main()
         }
 
         vec3 ambient = ambientStrength * albedo;
-        result += throughput * (ambient + lighting);
+        if(payload.transmission < 0.01){
+            result+=throughput * (ambient+lighting);
 
-        // Russian roulette: terminate low-throughput paths
-        float rrProb = max(max(throughput.r, throughput.g), throughput.b);
-        if (bounce > 1 && rand(rngState) > rrProb) break;
-        throughput /= rrProb;
-
-        // Fresnel throughput split for the next bounce direction
-        vec3 bounceViewDir = normalize(sceneData.cameraPos.xyz - hitPos);
-        float bounceNdotV = max(dot(normal, bounceViewDir), 0.0);
-        vec3 bounceF = F0 + (1.0 - F0) * pow(1.0 - bounceNdotV, 5.0);
-        float reflectProb = max(max(bounceF.r, bounceF.g), bounceF.b);
-
-        if (rand(rngState) < reflectProb) {
-            // Specular bounce
-            direction = reflect(direction, normal);
-            throughput *= bounceF / reflectProb;
-        } else {
-            // Diffuse bounce
-            direction = cosineSampleHemisphere(normal, rngState);
-            throughput *= (vec3(1.0) - bounceF) * albedo / (1.0 - reflectProb);
         }
 
-        origin = hitPos + normal * 0.01;
+
+        if (payload.transmission > 0.01) {
+            // ── Glass: Fresnel-weighted reflection vs. refraction ──
+            float iorF0 = ((payload.idxReflect - 1.0) / (payload.idxReflect + 1.0));
+            iorF0 *= iorF0;
+            float cosTheta = max(dot(-direction, normal), 0.0);
+            float F = iorF0 + (1.0 - iorF0) * pow(1.0 - cosTheta, 5.0);
+
+
+            if (rand(rngState) < F) {
+                // Reflect (F already accounted in probability)
+                direction = reflect(direction, normal);
+                origin = hitPos + normal * 0.01;
+            } else {
+                // Refract (Snell's law)
+                float eta = (payload.frontFace == 1) ? (1.0 / max(payload.idxReflect, 1.0001))
+                                                     : payload.idxReflect;
+                vec3 refrDir = refract(direction, normal, eta);
+                if (dot(refrDir, refrDir) < 0.001) {
+                    // Total internal reflection
+                    direction = reflect(direction, normal);
+                    origin = hitPos + normal * 0.01;
+                } else {
+                    direction = refrDir;
+                    origin = hitPos + refrDir * 0.01;
+                   // Beer's law tint for the segment just traveled through glass
+                    if (payload.frontFace == 0 && payload.attenuationDistance > 0.0) {
+                        vec3 atten = vec3(payload.attenuationR, payload.attenuationG, payload.attenuationB);
+                        throughput *= exp(-atten * payload.hitT / payload.attenuationDistance);
+                    }
+                }
+            }
+        } else {
+
+            // Fresnel throughput split for the next bounce direction
+            vec3 bounceViewDir = normalize(sceneData.cameraPos.xyz - hitPos);
+            float bounceNdotV = max(dot(normal, bounceViewDir), 0.0);
+            vec3 bounceF = F0 + (1.0 - F0) * pow(1.0 - bounceNdotV, 5.0);
+            float reflectProb = max(max(bounceF.r, bounceF.g), bounceF.b);
+
+            if (rand(rngState) < reflectProb) {
+                // Specular bounce
+                direction = reflect(direction, normal);
+                throughput *= bounceF / reflectProb;
+            } else {
+                // Diffuse bounce
+                direction = cosineSampleHemisphere(normal, rngState);
+                throughput *= (vec3(1.0) - bounceF) * albedo / (1.0 - reflectProb);
+            }
+            origin = hitPos + normal * 0.01;
+        }
     }
 
     ivec2 p = ivec2(gl_LaunchIDEXT.xy);

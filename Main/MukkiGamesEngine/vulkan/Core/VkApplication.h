@@ -126,6 +126,12 @@ private:
 		float emissiveB;
 		uint32_t vertexOffset;
 		int32_t emissionTextureIndex;
+		float transmissionFactor;
+        float idxReflect;
+		float attenuationR;
+		float attenuationG;
+		float attenuationB;
+		float attenuationDistance;
 	};
 	struct RayTracingMeshInfo {
 		uint32_t primitiveOffset;

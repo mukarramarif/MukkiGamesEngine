@@ -11,6 +11,14 @@ struct Payload
     float metallic;
     float roughness;
     vec3 emissiveColor;
+    float transmission;
+    float idxReflect;
+    int frontFace;
+    float hitT;
+    float attentuationR;
+    float attentuationG;
+    float attentuationB;
+    float attenuationDistance;
 };
 
 layout(location = 0) rayPayloadInEXT Payload payload;
@@ -39,6 +47,12 @@ struct PrimitiveInfo
     float emissiveB;
     uint vertexOffset;
     int emssiveTextureIndex;
+    float transmissionFactor;
+    float idxReflect;
+    float attenuationR;
+	float attenuationG;
+	float attenuationB;
+	float attenuationDistance;
 };
 
 struct MeshInfo
@@ -76,6 +90,7 @@ hitAttributeEXT vec2 attribs;
 void main()
 {
     payload.hit = 1;
+
     payload.position = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 
     uint meshIndex = gl_InstanceCustomIndexEXT;
@@ -96,6 +111,7 @@ void main()
     vec3 normal = normalize(v0.normal.xyz * bary.x + v1.normal.xyz * bary.y + v2.normal.xyz * bary.z);
     mat3 normalMatrix = transpose(mat3(gl_WorldToObjectEXT));
     normal = normalize(normalMatrix * normal);
+    payload.frontFace = dot(normal, gl_WorldRayDirectionEXT) < 0.0 ? 1 : 0;
     if (dot(normal, gl_WorldRayDirectionEXT) > 0.0)
     {
         normal = -normal;
@@ -120,4 +136,11 @@ void main()
     payload.metallic = primInfo.metallicFactor;
     payload.roughness = primInfo.roughnessFactor;
     payload.emissiveColor = emissiveColor;
+    payload.transmission = primInfo.transmissionFactor;
+    payload.idxReflect = primInfo.idxReflect;
+    payload.hitT = gl_HitTEXT;
+    payload.attentuationR = primInfo.attenuationR;
+    payload.attentuationG = primInfo.attenuationG;
+    payload.attentuationB = primInfo.attenuationB;
+    payload.attenuationDistance = primInfo.attenuationDistance;
 }
