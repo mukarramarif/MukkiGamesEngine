@@ -35,6 +35,7 @@ struct PrimitiveInfo
     int emssiveTextureIndex;
     float transmissionFactor;
     float ior;
+    float dispersion;
 };
 
 struct MeshInfo

@@ -412,8 +412,17 @@ void ObjectLoader::loadMaterials(const tinygltf::Model& gltfModel, Model& model)
 				mat.emissiveFactor *= strength;
 			}
 		}
+		if(gltfMat.extensions.contains("KHR_materials_dispersion")) {
+            const auto& ext = gltfMat.extensions.at("KHR_materials_dispersion");
+            if (ext.Has("dispersion")) {
+                mat.dispersion = static_cast<float>(ext.Get("dispersion").Get<double>());
+            }
+        }
+
+
 
     }
+
 	// Add default material if none exist
 	if (model.materials.empty()) {
 		model.materials.push_back(Material{});

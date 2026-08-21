@@ -132,6 +132,7 @@ private:
 		float attenuationG;
 		float attenuationB;
 		float attenuationDistance;
+		float dispersion;
 	};
 	struct RayTracingMeshInfo {
 		uint32_t primitiveOffset;
@@ -304,7 +305,7 @@ private:
 
 
 	//TODO: find a way to automatically update scenes like hot shader reloading
-	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json","WaterExample.json", "showRoom.json"};
+	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json","WaterExample.json", "showRoom.json", "GlassDragon.json"};
 	int currentSceneIndex = 0;
 
 	//Cloud Pipeline

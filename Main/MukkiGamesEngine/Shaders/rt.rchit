@@ -19,6 +19,7 @@ struct Payload
     float attentuationG;
     float attentuationB;
     float attenuationDistance;
+    float dispersion;
 };
 
 layout(location = 0) rayPayloadInEXT Payload payload;
@@ -53,6 +54,7 @@ struct PrimitiveInfo
 	float attenuationG;
 	float attenuationB;
 	float attenuationDistance;
+	float dispersion;
 };
 
 struct MeshInfo
@@ -143,4 +145,5 @@ void main()
     payload.attentuationG = primInfo.attenuationG;
     payload.attentuationB = primInfo.attenuationB;
     payload.attenuationDistance = primInfo.attenuationDistance;
+    payload.dispersion = primInfo.dispersion;
 }
