@@ -12,11 +12,17 @@ struct Payload
     float roughness;
     vec3 emissiveColor;
     float transmission;
-    float ior;
+    float idxReflect;
     int frontFace;
+    float hitT;
+    float attenuationR;
+    float attenuationG;
+    float attenuationB;
+    float attenuationDistance;
+    float dispersion;
 };
 
-layout(location = 0) rayPayloadInEXT Payload payload;
+layout(location = 0) rayPayloadEXT Payload payload;
 
 struct PrimitiveInfo
 {
@@ -34,7 +40,11 @@ struct PrimitiveInfo
     uint vertexOffset;
     int emssiveTextureIndex;
     float transmissionFactor;
-    float ior;
+    float idxReflect;
+    float attenuationR;
+    float attenuationG;
+    float attenuationB;
+    float attenuationDistance;
     float dispersion;
 };
 
@@ -58,17 +68,19 @@ layout(set = 0, binding = 6, std430) readonly buffer MeshBuffer
 
 void main()
 {
-    if (payload.shadowRay == 1)
-    {
-        uint meshIndex = gl_InstanceCustomIndexEXT;
-        MeshInfo meshInfo = meshBuffer.meshes[meshIndex];
-        uint primitiveIndex = meshInfo.primitiveOffset + gl_GeometryIndexEXT;
-        PrimitiveInfo primInfo = primitiveBuffer.primitives[primitiveIndex];
+    uint meshIndex = gl_InstanceCustomIndexEXT;
+    MeshInfo meshInfo = meshBuffer.meshes[meshIndex];
+    uint primitiveIndex = meshInfo.primitiveOffset + gl_GeometryIndexEXT;
+    PrimitiveInfo primInfo = primitiveBuffer.primitives[primitiveIndex];
 
-        // Shadow rays pass straight through glass
-        if (primInfo.transmissionFactor > 0.5)
-        {
-            ignoreIntersectionEXT;
-        }
+    // Shadow test 1: glass does not occlude, the ray passes through.
+    if (payload.shadowRay == 1 && primInfo.transmissionFactor > 0.5)
+    {
+        ignoreIntersectionEXT;
+        return;
     }
+
+    // The closest-hit shader never runs for shadow rays
+    // (gl_RayFlagsTerminateOnFirstHitEXT), so record the hit here.
+    payload.hit = 1;
 }

@@ -116,16 +116,10 @@ void RayTracingPipeline::createPipeline(VkDescriptorSetLayout descriptorSetLayou
     rchitGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     rchitGroup.generalShader = VK_SHADER_UNUSED_KHR;
     rchitGroup.closestHitShader = 2;
-    rchitGroup.anyHitShader = VK_SHADER_UNUSED_KHR;
+    rchitGroup.anyHitShader = 3;   // glass skipping for shadow rays
     rchitGroup.intersectionShader = VK_SHADER_UNUSED_KHR;
-    VkRayTracingShaderGroupCreateInfoKHR rahitGroup{};
-    rahitGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
-    rahitGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-    rahitGroup.generalShader = VK_SHADER_UNUSED_KHR;
-    rahitGroup.closestHitShader = VK_SHADER_UNUSED_KHR;
-    rahitGroup.anyHitShader = 3;
-    rahitGroup.intersectionShader = VK_SHADER_UNUSED_KHR;
-    std::array<VkRayTracingShaderGroupCreateInfoKHR, 4> groups{ rgenGroup, rmissGroup, rchitGroup, rahitGroup };
+    std::array<VkRayTracingShaderGroupCreateInfoKHR, 3> groups{ rgenGroup, rmissGroup, rchitGroup };
+
 
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -173,20 +167,31 @@ void RayTracingPipeline::createShaderBindingTable()
     sbt.handleSize = rtProperties.shaderGroupHandleSize;
     sbt.handleSizeAligned = (rtProperties.shaderGroupHandleSize + rtProperties.shaderGroupHandleAlignment - 1) & ~(rtProperties.shaderGroupHandleAlignment - 1);
     sbt.baseAlignment = rtProperties.shaderGroupBaseAlignment;
-    sbt.groupCount = 3;
-    std::array<uint32_t,3> groupHandleCounts = {1u,1u,2u};
 
-    uint32_t sbtStride = (sbt.handleSizeAligned + sbt.baseAlignment - 1) & ~(sbt.baseAlignment - 1);
-    std::array<uint32_t, 3> groupStrides{};
-    std::array<uint32_t, 3> groupOffsets{};
+    // Pipeline groups: [0] raygen, [1] miss, [2] triangle hit group.
+    // The hit group contains closest + any, so its SBT record holds two
+    // consecutive handles.
+    constexpr uint32_t groupCount = 3;
+    const std::array<uint32_t, groupCount> handleCounts = { 1u, 1u, 2u };
+
+    std::array<uint32_t, groupCount> regionStrides{};
+    std::array<uint32_t, groupCount> regionOffsets{};
     uint32_t offset = 0;
-    for (uint32_t g = 0; g < 3; ++g) {
-        groupStrides[g] = (groupHandleCounts[g] * sbt.handleSizeAligned + sbt.baseAlignment - 1) & ~(sbt.baseAlignment - 1);
-        groupOffsets[g] = offset;
-        offset += groupStrides[g];
+    for (uint32_t g = 0; g < groupCount; ++g) {
+        regionStrides[g] = (handleCounts[g] * sbt.handleSizeAligned + sbt.baseAlignment - 1) & ~(sbt.baseAlignment - 1);
+        regionOffsets[g] = offset;
+        offset += regionStrides[g];
     }
-    uint32_t sbtSize = offset;
-    std::vector<uint8_t> shaderHandleStorage(sbtSize);
+
+    sbt.rgenStride = regionStrides[0];
+    sbt.missStride = regionStrides[1];
+    sbt.hitStride = regionStrides[2];
+    sbt.rgenOffset = regionOffsets[0];
+    sbt.missOffset = regionOffsets[1];
+    sbt.hitOffset = regionOffsets[2];
+
+    constexpr uint32_t totalHandleCount = 4;  // raygen + miss + closest + any
+    const uint32_t sbtSize = offset;
 
     auto vkGetRayTracingShaderGroupHandlesKHRFunc = reinterpret_cast<PFN_vkGetRayTracingShaderGroupHandlesKHR>(
         vkGetDeviceProcAddr(device->getDevice(), "vkGetRayTracingShaderGroupHandlesKHR"));
@@ -194,13 +199,23 @@ void RayTracingPipeline::createShaderBindingTable()
         throw std::runtime_error("failed to load vkGetRayTracingShaderGroupHandlesKHR");
     }
 
-    std::vector<uint8_t> handleData(sbt.groupCount * sbt.handleSize);
-    if (vkGetRayTracingShaderGroupHandlesKHRFunc(device->getDevice(), pipeline, 0, sbt.groupCount, static_cast<uint32_t>(handleData.size()), handleData.data()) != VK_SUCCESS) {
+    std::vector<uint8_t> handleData(totalHandleCount * sbt.handleSize);
+    if (vkGetRayTracingShaderGroupHandlesKHRFunc(device->getDevice(), pipeline, 0, groupCount,
+            static_cast<uint32_t>(handleData.size()), handleData.data()) != VK_SUCCESS) {
         throw std::runtime_error("failed to get shader group handles");
     }
 
-    for (uint32_t group = 0; group < sbt.groupCount; ++group) {
-        memcpy(shaderHandleStorage.data() + group * sbtStride, handleData.data() + group * sbt.handleSize, sbt.handleSize);
+    // Handles come back in group order; group g's handles start after the
+    // handles of all preceding groups.
+    std::vector<uint8_t> shaderHandleStorage(sbtSize);
+    uint32_t srcHandle = 0;
+    for (uint32_t g = 0; g < groupCount; ++g) {
+        for (uint32_t h = 0; h < handleCounts[g]; ++h) {
+            uint32_t srcOffset = (srcHandle + h) * sbt.handleSize;
+            uint32_t dstOffset = regionOffsets[g] + h * sbt.handleSizeAligned;
+            memcpy(shaderHandleStorage.data() + dstOffset, handleData.data() + srcOffset, sbt.handleSize);
+        }
+        srcHandle += handleCounts[g];
     }
 
     device->createBuffer(

@@ -15,13 +15,18 @@ struct Payload
     float idxReflect;
     int frontFace;
     float hitT;
+    float attenuationR;
+    float attenuationG;
+    float attenuationB;
+    float attenuationDistance;
+    float dispersion;
 };
 
-layout(location = 0) rayPayloadInEXT Payload payload;
+layout(location = 0) rayPayloadEXT Payload payload;
 
 void main()
 {
-    if (payload.shadowRay == 1)
+    if (payload.shadowRay != 0)
     {
         payload.hit = 0;
         return;

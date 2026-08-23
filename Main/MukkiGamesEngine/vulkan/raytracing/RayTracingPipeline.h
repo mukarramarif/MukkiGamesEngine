@@ -9,10 +9,16 @@ struct ShaderBindingTable {
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkDeviceAddress deviceAddress = 0;
     uint32_t handleSize = 0;
- uint32_t handleSizeAligned = 0;
+    uint32_t handleSizeAligned = 0;
     uint32_t baseAlignment = 0;
-    uint32_t groupCount = 0;
+    uint32_t rgenOffset = 0;
+    uint32_t rgenStride = 0;
+    uint32_t missOffset = 0;
+    uint32_t missStride = 0;
+    uint32_t hitOffset = 0;
+    uint32_t hitStride = 0;
 };
+
 
 class RayTracingPipeline {
 public:

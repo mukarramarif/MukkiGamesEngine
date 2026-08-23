@@ -92,7 +92,9 @@ hitAttributeEXT vec2 attribs;
 void main()
 {
     payload.hit = 1;
-
+    if(payload.shadowRay !=0){
+        return;
+    }
     payload.position = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 
     uint meshIndex = gl_InstanceCustomIndexEXT;
