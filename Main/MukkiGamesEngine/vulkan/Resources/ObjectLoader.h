@@ -43,6 +43,11 @@ struct Material {
 	glm::vec3 attenuationColor = glm::vec3(1.0f);
 	float attenuationDistance = 1e9F;
 	float dispersion = 0.0f;
+	float iridesceneFactor = 0.0f;
+	float iridesceneIor = 1.3f;
+	float iridesceneThicknessMin = 100.0f;
+	float iridesceneThicknessMax = 400.0f;
+
 };
 
 // A single mesh primitive (submesh)

@@ -418,7 +418,21 @@ void ObjectLoader::loadMaterials(const tinygltf::Model& gltfModel, Model& model)
                 mat.dispersion = static_cast<float>(ext.Get("dispersion").Get<double>());
             }
         }
-
+		if(gltfMat.extensions.contains("KHR_materials_iridescence")) {
+            const auto& ext = gltfMat.extensions.at("KHR_materials_iridescence");
+            if (ext.Has("iridescenceFactor")) {
+                mat.iridesceneFactor = static_cast<float>(ext.Get("iridescenceFactor").Get<double>());
+            }
+            if (ext.Has("iridescenceIor")) {
+                mat.iridesceneIor = static_cast<float>(ext.Get("iridescenceIor").Get<double>());
+            }
+            if (ext.Has("iridescenceThicknessMinimum")) {
+                mat.iridesceneThicknessMin = static_cast<float>(ext.Get("iridescenceThicknessMinimum").Get<double>());
+            }
+            if (ext.Has("iridescenceThicknessMaximum")) {
+                mat.iridesceneThicknessMax = static_cast<float>(ext.Get("iridescenceThicknessMaximum").Get<double>());
+            }
+        }
 
 
     }

@@ -20,6 +20,10 @@ struct Payload
     float attenuationB;
     float attenuationDistance;
     float dispersion;
+    float iridescenceFactor;
+    float iridescenceIor;
+    float iridescenceMin;
+    float iridescenceMax;
 };
 
 layout(location = 0) rayPayloadEXT Payload payload;

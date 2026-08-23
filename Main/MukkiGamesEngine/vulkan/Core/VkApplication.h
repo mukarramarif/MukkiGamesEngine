@@ -133,6 +133,10 @@ private:
 		float attenuationB;
 		float attenuationDistance;
 		float dispersion;
+		float iridescenceFactor;
+        float iridescenceIor;
+        float iridescenceMin;
+        float iridescenceMax;
 	};
 	struct RayTracingMeshInfo {
 		uint32_t primitiveOffset;

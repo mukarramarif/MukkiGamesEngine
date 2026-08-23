@@ -95,6 +95,7 @@ void VulkanApplication::createRayTracingGeometryBuffers() {
         glm::vec3 emissive = glm::vec3(0.0f);
         float transmission = 0.0f;
         float ior = 1.5f;
+
         if (primitive.materialIndex >= 0 &&
             primitive.materialIndex <
                 static_cast<int32_t>(rtModel.materials.size())) {
@@ -114,6 +115,10 @@ void VulkanApplication::createRayTracingGeometryBuffers() {
                   ? static_cast<int32_t>(textureOffset) + emissiveTexIdx
                   : -1;
           primInfo.dispersion = mat.dispersion;
+          primInfo.iridescenceFactor = mat.iridesceneFactor;
+          primInfo.iridescenceIor = mat.iridesceneIor;
+          primInfo.iridescenceMin = mat.iridesceneThicknessMin;
+          primInfo.iridescenceMax = mat.iridesceneThicknessMax;
         }
         primInfo.textureIndex =
             (texIdx >= 0 &&
@@ -775,7 +780,7 @@ void VulkanApplication::drawFrame() {
     recreateSwapChain();
     return;
   } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
-    throw std::runtime_error("failed to acquire swap chain image!");
+    throw std::runtime_error("failed to acquire swap chain image! VkResult = " + std::to_string(result));
   }
 
   // 3. Check if a previous frame is using this image (wait for it)

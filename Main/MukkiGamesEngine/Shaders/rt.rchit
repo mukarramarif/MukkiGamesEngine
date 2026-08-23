@@ -55,6 +55,10 @@ struct PrimitiveInfo
 	float attenuationB;
 	float attenuationDistance;
 	float dispersion;
+	float iridescenceFactor;
+    float iridescenceIor;
+    float iridescenceMin;
+    float iridescenceMax;
 };
 
 struct MeshInfo
