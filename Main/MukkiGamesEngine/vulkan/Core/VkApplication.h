@@ -137,6 +137,8 @@ private:
         float iridescenceIor;
         float iridescenceMin;
         float iridescenceMax;
+        int32_t metallicRoughnessTextureIndex;
+        int32_t iridescenceThicknessTextureIndex;
 	};
 	struct RayTracingMeshInfo {
 		uint32_t primitiveOffset;
