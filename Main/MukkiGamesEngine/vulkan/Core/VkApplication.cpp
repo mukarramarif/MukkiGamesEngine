@@ -114,6 +114,19 @@ void VulkanApplication::createRayTracingGeometryBuffers() {
                    MAX_RT_TEXTURES)
                   ? static_cast<int32_t>(textureOffset) + emissiveTexIdx
                   : -1;
+                    int32_t mrTexIdx = mat.metallicRoughnessTextureIndex;
+          primInfo.metallicRoughnessTextureIndex =
+              (mrTexIdx >= 0 &&
+               textureOffset + static_cast<uint32_t>(mrTexIdx) < MAX_RT_TEXTURES)
+                  ? static_cast<int32_t>(textureOffset) + mrTexIdx
+                  : -1;
+          int32_t iridTexIdx = mat.iridescenceThicknessTextureIndex;
+          primInfo.iridescenceThicknessTextureIndex =
+              (iridTexIdx >= 0 &&
+               textureOffset + static_cast<uint32_t>(iridTexIdx) < MAX_RT_TEXTURES)
+                  ? static_cast<int32_t>(textureOffset) + iridTexIdx
+                  : -1;
+
           primInfo.dispersion = mat.dispersion;
           primInfo.iridescenceFactor = mat.iridesceneFactor;
           primInfo.iridescenceIor = mat.iridesceneIor;

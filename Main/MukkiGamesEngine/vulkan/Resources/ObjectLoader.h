@@ -47,6 +47,7 @@ struct Material {
 	float iridesceneIor = 1.3f;
 	float iridesceneThicknessMin = 100.0f;
 	float iridesceneThicknessMax = 400.0f;
+	int32_t iridescenceThicknessTextureIndex = -1;
 
 };
 

@@ -324,6 +324,10 @@ void ObjectLoader::loadMaterials(const tinygltf::Model& gltfModel, Model& model)
 		if (gltfMaterial.values.find("baseColorFactor") != gltfMaterial.values.end()) {
 			material.baseColorFactor = glm::make_vec4(gltfMaterial.values.at("baseColorFactor").ColorFactor().data());
 		}
+		if (gltfMaterial.values.find("metallicRoughnessTexture") != gltfMaterial.values.end()) {
+			material.metallicRoughnessTextureIndex = gltfMaterial.values.at("metallicRoughnessTexture").TextureIndex();
+		}
+
 		if (gltfMaterial.values.find("metallicFactor") != gltfMaterial.values.end()) {
 			material.metallicFactor = static_cast<float>(gltfMaterial.values.at("metallicFactor").Factor());
 		}
@@ -432,6 +436,13 @@ void ObjectLoader::loadMaterials(const tinygltf::Model& gltfModel, Model& model)
             if (ext.Has("iridescenceThicknessMaximum")) {
                 mat.iridesceneThicknessMax = static_cast<float>(ext.Get("iridescenceThicknessMaximum").Get<double>());
             }
+            if (ext.Has("iridescenceThicknessTexture")) {
+                const auto& tex = ext.Get("iridescenceThicknessTexture");
+                if (tex.Has("index")) {
+                    mat.iridescenceThicknessTextureIndex = static_cast<int>(tex.Get("index").Get<double>());
+                }
+            }
+
         }
 
 
