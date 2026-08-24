@@ -37,7 +37,18 @@ struct Material {
 	glm::vec3 emissiveFactor = glm::vec3(0.0f);
 	bool isTransparent = false;
 	bool isEmissive = false;
+	float transmissionFactor = 0.0f;
+	float idxReflect = 1.5;
 	float alphaCutoff = 0.5f;
+	glm::vec3 attenuationColor = glm::vec3(1.0f);
+	float attenuationDistance = 1e9F;
+	float dispersion = 0.0f;
+	float iridesceneFactor = 0.0f;
+	float iridesceneIor = 1.3f;
+	float iridesceneThicknessMin = 100.0f;
+	float iridesceneThicknessMax = 400.0f;
+	int32_t iridescenceThicknessTextureIndex = -1;
+
 };
 
 // A single mesh primitive (submesh)
@@ -85,7 +96,7 @@ struct Model {
 	std::vector<Material> materials;
 	std::vector<LoadedTexture> textures;
 	std::vector<int32_t> rootNodes;
-	//rendering order 
+	//rendering order
 	std::vector<size_t> opaqueMeshIndices;
 	std::vector<size_t> transparentMeshIndices;
 	// GPU buffers
@@ -101,10 +112,10 @@ class ObjectLoader {
 public:
 	ObjectLoader() = default;
 	~ObjectLoader();
-	
+
 	void init(Device* device, TextureManager* textureManager, BufferManager* bufferManager);
 	void cleanup();
-	
+
 	bool loadGLTF(const std::string& filepath, Model& outModel);
 	std::future<bool> loadGLTFAsync(const std::string& filepath, Model& outModel);
 	void createModelBuffers(Model& model);
@@ -116,21 +127,21 @@ private:
 	BufferManager* bufferManager = nullptr;
 
 	std::mutex vulkanMutex;
-	
-	
-	void loadNode(const tinygltf::Model& gltfModel, const tinygltf::Node& gltfNode, 
+
+
+	void loadNode(const tinygltf::Model& gltfModel, const tinygltf::Node& gltfNode,
 	              int nodeIndex, Model& model, const glm::mat4& parentTransform);
 	void loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Mesh& gltfMesh,
 		Model& model, const glm::mat4& worldTransform);
 	void loadMaterials(const tinygltf::Model& gltfModel, Model& model);
 	void loadTextures(const tinygltf::Model& gltfModel, Model& model);
-	
+
 	// Texture loading helpers
 	void uploadTextureToGPU(const unsigned char* pixelData, int width, int height,
 	                        LoadedTexture& outTexture);
 	VkSamplerAddressMode getVkWrapMode(int wrapMode);
 	VkFilter getVkFilterMode(int filterMode);
-	
+
 	glm::mat4 getNodeTransform(const tinygltf::Node& node);
 
 	// Primitive data collected in parallel, then merged

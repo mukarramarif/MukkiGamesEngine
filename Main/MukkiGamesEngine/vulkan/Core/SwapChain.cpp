@@ -9,11 +9,11 @@ void VulkanSwap::initSwap(Device& device, const VkSurfaceKHR& vkSurface, GLFWwin
 	this->window = window;
 	this->devicePtr = &device;  // Store pointer to device
 	this->surface = vkSurface;  // Store surface
-	
+
 	// Implementation for creating swap chain
 	VkPhysicalDevice physicalDevice = device.getPhysicalDevice();
 	VkDevice logicalDevice = device.getDevice();
-	
+
 	SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
 
 	VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
@@ -80,12 +80,12 @@ void VulkanSwap::createImageViews()
 		createInfo.image = swapChainImages[i];
 		createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
 		createInfo.format = swapChainImageFormat;
-		
+
 		createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
 		createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
 		createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
 		createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-		
+
 		createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		createInfo.subresourceRange.baseMipLevel = 0;
 		createInfo.subresourceRange.levelCount = 1;
@@ -113,7 +113,7 @@ void VulkanSwap::createFramebuffers(VkRenderPass renderPass, VkImageView depthIm
 	for (size_t i = 0; i < swapChainImageViews.size(); i++) {
 		std::vector<VkImageView> attachments;
 		attachments.push_back(swapChainImageViews[i]);
-		
+
 		// Add depth attachment if provided
 		if (depthImageView != VK_NULL_HANDLE) {
 			attachments.push_back(depthImageView);
@@ -163,7 +163,7 @@ void VulkanSwap::resizeSwapChain(Device& device, const VkSurfaceKHR& vkSurface, 
 {
 	// Clean up old swap chain resources
 	cleanup();
-	
+
 	// Recreate swap chain
 	initSwap(device, vkSurface, window);
 }
@@ -205,6 +205,11 @@ VkSurfaceFormatKHR VulkanSwap::chooseSwapSurfaceFormat(const std::vector<VkSurfa
 
 VkPresentModeKHR VulkanSwap::chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
 	for (const auto& availablePresentMode : availablePresentModes) {
+#ifdef RENDERDOC_DEBUG
+	    if (availablePresentMode == VK_PRESENT_MODE_FIFO_KHR) {
+			return availablePresentMode;
+		}
+#endif
 		if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
 			return availablePresentMode;
 		}

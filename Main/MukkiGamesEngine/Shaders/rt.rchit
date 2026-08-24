@@ -11,6 +11,20 @@ struct Payload
     float metallic;
     float roughness;
     vec3 emissiveColor;
+    float transmission;
+    float idxReflect;
+    int frontFace;
+    float hitT;
+    float attentuationR;
+    float attentuationG;
+    float attentuationB;
+    float attenuationDistance;
+    float dispersion;
+    float iridescenceFactor;
+    float iridescenceIor;
+    float iridescenceMin;
+    float iridescenceMax;
+    float iridescenceThickness;
 };
 
 layout(location = 0) rayPayloadInEXT Payload payload;
@@ -39,6 +53,19 @@ struct PrimitiveInfo
     float emissiveB;
     uint vertexOffset;
     int emssiveTextureIndex;
+    float transmissionFactor;
+    float idxReflect;
+    float attenuationR;
+	float attenuationG;
+	float attenuationB;
+	float attenuationDistance;
+	float dispersion;
+	float iridescenceFactor;
+    float iridescenceIor;
+    float iridescenceMin;
+    float iridescenceMax;
+    int metallicRoughnessTextureIndex;
+    int iridescenceThicknessTextureIndex;
 };
 
 struct MeshInfo
@@ -76,6 +103,9 @@ hitAttributeEXT vec2 attribs;
 void main()
 {
     payload.hit = 1;
+    if(payload.shadowRay !=0){
+        return;
+    }
     payload.position = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 
     uint meshIndex = gl_InstanceCustomIndexEXT;
@@ -96,6 +126,7 @@ void main()
     vec3 normal = normalize(v0.normal.xyz * bary.x + v1.normal.xyz * bary.y + v2.normal.xyz * bary.z);
     mat3 normalMatrix = transpose(mat3(gl_WorldToObjectEXT));
     normal = normalize(normalMatrix * normal);
+    payload.frontFace = dot(normal, gl_WorldRayDirectionEXT) < 0.0 ? 1 : 0;
     if (dot(normal, gl_WorldRayDirectionEXT) > 0.0)
     {
         normal = -normal;
@@ -117,7 +148,35 @@ void main()
     }
     payload.normal = normal;
     payload.color = albedo;
-    payload.metallic = primInfo.metallicFactor;
-    payload.roughness = primInfo.roughnessFactor;
+    int mrTexIdx = primInfo.metallicRoughnessTextureIndex;
+    float metallic = primInfo.metallicFactor;
+    float roughness = primInfo.roughnessFactor;
+    if (mrTexIdx >= 0) {
+        vec3 mr = texture(textures[nonuniformEXT(mrTexIdx)], uv).rgb;
+        metallic *= mr.b;   // glTF: B = metallic
+        roughness *= mr.g;  // glTF: G = roughness
+    }
+    payload.metallic = metallic;
+    payload.roughness = roughness;
+
     payload.emissiveColor = emissiveColor;
+    payload.transmission = primInfo.transmissionFactor;
+    payload.idxReflect = primInfo.idxReflect;
+    payload.hitT = gl_HitTEXT;
+    payload.attentuationR = primInfo.attenuationR;
+    payload.attentuationG = primInfo.attenuationG;
+    payload.attentuationB = primInfo.attenuationB;
+    payload.attenuationDistance = primInfo.attenuationDistance;
+    payload.dispersion = primInfo.dispersion;
+    payload.iridescenceFactor = primInfo.iridescenceFactor;
+    payload.iridescenceIor = primInfo.iridescenceIor;
+    payload.iridescenceMin = primInfo.iridescenceMin;
+    payload.iridescenceMax = primInfo.iridescenceMax;
+    float iridThickness = mix(primInfo.iridescenceMin, primInfo.iridescenceMax, 0.5);
+    int iridTexIdx = primInfo.iridescenceThicknessTextureIndex;
+    if (iridTexIdx >= 0) {
+        iridThickness = mix(primInfo.iridescenceMin, primInfo.iridescenceMax,
+                            texture(textures[nonuniformEXT(iridTexIdx)], uv).r);
+    }
+    payload.iridescenceThickness = iridThickness;
 }

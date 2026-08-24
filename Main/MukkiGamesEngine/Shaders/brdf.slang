@@ -21,6 +21,7 @@ struct UniformBufferObject {
     int numLights;
     float ambientStrength;
     float2 padding;
+    float4 pointShadowParams;
 };
 
 struct MaterialUBO {
@@ -36,7 +37,7 @@ struct MaterialUBO {
 [[vk::binding(1, 0)]] Sampler2D<float4> texSampler;
 [[vk::binding(2, 0)]] ConstantBuffer<MaterialUBO> material;
 [[vk::binding(3, 0)]] Sampler2D<float> shadowMap;
-
+[[vk::binding(4, 0)]] SamplerCube<float> shadowCubeMap;
 struct PSInput {
     [[vk::location(0)]] float3 fragColor : COLOR;
     [[vk::location(1)]] float2 fragTexCoord : TEXCOORD;
@@ -102,6 +103,16 @@ float calculateShadow(float4 lightSpacePos) {
     shadow /= 9.0;
     return shadow;
 }
+// Cube map shadows for the point light (linear depth)
+float calculatePointLightShadow(float3 lightPos, float3 fragPos) {
+    if (ubo.pointShadowParams.w <= 0.0) return 0.0;   // no shadowed point light
+
+    float3 fragToLight = fragPos - lightPos;
+    float currentDepth = length(fragToLight) * ubo.pointShadowParams.w;  // linear, [0,1]
+    float bias = 0.02;                                                    // tune for acne
+    float closestDepth = shadowCubeMap.Sample(fragToLight);               // linear from Part A
+    return (currentDepth - bias) < closestDepth ? 1.0 : 0.0;
+}
 
 // Clear coat helpers
 static const float CLEAR_COAT_F0 = 0.04;
@@ -148,12 +159,35 @@ float3 calculateDirectionalLight(GPULight light, float3 normal, float3 viewDir, 
 
     return (diffuse + specular) * light.color.rgb * light.color.a * NdotL * (1.0 - shadow);
 }
+float3 calculateLight(GPULight light, float3 lightDir, float3 normal, float3 viewDir,
+                      float3 albedo, float metallic, float roughness, float shadow) {
+    float3 halfwayDir = normalize(lightDir + viewDir);
+    float3 F0 = float3(0.04, 0.04, 0.04);
+    F0 = lerp(F0, albedo, metallic);
 
-float3 calculatePointLight(GPULight light, float3 normal, float3 viewDir, float3 fragPos, float3 albedo, float metallic, float roughness) {
+    float NDF = distributionGGX(normal, halfwayDir, roughness);
+    float G = geometrySmith(normal, viewDir, lightDir, roughness);
+
+    float3 F = fresnelSchlick(max(dot(halfwayDir, viewDir), 0.0), F0);
+
+    float3 kS = F;
+    float3 kD = float3(1.0, 1.0, 1.0) - kS;
+    kD *= 1.0 - metallic;
+
+    float3 numerator = NDF * G * F;
+    float denominator = 4.0 * max(dot(normal, viewDir), 0.0) * max(dot(normal, lightDir), 0.0) + 0.0001;
+    float3 specular = numerator / denominator;
+
+    float NdotL = max(dot(normal, lightDir), 0.0);
+    float3 diffuse = kD * albedo / 3.14159265;
+
+    return (diffuse + specular) * light.color.rgb * light.color.a * NdotL * (1.0 - shadow);
+}
+float3 calculatePointLight(GPULight light, float3 normal, float3 viewDir, float3 fragPos, float3 albedo, float metallic, float roughness, float shadow) {
     float3 lightDir = normalize(light.position.xyz - fragPos);
     float distance = length(light.position.xyz - fragPos);
     float attenuation = 1.0 / (light.attenuation.x + light.attenuation.y * distance + light.attenuation.z * distance * distance);
-    return calculateDirectionalLight(light, normal, viewDir, albedo, metallic, roughness, 0.0) * attenuation;
+    return calculateLight(light, lightDir, normal, viewDir, albedo, metallic, roughness, shadow) * attenuation;
 }
 
 float3 calculateSpotLight(GPULight light, float3 normal, float3 viewDir, float3 fragPos, float3 albedo, float metallic, float roughness) {
@@ -164,7 +198,7 @@ float3 calculateSpotLight(GPULight light, float3 normal, float3 viewDir, float3 
     float epsilon = cutoff - outerCutoff;
     float intensity = clamp((theta - outerCutoff) / epsilon, 0.0, 1.0);
     if (intensity > 0.0) {
-        return calculatePointLight(light, normal, viewDir, fragPos, albedo, metallic, roughness) * intensity;
+        return calculatePointLight(light, normal, viewDir, fragPos, albedo, metallic, roughness, 0.0) * intensity;
     }
     return float3(0.0, 0.0, 0.0);
 }
@@ -191,7 +225,10 @@ PSOutput main(PSInput input) {
         if (lightType == 0) {
             lighting += calculateDirectionalLight(ubo.lights[i], normal, viewDir, albedo, metallic, roughness, shadow);
         } else if (lightType == 1) {
-            lighting += calculatePointLight(ubo.lights[i], normal, viewDir, input.fragWorldPos, albedo, metallic, roughness);
+            float pointShadow = calculatePointLightShadow(ubo.lights[i].position.xyz,
+                                                          input.fragWorldPos);
+            lighting += calculatePointLight(ubo.lights[i], normal, viewDir, input.fragWorldPos,
+                                            albedo, metallic, roughness, pointShadow);
         } else if (lightType == 2) {
             lighting += calculateSpotLight(ubo.lights[i], normal, viewDir, input.fragWorldPos, albedo, metallic, roughness);
         }

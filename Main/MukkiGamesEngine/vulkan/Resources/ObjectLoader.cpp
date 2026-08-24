@@ -324,6 +324,10 @@ void ObjectLoader::loadMaterials(const tinygltf::Model& gltfModel, Model& model)
 		if (gltfMaterial.values.find("baseColorFactor") != gltfMaterial.values.end()) {
 			material.baseColorFactor = glm::make_vec4(gltfMaterial.values.at("baseColorFactor").ColorFactor().data());
 		}
+		if (gltfMaterial.values.find("metallicRoughnessTexture") != gltfMaterial.values.end()) {
+			material.metallicRoughnessTextureIndex = gltfMaterial.values.at("metallicRoughnessTexture").TextureIndex();
+		}
+
 		if (gltfMaterial.values.find("metallicFactor") != gltfMaterial.values.end()) {
 			material.metallicFactor = static_cast<float>(gltfMaterial.values.at("metallicFactor").Factor());
 		}
@@ -360,7 +364,90 @@ void ObjectLoader::loadMaterials(const tinygltf::Model& gltfModel, Model& model)
 			(gltfMat.name.find("flare") != std::string::npos) ||
 			(gltfMat.name.find("glow") != std::string::npos) ||
 			(gltfMat.name.find("emissive") != std::string::npos);
+		// making emissive textures transparent
+		if (mat.isEmissive) {
+            mat.isTransparent = true;
+        }
 	}
+	//process Transmission properties
+    for (size_t i = 0; i < gltfModel.materials.size(); i++) {
+        const auto& gltfMat = gltfModel.materials[i];
+        Material& mat = model.materials[i];
+
+        if (gltfMat.extensions.find("KHR_materials_transmission") != gltfMat.extensions.end()) {
+            const auto& transmissionExt = gltfMat.extensions.at("KHR_materials_transmission");
+            if (transmissionExt.Has("transmissionFactor")) {
+                mat.transmissionFactor = static_cast<float>(transmissionExt.Get("transmissionFactor").GetNumberAsDouble());
+            }
+        }
+        // KHR_materials_transmission → glass
+		if (gltfMat.extensions.contains("KHR_materials_transmission")) {
+			const auto& ext = gltfMat.extensions.at("KHR_materials_transmission");
+			if (ext.Has("transmissionFactor")) {
+				mat.transmissionFactor = static_cast<float>(ext.Get("transmissionFactor").Get<double>());
+			}
+		}
+		if (gltfMat.extensions.contains("KHR_materials_volume")) {
+			const auto& ext = gltfMat.extensions.at("KHR_materials_volume");
+			if (ext.Has("attenuationColor")) {
+				const auto& c = ext.Get("attenuationColor");
+				mat.attenuationColor = glm::vec3(
+					static_cast<float>(c.Get(0).Get<double>()),
+					static_cast<float>(c.Get(1).Get<double>()),
+					static_cast<float>(c.Get(2).Get<double>()));
+			}
+			if (ext.Has("attenuationDistance")) {
+				mat.attenuationDistance = static_cast<float>(ext.Get("attenuationDistance").Get<double>());
+			}
+		}
+
+		// KHR_materials_ior → index of refraction
+		if (gltfMat.extensions.contains("KHR_materials_ior")) {
+			const auto& ext = gltfMat.extensions.at("KHR_materials_ior");
+			if (ext.Has("ior")) {
+				mat.idxReflect = static_cast<float>(ext.Get("ior").Get<double>());
+			}
+		}
+		// KHR_materials_emissive_strength → fold into the emissive factor
+		if (gltfMat.extensions.contains("KHR_materials_emissive_strength")) {
+			const auto& ext = gltfMat.extensions.at("KHR_materials_emissive_strength");
+			if (ext.Has("emissiveStrength")) {
+				float strength = static_cast<float>(ext.Get("emissiveStrength").Get<double>());
+				mat.emissiveFactor *= strength;
+			}
+		}
+		if(gltfMat.extensions.contains("KHR_materials_dispersion")) {
+            const auto& ext = gltfMat.extensions.at("KHR_materials_dispersion");
+            if (ext.Has("dispersion")) {
+                mat.dispersion = static_cast<float>(ext.Get("dispersion").Get<double>());
+            }
+        }
+		if(gltfMat.extensions.contains("KHR_materials_iridescence")) {
+            const auto& ext = gltfMat.extensions.at("KHR_materials_iridescence");
+            if (ext.Has("iridescenceFactor")) {
+                mat.iridesceneFactor = static_cast<float>(ext.Get("iridescenceFactor").Get<double>());
+            }
+            if (ext.Has("iridescenceIor")) {
+                mat.iridesceneIor = static_cast<float>(ext.Get("iridescenceIor").Get<double>());
+            }
+            if (ext.Has("iridescenceThicknessMinimum")) {
+                mat.iridesceneThicknessMin = static_cast<float>(ext.Get("iridescenceThicknessMinimum").Get<double>());
+            }
+            if (ext.Has("iridescenceThicknessMaximum")) {
+                mat.iridesceneThicknessMax = static_cast<float>(ext.Get("iridescenceThicknessMaximum").Get<double>());
+            }
+            if (ext.Has("iridescenceThicknessTexture")) {
+                const auto& tex = ext.Get("iridescenceThicknessTexture");
+                if (tex.Has("index")) {
+                    mat.iridescenceThicknessTextureIndex = static_cast<int>(tex.Get("index").Get<double>());
+                }
+            }
+
+        }
+
+
+    }
+
 	// Add default material if none exist
 	if (model.materials.empty()) {
 		model.materials.push_back(Material{});

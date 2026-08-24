@@ -13,7 +13,7 @@ public:
 			alignas(16) glm::mat4 view;
 			alignas(16) glm::mat4 proj;
 		};
-		
+
 		VkDescriptorBoss(const Device* device, uint32_t maxSets);
 		void createDescriptorPool(uint32_t maxSets);
 		VkDescriptorPool getDescriptorPool() const { return descriptorPool; }
@@ -25,11 +25,13 @@ public:
 				VkImageView textureImageView,
 				VkSampler textureSampler,
 				VkImageView shadowMapImageView = VK_NULL_HANDLE,
-				VkSampler shadowMapSampler = VK_NULL_HANDLE);
+				VkSampler shadowMapSampler = VK_NULL_HANDLE,
+		        VkImageView cubeShadowImageView = VK_NULL_HANDLE,
+		        VkSampler cubeShadowSampler = VK_NULL_HANDLE);
 		void destroyDescriptorPool();
 		~VkDescriptorBoss();
 		void cleanup();
-		
+
 private:
 	VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
 	const Device* device = nullptr;

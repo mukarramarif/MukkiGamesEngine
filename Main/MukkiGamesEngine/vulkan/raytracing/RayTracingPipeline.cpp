@@ -66,11 +66,11 @@ void RayTracingPipeline::createPipeline(VkDescriptorSetLayout descriptorSetLayou
     auto rgenCode = EngineUtils::readFile("Shaders/rt.rgen.spv");
     auto rmissCode = EngineUtils::readFile("Shaders/rt.rmiss.spv");
     auto rchitCode = EngineUtils::readFile("Shaders/rt.rchit.spv");
-
+    auto rahitCode = EngineUtils::readFile("Shaders/rt.rahit.spv");
     VkShaderModule rgenModule = createShaderModule(rgenCode);
     VkShaderModule rmissModule = createShaderModule(rmissCode);
     VkShaderModule rchitModule = createShaderModule(rchitCode);
-
+    VkShaderModule rahitModule = createShaderModule(rahitCode);
     VkPipelineShaderStageCreateInfo rgenStage{};
     rgenStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     rgenStage.stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
@@ -88,8 +88,12 @@ void RayTracingPipeline::createPipeline(VkDescriptorSetLayout descriptorSetLayou
     rchitStage.stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
     rchitStage.module = rchitModule;
     rchitStage.pName = "main";
-
-    std::array<VkPipelineShaderStageCreateInfo, 3> stages{ rgenStage, rmissStage, rchitStage };
+    VkPipelineShaderStageCreateInfo rahitStage{};
+    rahitStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    rahitStage.stage = VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
+    rahitStage.module = rahitModule;
+    rahitStage.pName = "main";
+    std::array<VkPipelineShaderStageCreateInfo, 4> stages{ rgenStage, rmissStage, rchitStage, rahitStage};
 
     VkRayTracingShaderGroupCreateInfoKHR rgenGroup{};
     rgenGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
@@ -112,10 +116,10 @@ void RayTracingPipeline::createPipeline(VkDescriptorSetLayout descriptorSetLayou
     rchitGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     rchitGroup.generalShader = VK_SHADER_UNUSED_KHR;
     rchitGroup.closestHitShader = 2;
-    rchitGroup.anyHitShader = VK_SHADER_UNUSED_KHR;
+    rchitGroup.anyHitShader = 3;   // glass skipping for shadow rays
     rchitGroup.intersectionShader = VK_SHADER_UNUSED_KHR;
-
     std::array<VkRayTracingShaderGroupCreateInfoKHR, 3> groups{ rgenGroup, rmissGroup, rchitGroup };
+
 
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -148,6 +152,7 @@ void RayTracingPipeline::createPipeline(VkDescriptorSetLayout descriptorSetLayou
     vkDestroyShaderModule(device->getDevice(), rgenModule, nullptr);
     vkDestroyShaderModule(device->getDevice(), rmissModule, nullptr);
     vkDestroyShaderModule(device->getDevice(), rchitModule, nullptr);
+    vkDestroyShaderModule(device->getDevice(), rahitModule, nullptr);
 }
 
 void RayTracingPipeline::createShaderBindingTable()
@@ -161,12 +166,32 @@ void RayTracingPipeline::createShaderBindingTable()
 
     sbt.handleSize = rtProperties.shaderGroupHandleSize;
     sbt.handleSizeAligned = (rtProperties.shaderGroupHandleSize + rtProperties.shaderGroupHandleAlignment - 1) & ~(rtProperties.shaderGroupHandleAlignment - 1);
- sbt.baseAlignment = rtProperties.shaderGroupBaseAlignment;
-    sbt.groupCount = 3;
+    sbt.baseAlignment = rtProperties.shaderGroupBaseAlignment;
 
-  uint32_t sbtStride = (sbt.handleSizeAligned + sbt.baseAlignment - 1) & ~(sbt.baseAlignment - 1);
-    uint32_t sbtSize = sbt.groupCount * sbtStride;
-    std::vector<uint8_t> shaderHandleStorage(sbtSize);
+    // Pipeline groups: [0] raygen, [1] miss, [2] triangle hit group.
+    // The hit group contains closest + any, so its SBT record holds two
+    // consecutive handles.
+    constexpr uint32_t groupCount = 3;
+    const std::array<uint32_t, groupCount> handleCounts = { 1u, 1u, 2u };
+
+    std::array<uint32_t, groupCount> regionStrides{};
+    std::array<uint32_t, groupCount> regionOffsets{};
+    uint32_t offset = 0;
+    for (uint32_t g = 0; g < groupCount; ++g) {
+        regionStrides[g] = (handleCounts[g] * sbt.handleSizeAligned + sbt.baseAlignment - 1) & ~(sbt.baseAlignment - 1);
+        regionOffsets[g] = offset;
+        offset += regionStrides[g];
+    }
+
+    sbt.rgenStride = regionStrides[0];
+    sbt.missStride = regionStrides[1];
+    sbt.hitStride = regionStrides[2];
+    sbt.rgenOffset = regionOffsets[0];
+    sbt.missOffset = regionOffsets[1];
+    sbt.hitOffset = regionOffsets[2];
+
+    constexpr uint32_t totalHandleCount = 4;  // raygen + miss + closest + any
+    const uint32_t sbtSize = offset;
 
     auto vkGetRayTracingShaderGroupHandlesKHRFunc = reinterpret_cast<PFN_vkGetRayTracingShaderGroupHandlesKHR>(
         vkGetDeviceProcAddr(device->getDevice(), "vkGetRayTracingShaderGroupHandlesKHR"));
@@ -174,13 +199,23 @@ void RayTracingPipeline::createShaderBindingTable()
         throw std::runtime_error("failed to load vkGetRayTracingShaderGroupHandlesKHR");
     }
 
-    std::vector<uint8_t> handleData(sbt.groupCount * sbt.handleSize);
-    if (vkGetRayTracingShaderGroupHandlesKHRFunc(device->getDevice(), pipeline, 0, sbt.groupCount, static_cast<uint32_t>(handleData.size()), handleData.data()) != VK_SUCCESS) {
+    std::vector<uint8_t> handleData(totalHandleCount * sbt.handleSize);
+    if (vkGetRayTracingShaderGroupHandlesKHRFunc(device->getDevice(), pipeline, 0, groupCount,
+            static_cast<uint32_t>(handleData.size()), handleData.data()) != VK_SUCCESS) {
         throw std::runtime_error("failed to get shader group handles");
     }
 
-    for (uint32_t group = 0; group < sbt.groupCount; ++group) {
-        memcpy(shaderHandleStorage.data() + group * sbtStride, handleData.data() + group * sbt.handleSize, sbt.handleSize);
+    // Handles come back in group order; group g's handles start after the
+    // handles of all preceding groups.
+    std::vector<uint8_t> shaderHandleStorage(sbtSize);
+    uint32_t srcHandle = 0;
+    for (uint32_t g = 0; g < groupCount; ++g) {
+        for (uint32_t h = 0; h < handleCounts[g]; ++h) {
+            uint32_t srcOffset = (srcHandle + h) * sbt.handleSize;
+            uint32_t dstOffset = regionOffsets[g] + h * sbt.handleSizeAligned;
+            memcpy(shaderHandleStorage.data() + dstOffset, handleData.data() + srcOffset, sbt.handleSize);
+        }
+        srcHandle += handleCounts[g];
     }
 
     device->createBuffer(

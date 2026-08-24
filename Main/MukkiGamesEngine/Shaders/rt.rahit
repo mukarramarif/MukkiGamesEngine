@@ -1,0 +1,89 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+struct Payload
+{
+    vec3 color;
+    vec3 position;
+    vec3 normal;
+    int hit;
+    int shadowRay;
+    float metallic;
+    float roughness;
+    vec3 emissiveColor;
+    float transmission;
+    float idxReflect;
+    int frontFace;
+    float hitT;
+    float attenuationR;
+    float attenuationG;
+    float attenuationB;
+    float attenuationDistance;
+    float dispersion;
+};
+
+layout(location = 0) rayPayloadInEXT Payload payload;
+
+
+struct PrimitiveInfo
+{
+    uint firstIndex;
+    uint indexCount;
+    int textureIndex;
+    float metallicFactor;
+    float roughnessFactor;
+    float baseColorR;
+    float baseColorG;
+    float baseColorB;
+    float emissiveR;
+    float emissiveG;
+    float emissiveB;
+    uint vertexOffset;
+    int emssiveTextureIndex;
+    float transmissionFactor;
+    float idxReflect;
+    float attenuationR;
+    float attenuationG;
+    float attenuationB;
+    float attenuationDistance;
+    float dispersion;
+    float iridescenceFactor;
+    float iridescenceIor;
+    float iridescenceMin;
+    float iridescenceMax;
+};
+
+struct MeshInfo
+{
+    uint primitiveOffset;
+    uint primitiveCount;
+    uint pad0;
+    uint pad1;
+};
+
+layout(set = 0, binding = 5, std430) readonly buffer PrimitiveBuffer
+{
+    PrimitiveInfo primitives[];
+} primitiveBuffer;
+
+layout(set = 0, binding = 6, std430) readonly buffer MeshBuffer
+{
+    MeshInfo meshes[];
+} meshBuffer;
+
+void main()
+{
+    uint meshIndex = gl_InstanceCustomIndexEXT;
+    MeshInfo meshInfo = meshBuffer.meshes[meshIndex];
+    uint primitiveIndex = meshInfo.primitiveOffset + gl_GeometryIndexEXT;
+    PrimitiveInfo primInfo = primitiveBuffer.primitives[primitiveIndex];
+
+    // Shadow test 1: glass does not occlude, the ray passes through.
+    if (payload.shadowRay == 1 && primInfo.transmissionFactor > 0.5)
+    {
+        ignoreIntersectionEXT;
+        return;
+    }
+
+
+}

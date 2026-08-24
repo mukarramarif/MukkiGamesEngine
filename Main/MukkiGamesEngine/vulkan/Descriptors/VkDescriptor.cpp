@@ -25,7 +25,7 @@ void VkDescriptorBoss::createDescriptorPool(uint32_t maxSets)
 	poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
 	poolInfo.pPoolSizes = poolSizes.data();
 	poolInfo.maxSets = totalSets;
-	
+
 	if (vkCreateDescriptorPool(device->getDevice(), &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
 		throw std::runtime_error("failed to create descriptor pool!");
 	}
@@ -53,7 +53,9 @@ void VkDescriptorBoss::updateDescriptorSets(
 	VkImageView textureImageView,
 	VkSampler textureSampler,
 	VkImageView shadowMapImageView,
-	VkSampler shadowMapSampler)
+	VkSampler shadowMapSampler,
+    VkImageView cubeShadowMapImageView,
+    VkSampler cubeShadowMapSampler)
 {
 	for (size_t i = 0; i < descriptorSets.size(); i++) {
 		std::vector<VkWriteDescriptorSet> descriptorWrites;
@@ -123,7 +125,21 @@ void VkDescriptorBoss::updateDescriptorSets(
 			shadowWrite.pImageInfo = &shadowImageInfo;
 			descriptorWrites.push_back(shadowWrite);
 		}
+		if (cubeShadowMapImageView != VK_NULL_HANDLE && cubeShadowMapSampler != VK_NULL_HANDLE) {
+            VkDescriptorImageInfo cubeShadowInfo{};
+            cubeShadowInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            cubeShadowInfo.imageView = cubeShadowMapImageView;
+            cubeShadowInfo.sampler = cubeShadowMapSampler;
 
+            VkWriteDescriptorSet cubeShadowWrite{};
+            cubeShadowWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            cubeShadowWrite.dstSet = descriptorSets[i];
+            cubeShadowWrite.dstBinding = 4;
+            cubeShadowWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            cubeShadowWrite.descriptorCount = 1;
+            cubeShadowWrite.pImageInfo = &cubeShadowInfo;
+            descriptorWrites.push_back(cubeShadowWrite);
+        }
 		// Update all descriptors
 		vkUpdateDescriptorSets(device->getDevice(), static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 	}

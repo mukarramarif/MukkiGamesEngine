@@ -30,7 +30,7 @@
 #include "../raytracing/RayTracingPipeline.h"
 #include "../Physics/PhysicsEngine.h"
 #include "../../Renderer/Renderer.h"
-
+#include "../Resources/ShadowCubeMap.h"
 const int MAX_FRAMES_IN_FLIGHT = 2;
 const int MAX_RT_TEXTURES = 100;
 
@@ -126,6 +126,17 @@ private:
 		float emissiveB;
 		uint32_t vertexOffset;
 		int32_t emissionTextureIndex;
+		float transmissionFactor;
+        float idxReflect;
+		float attenuationR;
+		float attenuationG;
+		float attenuationB;
+		float attenuationDistance;
+		float dispersion;
+		float iridescenceFactor;
+        float iridescenceIor;
+        float iridescenceMin;
+        float iridescenceMax;
 	};
 	struct RayTracingMeshInfo {
 		uint32_t primitiveOffset;
@@ -213,6 +224,7 @@ private:
 	void cleanupTAAPipeline();
 	void updateTAADescriptorSets();
 	void recordShadowPass();
+	void recordPointShadowPass();
 	void initCloudPipeline();
 	void createCloudOutputImage();
 	void createSceneColorImage();
@@ -293,8 +305,11 @@ private:
 
 	//ShadowMap
 	std::unique_ptr<ShadowMap> shadowMap;
+	std::unique_ptr<ShadowCubeMap> shadowCubeMap;
+
+
 	//TODO: find a way to automatically update scenes like hot shader reloading
-	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json","WaterExample.json", "showRoom.json"};
+	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json","WaterExample.json", "showRoom.json", "GlassDragon.json"};
 	int currentSceneIndex = 0;
 
 	//Cloud Pipeline
