@@ -24,6 +24,7 @@ struct Payload
     float iridescenceIor;
     float iridescenceMin;
     float iridescenceMax;
+    float iridescenceThickness;
 };
 
 layout(location = 0) rayPayloadEXT Payload payload;

@@ -20,6 +20,11 @@ struct Payload
     float attentuationB;
     float attenuationDistance;
     float dispersion;
+    float iridescenceFactor;
+    float iridescenceIor;
+    float iridescenceMin;
+    float iridescenceMax;
+    float iridescenceThickness;
 };
 
 layout(location = 0) rayPayloadInEXT Payload payload;
@@ -59,6 +64,8 @@ struct PrimitiveInfo
     float iridescenceIor;
     float iridescenceMin;
     float iridescenceMax;
+    int metallicRoughnessTextureIndex;
+    int iridescenceThicknessTextureIndex;
 };
 
 struct MeshInfo
@@ -141,8 +148,17 @@ void main()
     }
     payload.normal = normal;
     payload.color = albedo;
-    payload.metallic = primInfo.metallicFactor;
-    payload.roughness = primInfo.roughnessFactor;
+    int mrTexIdx = primInfo.metallicRoughnessTextureIndex;
+    float metallic = primInfo.metallicFactor;
+    float roughness = primInfo.roughnessFactor;
+    if (mrTexIdx >= 0) {
+        vec3 mr = texture(textures[nonuniformEXT(mrTexIdx)], uv).rgb;
+        metallic *= mr.b;   // glTF: B = metallic
+        roughness *= mr.g;  // glTF: G = roughness
+    }
+    payload.metallic = metallic;
+    payload.roughness = roughness;
+
     payload.emissiveColor = emissiveColor;
     payload.transmission = primInfo.transmissionFactor;
     payload.idxReflect = primInfo.idxReflect;
@@ -152,4 +168,15 @@ void main()
     payload.attentuationB = primInfo.attenuationB;
     payload.attenuationDistance = primInfo.attenuationDistance;
     payload.dispersion = primInfo.dispersion;
+    payload.iridescenceFactor = primInfo.iridescenceFactor;
+    payload.iridescenceIor = primInfo.iridescenceIor;
+    payload.iridescenceMin = primInfo.iridescenceMin;
+    payload.iridescenceMax = primInfo.iridescenceMax;
+    float iridThickness = mix(primInfo.iridescenceMin, primInfo.iridescenceMax, 0.5);
+    int iridTexIdx = primInfo.iridescenceThicknessTextureIndex;
+    if (iridTexIdx >= 0) {
+        iridThickness = mix(primInfo.iridescenceMin, primInfo.iridescenceMax,
+                            texture(textures[nonuniformEXT(iridTexIdx)], uv).r);
+    }
+    payload.iridescenceThickness = iridThickness;
 }
