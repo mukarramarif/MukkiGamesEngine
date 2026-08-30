@@ -491,6 +491,9 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
   // 15. Create synchronization objects (semaphores and fences)
   createSyncObjects();
 
+  // Frame graph
+  renderGraph.init(*device);
+
   // Initialize camera
   glm::vec3 camPos = sceneLoader->hasCameraSettings()
                          ? sceneLoader->getInitialCameraPosition()
@@ -777,6 +780,66 @@ void VulkanApplication::createTextureResources() {
   textureManager->createTextureSampler(textureSampler);
 }
 
+void VulkanApplication::buildFrameGraph() {
+  renderGraph.reset();
+
+  // ── Imports ──────────────────────────────────────────────────────────────────────────────
+  FrameGraphResourceInfo dirShadowInfo{};
+  dirShadowInfo.external = true;
+  // The directional shadow render pass handles UNDEFINED → SHADER_READ_ONLY
+  // internally, so the graph only tracks the steady-state layout.
+  dirShadowInfo.initialLayout = m_dirShadowLayout;
+  dirShadowInfo.texture = {
+      shadowMap->getShadowMapSize(), shadowMap->getShadowMapSize(), 1, 1,
+      VK_FORMAT_R32_SFLOAT,
+      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+      VK_IMAGE_ASPECT_COLOR_BIT};
+  m_dirShadowHandle = renderGraph.importTexture(
+      dirShadowInfo, shadowMap->getShadowImage(), VK_NULL_HANDLE,
+      shadowMap->getShadowMapImageView());
+
+  FrameGraphResourceInfo cubeShadowInfo{};
+  cubeShadowInfo.external = true;
+  cubeShadowInfo.initialLayout = m_cubeShadowLayout;  // UNDEFINED first frame
+  cubeShadowInfo.texture = {
+      shadowCubeMap->getSize(), shadowCubeMap->getSize(), 6, 1,
+      VK_FORMAT_D32_SFLOAT,
+      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+      VK_IMAGE_ASPECT_DEPTH_BIT};
+  m_cubeShadowHandle = renderGraph.importTexture(
+      cubeShadowInfo, shadowCubeMap->getCubeMapImage(), VK_NULL_HANDLE,
+      shadowCubeMap->getCubeMapImageView());
+
+  // ── Passes (execution order derives from the resource dependencies) ───────
+  renderGraph.addPass(
+      "DirectionalShadows", {},
+      {{m_dirShadowHandle, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}},
+      [this](VkCommandBuffer cmd) { recordShadowPass(cmd); });
+
+  renderGraph.addPass(
+      "PointShadows", {},
+      {{m_cubeShadowHandle,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}},
+      [this](VkCommandBuffer cmd) { recordPointShadowPass(cmd); });
+
+  // Transition-only node: the forward recording runs right after graph
+  // execution, but the shadow maps must be in sampled layout first.
+  renderGraph.addPass(
+      "Forward",
+      {{m_dirShadowHandle, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+       {m_cubeShadowHandle, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}},
+      {}, [](VkCommandBuffer) {});
+
+  renderGraph.compile();
+}
+
 void VulkanApplication::drawFrame() {
   ZoneScopedN("Frame");
   // 1. Wait for the current frame's fence
@@ -853,9 +916,6 @@ void VulkanApplication::drawFrame() {
     skybox->updateUniformBuffer(currentFrame, view);
   }
 
-  // Record shadow pass for directional light shadow mapping
-  recordShadowPass();
-  recordPointShadowPass();
   // 5. Record command buffer
   commandBufferManager->resetCommandBuffer(currentFrame);
   VkCommandBuffer commandBuffer =
@@ -873,6 +933,12 @@ void VulkanApplication::drawFrame() {
       if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
         throw std::runtime_error("failed to begin recording command buffer!");
       }
+
+      // Frame graph: shadow passes + transitions into the main pass
+      buildFrameGraph();
+      renderGraph.execute(commandBuffer);
+      m_dirShadowLayout = renderGraph.getLayout(m_dirShadowHandle);
+      m_cubeShadowLayout = renderGraph.getLayout(m_cubeShadowHandle);
 
       VkPipeline mainPipeline = graphicsPipeline->getGraphicsPipeline();
       VkPipeline transparentPipe =
@@ -1482,7 +1548,7 @@ VulkanApplication::computeDirectionalLightSpaceMatrix(const Light &light,
   return lightProj * lightView;
 }
 
-void VulkanApplication::recordShadowPass() {
+void VulkanApplication::recordShadowPass(VkCommandBuffer cmd) {
   ZoneScopedN("Shadow Pass");
   if (!shadowMap)
     return;
@@ -1500,47 +1566,6 @@ void VulkanApplication::recordShadowPass() {
 
   glm::mat4 lightSpaceMatrix =
       computeDirectionalLightSpaceMatrix(*dirLight, *camera);
-
-  VkCommandBuffer cmd = commandBufferManager->beginSingleTimeCommands();
-
-  // Transition shadow images to proper rendering layouts
-  VkImageMemoryBarrier shadowColorBarrier{};
-  shadowColorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  shadowColorBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  shadowColorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-  shadowColorBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  shadowColorBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  shadowColorBarrier.image = shadowMap->getShadowImage();
-  shadowColorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  shadowColorBarrier.subresourceRange.baseMipLevel = 0;
-  shadowColorBarrier.subresourceRange.levelCount = 1;
-  shadowColorBarrier.subresourceRange.baseArrayLayer = 0;
-  shadowColorBarrier.subresourceRange.layerCount = 1;
-  shadowColorBarrier.srcAccessMask = 0;
-  shadowColorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-  VkImageMemoryBarrier shadowDepthBarrier{};
-  shadowDepthBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  shadowDepthBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  shadowDepthBarrier.newLayout =
-      VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-  shadowDepthBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  shadowDepthBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  shadowDepthBarrier.image = shadowMap->getDepthImage();
-  shadowDepthBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-  shadowDepthBarrier.subresourceRange.baseMipLevel = 0;
-  shadowDepthBarrier.subresourceRange.levelCount = 1;
-  shadowDepthBarrier.subresourceRange.baseArrayLayer = 0;
-  shadowDepthBarrier.subresourceRange.layerCount = 1;
-  shadowDepthBarrier.srcAccessMask = 0;
-  shadowDepthBarrier.dstAccessMask =
-      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-  VkImageMemoryBarrier barriers[] = {shadowColorBarrier, shadowDepthBarrier};
-  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-                       0, 0, nullptr, 0, nullptr, 2, barriers);
 
   // Begin shadow render pass
   VkRenderPassBeginInfo rpInfo{};
@@ -1612,7 +1637,6 @@ void VulkanApplication::recordShadowPass() {
   }
 
   vkCmdEndRenderPass(cmd);
-  commandBufferManager->endSingleTimeCommands(cmd);
 }
 
 void VulkanApplication::processInput() {
@@ -3980,7 +4004,7 @@ void VulkanApplication::createDescriptorSetLayout() {
   }
   m_deletionQueue.pushDescriptorSetLayout(vkDev, descriptorSetLayout);
 }
-void VulkanApplication::recordPointShadowPass() {
+void VulkanApplication::recordPointShadowPass(VkCommandBuffer cmd) {
   ZoneScopedN("Point Shadow Pass");
   if (!shadowCubeMap)
     return;
@@ -3994,15 +4018,14 @@ void VulkanApplication::recordPointShadowPass() {
     }
   }
   if (!pointLight) {
-    // No shadowed point light this frame. The raster shader statically
-    // uses binding 4, so the image must still be in a valid sampled
-    // layout — leaving it UNDEFINED trips VUID-vkCmdDraw-None-09600.
-    VkCommandBuffer cmd = commandBufferManager->beginSingleTimeCommands();
+    // No shadowed point light this frame. The frame graph declared this pass
+    // as leaving the cube map in DEPTH_STENCIL_ATTACHMENT_OPTIMAL, so the
+    // fix-up must bring the real layout in line with the graph's belief.
 
     VkImageMemoryBarrier toSampled{};
     toSampled.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    toSampled.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    toSampled.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    toSampled.oldLayout = m_cubeShadowLayout;
+    toSampled.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     toSampled.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toSampled.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toSampled.image = shadowCubeMap->getCubeMapImage();
@@ -4012,43 +4035,19 @@ void VulkanApplication::recordPointShadowPass() {
     toSampled.subresourceRange.baseArrayLayer = 0;
     toSampled.subresourceRange.layerCount = 6;
     toSampled.srcAccessMask = 0;
-    toSampled.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    toSampled.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr,
-                         0, nullptr, 1, &toSampled);
+    vkCmdPipelineBarrier(
+        cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &toSampled);
 
-    commandBufferManager->endSingleTimeCommands(cmd);
     return;
   }
 
-  VkCommandBuffer cmd = commandBufferManager->beginSingleTimeCommands();
-
   const uint32_t size = shadowCubeMap->getSize();
   const float farPlane = shadowCubeMap->getFarPlane();
-
-  // ── Barrier 1: whole cube map (all 6 layers) → depth attachment ──
-  VkImageMemoryBarrier toDepthAttachment{};
-  toDepthAttachment.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  toDepthAttachment.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  toDepthAttachment.newLayout =
-      VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-  toDepthAttachment.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  toDepthAttachment.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  toDepthAttachment.image = shadowCubeMap->getCubeMapImage();
-  toDepthAttachment.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-  toDepthAttachment.subresourceRange.baseMipLevel = 0;
-  toDepthAttachment.subresourceRange.levelCount = 1;
-  toDepthAttachment.subresourceRange.baseArrayLayer = 0;
-  toDepthAttachment.subresourceRange.layerCount = 6; // all faces at once
-  toDepthAttachment.srcAccessMask = 0;
-  toDepthAttachment.dstAccessMask =
-      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                       VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                       0, 0, nullptr, 0, nullptr, 1, &toDepthAttachment);
 
   // ── Render all 6 faces ──
   VkViewport viewport{};
@@ -4119,29 +4118,6 @@ void VulkanApplication::recordPointShadowPass() {
     vkCmdEndRenderPass(cmd);
   }
 
-  // ── Barrier 2: cube map → shader read (sampled in main pass) ──
-  VkImageMemoryBarrier toShaderRead{};
-  toShaderRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  toShaderRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-  toShaderRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-  toShaderRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  toShaderRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  toShaderRead.image = shadowCubeMap->getCubeMapImage();
-  toShaderRead.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-  toShaderRead.subresourceRange.baseMipLevel = 0;
-  toShaderRead.subresourceRange.levelCount = 1;
-  toShaderRead.subresourceRange.baseArrayLayer = 0;
-  toShaderRead.subresourceRange.layerCount = 6;
-  toShaderRead.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-  toShaderRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-  vkCmdPipelineBarrier(cmd,
-                       VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
-                       nullptr, 1, &toShaderRead);
-
-  commandBufferManager->endSingleTimeCommands(cmd);
 }
 
 void VulkanApplication::createPipelineLayout() {

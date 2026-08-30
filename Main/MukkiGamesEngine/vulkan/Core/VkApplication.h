@@ -31,6 +31,7 @@
 #include "../Physics/PhysicsEngine.h"
 #include "../../Renderer/Renderer.h"
 #include "../Resources/ShadowCubeMap.h"
+#include "../RenderGraph.h"
 const int MAX_FRAMES_IN_FLIGHT = 2;
 const int MAX_RT_TEXTURES = 100;
 
@@ -225,8 +226,9 @@ private:
 	void cleanupTAAImages();
 	void cleanupTAAPipeline();
 	void updateTAADescriptorSets();
-	void recordShadowPass();
-	void recordPointShadowPass();
+	void recordShadowPass(VkCommandBuffer commandBuffer);
+	void recordPointShadowPass(VkCommandBuffer commandBuffer);
+	void buildFrameGraph();
 	void initCloudPipeline();
 	void createCloudOutputImage();
 	void createSceneColorImage();
@@ -308,6 +310,13 @@ private:
 	//ShadowMap
 	std::unique_ptr<ShadowMap> shadowMap;
 	std::unique_ptr<ShadowCubeMap> shadowCubeMap;
+
+	// Frame graph (owns shadow-map transitions + pass ordering)
+	RenderGraph renderGraph;
+	FrameGraphResourceHandle m_dirShadowHandle{};
+	FrameGraphResourceHandle m_cubeShadowHandle{};
+	VkImageLayout m_dirShadowLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	VkImageLayout m_cubeShadowLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
 
 	//TODO: find a way to automatically update scenes like hot shader reloading
