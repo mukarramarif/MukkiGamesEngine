@@ -26,11 +26,15 @@
   ],
   "Objects": [
     {
-      "name": "Car",
-      "modelPath": "Car_Model/scene.gltf",
-      "position": [0.0, 0.0, 0.0],
-      "rotation": [0.0, 0.0, 0.0],
-      "scale": [1.0, 1.0, 1.0]
+      "name":"Teapot",
+      "modelPath": "TeaPot/teapots_galore_id.gltf",
+      "position": [4.0,0.0,0.0],
+      "rotation":[0.0,0.0,0.0],
+      "scale": [1.0,1.0, 1.0],
+      "physics": {
+        "enabled": false,
+        "isDynamic": false,
+        "useMeshShape": false}
     }
   ]
 }

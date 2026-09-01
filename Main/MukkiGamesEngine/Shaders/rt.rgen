@@ -96,11 +96,12 @@ float causticIOR(float ior, float dispersion, float lambda){
     return ior + b * (1.0 / (lambda * lambda)-2.882);
 }
 vec3 wavelengthToRGB(float lambda){
-    float sigma = 0.015;
-    vec3 w = vec3( exp(-0.5 * pow((lambda - 0.66) / sigma, 2.0)),
-        exp(-0.5 * pow((lambda - 0.55) / sigma, 2.0)),
-        exp(-0.5 * pow((lambda - 0.44) / sigma, 2.0)));
-    return w * 10.6;
+    const float sigma = 0.055;
+    vec3 w = vec3(
+        exp(-0.5 * pow((lambda - 0.645) / sigma, 2.0)),
+        exp(-0.5 * pow((lambda - 0.550) / sigma, 2.0)),
+        exp(-0.5 * pow((lambda - 0.460) / sigma, 2.0)));
+    return w / 0.345;
 }
 // vec3 Fresnel0ToIor(vec3 F0) {
 //     vec3 sqrtF0 = sqrt(F0);
