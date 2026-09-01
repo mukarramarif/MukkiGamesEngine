@@ -85,7 +85,12 @@ struct LoadedTexture {
 	uint32_t width = 0;
 	uint32_t height = 0;
 };
-
+struct GpuMeshInstance{
+    glm::vec4 rotation;
+    glm::vec3 scale;
+    glm::vec3 translation;
+    uint32_t meshIndex;
+};
 // Complete loaded model
 struct Model {
 	std::vector<Vertex> vertices;
@@ -99,6 +104,8 @@ struct Model {
 	//rendering order
 	std::vector<size_t> opaqueMeshIndices;
 	std::vector<size_t> transparentMeshIndices;
+	GpuMeshInstance* gpuMeshInstances = nullptr;
+
 	// GPU buffers
 	VkBuffer vertexBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
@@ -106,6 +113,7 @@ struct Model {
 	VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
 	VkBuffer rtVertexBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory rtVertexBufferMemory = VK_NULL_HANDLE;
+
 };
 
 class ObjectLoader {

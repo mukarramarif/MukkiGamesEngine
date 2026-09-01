@@ -111,6 +111,22 @@ if(ENABLE_CLANG_TIDY)
 endif()
 # ----------------------------------------
 
+# --- AddressSanitizer (opt-in, Debug builds only) ---
+# Enable with: cmake -DENABLE_ASAN=ON ...
+# MSVC requires the dynamic CRT (/MDd) and the flag on both compile and link.
+option(ENABLE_ASAN "Enable AddressSanitizer in Debug builds" OFF)
+if(ENABLE_ASAN)
+  if(MSVC)
+    target_compile_options(MukkiGamesEngine PRIVATE $<$<CONFIG:Debug>:/fsanitize=address>)
+    target_link_options(MukkiGamesEngine PRIVATE $<$<CONFIG:Debug>:/fsanitize=address>)
+  else()
+    target_compile_options(MukkiGamesEngine PRIVATE
+      $<$<CONFIG:Debug>:-fsanitize=address -fno-omit-frame-pointer>)
+    target_link_options(MukkiGamesEngine PRIVATE $<$<CONFIG:Debug>:-fsanitize=address>)
+  endif()
+endif()
+# -----------------------------------------------------
+
 # libraries
 target_link_libraries(MukkiGamesEngine PRIVATE Vulkan::Vulkan glfw imgui::imgui glm::glm imguizmo::imguizmo nlohmann_json::nlohmann_json stb::stb gli Jolt Tracy::TracyClient)
 
@@ -153,13 +169,14 @@ function(add_shaders TARGET_NAME)
     set(SHADER_ARGS "${CMAKE_SOURCE_DIR}/${SHADER_SOURCE}" -o "${OUT}")
 
     if(SHADER_NAME MATCHES "\\.rgen$")
-      list(APPEND SHADER_ARGS -fshader-stage=rgen --target-env=vulkan1.4 --target-spv=spv1.4)
+      list(APPEND SHADER_ARGS -fshader-stage=rgen --target-env=vulkan1.4
+           --target-spv=spv1.4 -g)
     elseif(SHADER_NAME MATCHES "\\.rmiss$")
-      list(APPEND SHADER_ARGS -fshader-stage=rmiss --target-env=vulkan1.4 --target-spv=spv1.4)
+      list(APPEND SHADER_ARGS -fshader-stage=rmiss --target-env=vulkan1.4 --target-spv=spv1.4  -g)
     elseif(SHADER_NAME MATCHES "\\.rchit$")
-      list(APPEND SHADER_ARGS -fshader-stage=rchit --target-env=vulkan1.4 --target-spv=spv1.4)
+      list(APPEND SHADER_ARGS -fshader-stage=rchit --target-env=vulkan1.4 --target-spv=spv1.4  -g)
     elseif(SHADER_NAME MATCHES "\\.rahit$")
-      list(APPEND SHADER_ARGS -fshader-stage=rahit --target-env=vulkan1.4 --target-spv=spv1.4)
+      list(APPEND SHADER_ARGS -fshader-stage=rahit --target-env=vulkan1.4 --target-spv=spv1.4  -g)
     endif()
 
     add_custom_command(

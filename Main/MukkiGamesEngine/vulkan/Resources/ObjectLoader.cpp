@@ -5,11 +5,61 @@
 #include <stdexcept>
 #include <filesystem>
 #include <future>
+#include <algorithm>
 
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <tiny_gltf.h>
+
+namespace {
+
+// Reads a FLOAT accessor (VEC3/VEC4) into out, expanding sparse accessors
+// (allowed for EXT_mesh_gpu_instancing attributes).
+void readAccessorFloats(const tinygltf::Model& gltfModel,
+                        const tinygltf::Accessor& accessor,
+                        std::vector<float>& out)
+{
+	const int comps = tinygltf::GetNumComponentsInType(accessor.type);
+	out.assign(static_cast<size_t>(accessor.count) * comps, 0.0f);
+
+	if (accessor.bufferView >= 0) {
+		const tinygltf::BufferView& bv = gltfModel.bufferViews[accessor.bufferView];
+		const float* src = reinterpret_cast<const float*>(
+			&gltfModel.buffers[bv.buffer].data[accessor.byteOffset + bv.byteOffset]);
+		std::copy(src, src + out.size(), out.begin());
+	}
+
+	if (accessor.sparse.isSparse) {
+		const tinygltf::BufferView& idxBv = gltfModel.bufferViews[accessor.sparse.indices.bufferView];
+		const uint8_t* idxBase = &gltfModel.buffers[idxBv.buffer].data[accessor.sparse.indices.byteOffset + idxBv.byteOffset];
+		const tinygltf::BufferView& valBv = gltfModel.bufferViews[accessor.sparse.values.bufferView];
+		const float* valBase = reinterpret_cast<const float*>(
+			&gltfModel.buffers[valBv.buffer].data[accessor.sparse.values.byteOffset + valBv.byteOffset]);
+
+		for (int s = 0; s < accessor.sparse.count; ++s) {
+			uint32_t index = 0;
+			switch (accessor.sparse.indices.componentType) {
+			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+				index = idxBase[s];
+				break;
+			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+				index = reinterpret_cast<const uint16_t*>(idxBase)[s];
+				break;
+			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+				index = reinterpret_cast<const uint32_t*>(idxBase)[s];
+				break;
+			default:
+				continue;
+			}
+			for (int c = 0; c < comps; ++c)
+				out[static_cast<size_t>(index) * comps + c] =
+					valBase[static_cast<size_t>(s) * comps + c];
+		}
+	}
+}
+
+} // namespace
 
 ObjectLoader::~ObjectLoader()
 {
@@ -465,14 +515,92 @@ void ObjectLoader::loadNode(const tinygltf::Model& gltfModel, const tinygltf::No
 	// Load mesh if present - pass the world transform to apply to vertices
 	if (gltfNode.mesh > -1) {
 		node.meshIndex = static_cast<int32_t>(model.meshes.size());
-		loadMesh(gltfModel, gltfModel.meshes[gltfNode.mesh], model, node.worldTransform);
+
+		const auto instIt = gltfNode.extensions.find("EXT_mesh_gpu_instancing");
+		if (instIt != gltfNode.extensions.end()) {
+			// EXT_mesh_gpu_instancing: TRANSLATION / ROTATION / SCALE accessors,
+			// one element per instance. Flatten at load time: one baked mesh +
+			// one synthetic node per instance, so the rasterizer and the RT
+			// TLAS (which iterates nodes) both place every instance.
+			const tinygltf::Value& ext = instIt->second;
+			std::vector<float> translations, rotations, scales;
+			size_t instanceCount = 0;
+
+			if (ext.Has("attributes")) {
+				const tinygltf::Value& attrs = ext.Get("attributes");
+				if (attrs.Has("TRANSLATION")) {
+					const int acc = static_cast<int>(attrs.Get("TRANSLATION").Get<double>());
+					readAccessorFloats(gltfModel, gltfModel.accessors[acc], translations);
+					instanceCount = translations.size() / 3;
+				}
+				if (attrs.Has("ROTATION")) {
+					const int acc = static_cast<int>(attrs.Get("ROTATION").Get<double>());
+					readAccessorFloats(gltfModel, gltfModel.accessors[acc], rotations);
+					if (instanceCount == 0) instanceCount = rotations.size() / 4;
+				}
+				if (attrs.Has("SCALE")) {
+					const int acc = static_cast<int>(attrs.Get("SCALE").Get<double>());
+					readAccessorFloats(gltfModel, gltfModel.accessors[acc], scales);
+					if (instanceCount == 0) instanceCount = scales.size() / 3;
+				}
+			}
+
+			if (instanceCount == 0) {
+				// Empty or malformed extension: render the mesh once.
+				loadMesh(gltfModel, gltfModel.meshes[gltfNode.mesh], model, node.worldTransform);
+			} else {
+				// The node itself owns no drawn mesh; each synthetic child
+				// carries one flattened instance.
+				node.meshIndex = -1;
+
+				// model.nodes may reallocate on push_back: capture the node
+				// transform and first synthetic index up front, and never use
+				// the 'node' reference again after the pushes.
+				const glm::mat4 nodeWorld = node.worldTransform;
+				const int32_t firstInstanceIndex = static_cast<int32_t>(model.nodes.size());
+
+				for (size_t i = 0; i < instanceCount; ++i) {
+					glm::mat4 instanceTransform = glm::mat4(1.0f);
+					if (!translations.empty())
+						instanceTransform = glm::translate(instanceTransform,
+							glm::vec3(translations[i * 3 + 0], translations[i * 3 + 1], translations[i * 3 + 2]));
+					if (!rotations.empty())
+						instanceTransform = instanceTransform * glm::mat4_cast(
+							glm::quat(rotations[i * 4 + 3], rotations[i * 4 + 0],
+							          rotations[i * 4 + 1], rotations[i * 4 + 2]));
+					if (!scales.empty())
+						instanceTransform = glm::scale(instanceTransform,
+							glm::vec3(scales[i * 3 + 0], scales[i * 3 + 1], scales[i * 3 + 2]));
+
+					Node instanceNode;
+					instanceNode.name = gltfNode.name + "_instance_" + std::to_string(i);
+					instanceNode.localTransform = instanceTransform;
+					instanceNode.worldTransform = nodeWorld * instanceTransform;
+					instanceNode.meshIndex = static_cast<int32_t>(model.meshes.size());
+					instanceNode.parent = nodeIndex;
+					model.nodes.push_back(instanceNode);
+
+					loadMesh(gltfModel, gltfModel.meshes[gltfNode.mesh], model, instanceNode.worldTransform);
+				}
+
+				// Register the synthetic children on the parent via a fresh
+				// reference (the old one may be dangling after the pushes).
+				for (size_t i = 0; i < instanceCount; ++i) {
+					model.nodes[nodeIndex].children.push_back(
+						firstInstanceIndex + static_cast<int32_t>(i));
+				}
+			}
+		} else {
+			loadMesh(gltfModel, gltfModel.meshes[gltfNode.mesh], model, node.worldTransform);
+		}
 	}
 
-	// Process children
+	// Process children (re-fetch the node each time: instancing pushes may
+	// have reallocated model.nodes, invalidating the earlier reference)
 	for (int childIndex : gltfNode.children) {
-		node.children.push_back(childIndex);
+		model.nodes[nodeIndex].children.push_back(childIndex);
 		model.nodes[childIndex].parent = nodeIndex;
-		loadNode(gltfModel, gltfModel.nodes[childIndex], childIndex, model, node.worldTransform);
+		loadNode(gltfModel, gltfModel.nodes[childIndex], childIndex, model, model.nodes[nodeIndex].worldTransform);
 	}
 }
 
