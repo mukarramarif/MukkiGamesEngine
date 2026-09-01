@@ -51,6 +51,10 @@ void ShadowMap::cleanup()
 		vkDestroyFramebuffer(vkDev, shadowFramebuffer, nullptr);
 		shadowFramebuffer = VK_NULL_HANDLE;
 	}
+	if(shadowRenderPass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(vkDev, shadowRenderPass, nullptr);
+        shadowRenderPass = VK_NULL_HANDLE;
+    }
 	if (shadowSampler != VK_NULL_HANDLE) {
 		vkDestroySampler(vkDev, shadowSampler, nullptr);
 		shadowSampler = VK_NULL_HANDLE;

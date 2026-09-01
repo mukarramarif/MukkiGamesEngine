@@ -385,7 +385,7 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
   shadowMap = std::make_unique<ShadowMap>();
   shadowMap->init(device.get(), 2048);
   shadowCubeMap = std::make_unique<ShadowCubeMap>();
-  shadowCubeMap->init(device.get(), 1024, 100.0f);
+  shadowCubeMap->init(device.get(), 1024, 50.0f);
   // 6. Create render pass (defines how rendering operations are performed)
   renderPassObj = std::make_unique<VulkanRenderPass>(
       device.get(), swapChain->getSwapChainImageFormat());
@@ -1505,7 +1505,7 @@ void VulkanApplication::cleanup() {
     shadowMap->cleanup();
     shadowMap.reset();
   }
-  if (shadowCubeMap) { // ← ADD
+  if (shadowCubeMap) {
     shadowCubeMap->cleanup();
     shadowCubeMap.reset();
   }
@@ -2770,6 +2770,11 @@ void VulkanApplication::cleanupComputeResources() {
   cleanupRayTracingGeometryBuffers();
   if (rayTracingPipeline) {
     rayTracingPipeline->cleanup();
+  }
+  // Destroy BLAS/TLAS before the device goes away; otherwise they leak and
+  // the member destructor later tries to destroy them against a dead device.
+  if (rayTracingAS) {
+    rayTracingAS->cleanup();
   }
 }
 struct CloudNoiseGenPushConstants {
