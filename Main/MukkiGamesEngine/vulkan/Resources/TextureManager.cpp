@@ -307,6 +307,10 @@ void TextureManager::destroyImage(VkImage image, VkDeviceMemory imageMemory)
 }
 void TextureManager::destroySampler(VkSampler sampler)
 {
+    if (sampler != VK_NULL_HANDLE) {
+        vkDestroySampler(device->getDevice(), sampler, nullptr);
+        sampler = VK_NULL_HANDLE;
+    }
 }
 void TextureManager::destroyImageView(VkImageView imageView)
 {

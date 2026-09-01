@@ -469,7 +469,7 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
   // 14. Create descriptor sets (for uniforms, textures, etc.)
   descriptorBoss =
       std::make_unique<VkDescriptorBoss>(device.get(), MAX_FRAMES_IN_FLIGHT);
-  descriptorBoss->createDescriptorPool(MAX_FRAMES_IN_FLIGHT);
+
   descriptorBoss->createDescriptorSets(
       descriptorSetLayout, // Use the member variable
       MAX_FRAMES_IN_FLIGHT, descriptorSets);
@@ -1487,6 +1487,7 @@ void VulkanApplication::cleanup() {
   commandBufferManager.reset();
   skybox.reset();
   graphicsPipeline.reset();
+  transparentPipeline.reset();
   additivePipeline.reset();
 
   if (pipelineLayout != VK_NULL_HANDLE) {
@@ -4218,6 +4219,7 @@ void VulkanApplication::setCamera(const Camera &cam) {
 void VulkanApplication::setSkybox(const std::string &path) {
   if (path.empty())
     return;
+  skybox->cleanup();
   std::string fullPath = std::string(ASSETS_PATH) + path;
   skybox->init(device.get(), textureManager.get(), bufferManager.get(),
                renderPass, fullPath, CubemapLayout::VerticalCross,
