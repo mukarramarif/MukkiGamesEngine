@@ -561,16 +561,19 @@ void ObjectLoader::loadNode(const tinygltf::Model& gltfModel, const tinygltf::No
 
 				for (size_t i = 0; i < instanceCount; ++i) {
 					glm::mat4 instanceTransform = glm::mat4(1.0f);
-					if (!translations.empty())
+					if (!translations.empty()) {
 						instanceTransform = glm::translate(instanceTransform,
 							glm::vec3(translations[i * 3 + 0], translations[i * 3 + 1], translations[i * 3 + 2]));
-					if (!rotations.empty())
+					}
+					if (!rotations.empty()) {
 						instanceTransform = instanceTransform * glm::mat4_cast(
 							glm::quat(rotations[i * 4 + 3], rotations[i * 4 + 0],
 							          rotations[i * 4 + 1], rotations[i * 4 + 2]));
-					if (!scales.empty())
+					}
+					if (!scales.empty()) {
 						instanceTransform = glm::scale(instanceTransform,
 							glm::vec3(scales[i * 3 + 0], scales[i * 3 + 1], scales[i * 3 + 2]));
+					}
 
 					Node instanceNode;
 					instanceNode.name = gltfNode.name + "_instance_" + std::to_string(i);
