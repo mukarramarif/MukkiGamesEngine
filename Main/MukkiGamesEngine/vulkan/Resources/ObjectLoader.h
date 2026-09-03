@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -24,10 +25,7 @@ struct RayTracingVertex {
 	float _pad0;
 	float _pad1;
 };
-struct MaterialVariantMapping{
-    uint32_t baseMaterialIndex = -1;
-    std::vector<uint32_t> variantMaterialIndices{};
-};
+
 // Material data for PBR rendering
 struct Material {
 	glm::vec4 baseColorFactor = glm::vec4(1.0f);
@@ -52,7 +50,6 @@ struct Material {
 	float iridesceneThicknessMin = 100.0f;
 	float iridesceneThicknessMax = 400.0f;
 	int32_t iridescenceThicknessTextureIndex = -1;
-	MaterialVariantMapping* variantMapping;
 };
 
 // A single mesh primitive (submesh)
@@ -62,6 +59,7 @@ struct Primitive {
 	uint32_t firstVertex;
 	uint32_t vertexCount;
 	int32_t materialIndex = -1;
+	std::vector<int32_t> variantMaterials {};
 };
 
 // A mesh can contain multiple primitives
@@ -105,6 +103,8 @@ struct Model {
 	std::vector<Material> materials;
 	std::vector<LoadedTexture> textures;
 	std::vector<int32_t> rootNodes;
+	std::vector<std::string> variantNames;
+	int32_t activeVariantIndex = -1;
 	//rendering order
 	std::vector<size_t> opaqueMeshIndices;
 	std::vector<size_t> transparentMeshIndices;
@@ -119,6 +119,17 @@ struct Model {
 	VkDeviceMemory rtVertexBufferMemory = VK_NULL_HANDLE;
 
 };
+// Resolves the material a primitive renders with, honoring the currently
+// selected KHR_materials_variants variant. Falls back to the base material.
+inline int32_t resolveMaterialIndex(const Model& model, const Primitive& prim)
+{
+	if (model.activeVariantIndex >= 0 &&
+	    model.activeVariantIndex < static_cast<int32_t>(prim.variantMaterials.size()) &&
+	    prim.variantMaterials[model.activeVariantIndex] >= 0) {
+		return prim.variantMaterials[model.activeVariantIndex];
+	}
+	return prim.materialIndex;
+}
 
 class ObjectLoader {
 public:
@@ -151,6 +162,7 @@ private:
 	// Texture loading helpers
 	void uploadTextureToGPU(const unsigned char* pixelData, int width, int height,
 	                        LoadedTexture& outTexture);
+	void loadVariants(const tinygltf::Model& gltfModel, Model& model);
 	VkSamplerAddressMode getVkWrapMode(int wrapMode);
 	VkFilter getVkFilterMode(int filterMode);
 

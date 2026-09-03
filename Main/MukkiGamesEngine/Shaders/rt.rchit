@@ -15,9 +15,9 @@ struct Payload
     float idxReflect;
     int frontFace;
     float hitT;
-    float attentuationR;
-    float attentuationG;
-    float attentuationB;
+    float attenuationR;
+    float attenuationG;
+    float attenuationB;
     float attenuationDistance;
     float dispersion;
     float iridescenceFactor;
@@ -163,9 +163,9 @@ void main()
     payload.transmission = primInfo.transmissionFactor;
     payload.idxReflect = primInfo.idxReflect;
     payload.hitT = gl_HitTEXT;
-    payload.attentuationR = primInfo.attenuationR;
-    payload.attentuationG = primInfo.attenuationG;
-    payload.attentuationB = primInfo.attenuationB;
+    payload.attenuationR = primInfo.attenuationR;
+    payload.attenuationG = primInfo.attenuationG;
+    payload.attenuationB = primInfo.attenuationB;
     payload.attenuationDistance = primInfo.attenuationDistance;
     payload.dispersion = primInfo.dispersion;
     payload.iridescenceFactor = primInfo.iridescenceFactor;

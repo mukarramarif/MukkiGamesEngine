@@ -2,6 +2,7 @@
 #include "uiManager/uiManager.h"
 #include "Resources/ObjectLoader.h"
 #include "Resources/SkyBox.h"
+#include <algorithm>
 #include <stdexcept>
 #include <array>
 #include <vector>
@@ -117,7 +118,7 @@ void CommandBufferManager::recordCommandBuffer(
 		1, &swapBarrier
 	);
 
- 
+
 
 	VkRenderPassBeginInfo renderPassInfo{};
 	renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -136,7 +137,7 @@ void CommandBufferManager::recordCommandBuffer(
 	vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-	
+
 	VkViewport viewport{};
 	viewport.x = 0.0f;
 	viewport.y = 0.0f;
@@ -145,7 +146,7 @@ void CommandBufferManager::recordCommandBuffer(
 	viewport.minDepth = 0.0f;
 	viewport.maxDepth = 1.0f;
 	vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-	
+
 	/*std::cout << "Viewport set: " << viewport.width << "x" << viewport.height << std::endl;*/
 
 	// Set scissor
@@ -153,7 +154,7 @@ void CommandBufferManager::recordCommandBuffer(
 	scissor.offset = { 0, 0 };
 	scissor.extent = extent;
 	vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-	
+
 	// Bind vertex buffer
 	VkBuffer vertexBuffers[] = { vertexBuffer };
 	VkDeviceSize offsets[] = { 0 };
@@ -282,7 +283,9 @@ void CommandBufferManager::recordModelDrawCommands(
 	for (const auto& mesh : model.opaqueMeshIndices) {
 		const auto& meshRef = model.meshes[mesh];
 		for (const auto& primitive : meshRef.primitives) {
-			int32_t matIndex = primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
+			int32_t matIndex = resolveMaterialIndex(model, primitive);
+			matIndex = std::max(matIndex, 0);
+
 
 			if (currentPipeline != graphicsPipeline) {
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
@@ -317,7 +320,9 @@ void CommandBufferManager::recordModelDrawCommands(
 			const auto& meshRef = model.meshes[meshIdx];
 			bool hasNonEmissivePrimitive = false;
 			for (const auto& primitive : meshRef.primitives) {
-				int32_t matIndex = primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
+			    int32_t matIndex = resolveMaterialIndex(model, primitive);
+				matIndex = std::max(matIndex, 0);
+
 				if (matIndex < static_cast<int32_t>(model.materials.size()) &&
 					!model.materials[matIndex].isEmissive) {
 					hasNonEmissivePrimitive = true;
@@ -346,8 +351,8 @@ void CommandBufferManager::recordModelDrawCommands(
 		for (const auto& td : transparentDraws) {
 			const auto& meshRef = model.meshes[td.meshIndex];
 			for (const auto& primitive : meshRef.primitives) {
-				int32_t matIndex = primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
-
+			    int32_t matIndex = resolveMaterialIndex(model, primitive);
+				matIndex = std::max(matIndex, 0);
 				if (matIndex >= static_cast<int32_t>(model.materials.size()) ||
 					model.materials[matIndex].isEmissive) {
 					continue;
@@ -379,7 +384,8 @@ void CommandBufferManager::recordModelDrawCommands(
 	for (const auto& mesh : model.transparentMeshIndices) {
 		const auto& meshRef = model.meshes[mesh];
 		for (const auto& primitive : meshRef.primitives) {
-			int32_t matIndex = primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
+			int32_t matIndex = resolveMaterialIndex(model, primitive);
+			matIndex = std::max(matIndex, 0);
 
 			if (matIndex >= static_cast<int32_t>(model.materials.size()) ||
 				!model.materials[matIndex].isEmissive) {
