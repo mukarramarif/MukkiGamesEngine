@@ -423,7 +423,20 @@ void ObjectLoader::loadMaterials(const tinygltf::Model& gltfModel, Model& model)
     for (size_t i = 0; i < gltfModel.materials.size(); i++) {
         const auto& gltfMat = gltfModel.materials[i];
         Material& mat = model.materials[i];
+        if(gltfMat.extensions.find("KHR_materials_variants") != gltfMat.extensions.end()){
+            const auto& variantsExt = gltfMat.extensions.at("KHR_materials_variants");
+            if(variantsExt.Has("mappings")){
+                const auto& variants = variantsExt.Get("mappings");
+                for(size_t j = 0; j < variants.ArrayLen(); j++){
+                    const auto& variant = variants.Get(j);
+                    if(variant.Has("material")){
 
+                        mat.variantMapping->baseMaterialIndex = static_cast<uint32_t>(i);
+                        mat.variantMapping->variantMaterialIndices.push_back(static_cast<uint32_t>(variant.Get("material").Get<int>()));
+                    }
+                }
+            }
+        }
         if (gltfMat.extensions.find("KHR_materials_transmission") != gltfMat.extensions.end()) {
             const auto& transmissionExt = gltfMat.extensions.at("KHR_materials_transmission");
             if (transmissionExt.Has("transmissionFactor")) {

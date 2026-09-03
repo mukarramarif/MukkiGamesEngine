@@ -10,7 +10,7 @@
 #include <unordered_map>
 #include <future>
 #include <mutex>
-
+#include <ktx.h>
 #include "../Core/VkDevice.h"
 #include "../objects/vertex.h"
 
@@ -24,7 +24,10 @@ struct RayTracingVertex {
 	float _pad0;
 	float _pad1;
 };
-
+struct MaterialVariantMapping{
+    uint32_t baseMaterialIndex = -1;
+    std::vector<uint32_t> variantMaterialIndices{};
+};
 // Material data for PBR rendering
 struct Material {
 	glm::vec4 baseColorFactor = glm::vec4(1.0f);
@@ -41,6 +44,7 @@ struct Material {
 	float idxReflect = 1.5;
 	float alphaCutoff = 0.5f;
 	glm::vec3 attenuationColor = glm::vec3(1.0f);
+
 	float attenuationDistance = 1e9F;
 	float dispersion = 0.0f;
 	float iridesceneFactor = 0.0f;
@@ -48,7 +52,7 @@ struct Material {
 	float iridesceneThicknessMin = 100.0f;
 	float iridesceneThicknessMax = 400.0f;
 	int32_t iridescenceThicknessTextureIndex = -1;
-
+	MaterialVariantMapping* variantMapping;
 };
 
 // A single mesh primitive (submesh)
