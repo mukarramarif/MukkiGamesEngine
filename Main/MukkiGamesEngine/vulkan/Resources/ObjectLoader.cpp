@@ -7,7 +7,6 @@
 #include <iostream>
 #include <stdexcept>
 
-
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -443,20 +442,51 @@ void ObjectLoader::loadMaterials(const tinygltf::Model &gltfModel,
       }
     }
     if (gltfMat.extensions.contains("KHR_materials_volume")) {
-        const auto &ext = gltfMat.extensions.at("KHR_materials_volume");
-        if (ext.Has("attenuationColor")) {
-            const auto &c = ext.Get("attenuationColor");
-            mat.attenuationColor =
-                glm::vec3(static_cast<float>(c.Get(0).Get<double>()),
-                        static_cast<float>(c.Get(1).Get<double>()),
-                        static_cast<float>(c.Get(2).Get<double>()));
-        }
-        if (ext.Has("attenuationDistance")) {
-            mat.attenuationDistance =
-                static_cast<float>(ext.Get("attenuationDistance").Get<double>());
-        }
+      const auto &ext = gltfMat.extensions.at("KHR_materials_volume");
+      if (ext.Has("attenuationColor")) {
+        const auto &c = ext.Get("attenuationColor");
+        mat.attenuationColor =
+            glm::vec3(static_cast<float>(c.Get(0).Get<double>()),
+                      static_cast<float>(c.Get(1).Get<double>()),
+                      static_cast<float>(c.Get(2).Get<double>()));
+      }
+      if (ext.Has("attenuationDistance")) {
+        mat.attenuationDistance =
+            static_cast<float>(ext.Get("attenuationDistance").Get<double>());
+      }
     }
-
+    if (gltfMat.extensions.contains("KHR_materials_diffuse_transmission")) {
+      const auto &ext =
+          gltfMat.extensions.at("KHR_materials_diffuse_transmission");
+      if (ext.Has("diffuseTransmissionFactor")) {
+        mat.diffuseTransmissionFactor = static_cast<float>(
+            ext.Get("diffuseTransmissionFactor").Get<double>());
+      }
+      if (ext.Has("diffuseTransmissionColorFactor")) {
+        const auto &c = ext.Get("diffuseTransmissionColorFactor");
+        mat.diffuseTransmissionColor =
+            glm::vec3(static_cast<float>(c.Get(0).Get<double>()),
+                      static_cast<float>(c.Get(1).Get<double>()),
+                      static_cast<float>(c.Get(2).Get<double>()));
+      }
+      if (ext.Has("diffuseTransmissionTexture")) {
+        const auto &tex = ext.Get("diffuseTransmissionTexture");
+        if (tex.Has("index")) {
+          mat.diffuseTransmissionTextureIndex =
+              static_cast<int>(tex.Get("index").Get<double>());
+        }
+      }
+    }
+    if (gltfMat.extensions.contains("KHR_materials_volume_scatter")) {
+      const auto &ext = gltfMat.extensions.at("KHR_materials_volume_scatter");
+      if (ext.Has("multiscatterColor")) {
+        const auto &c = ext.Get("multiscatterColor");
+        mat.multiscatterColor =
+            glm::vec3(static_cast<float>(c.Get(0).Get<double>()),
+                      static_cast<float>(c.Get(1).Get<double>()),
+                      static_cast<float>(c.Get(2).Get<double>()));
+      }
+    }
     // KHR_materials_ior → index of refraction
     if (gltfMat.extensions.contains("KHR_materials_ior")) {
       const auto &ext = gltfMat.extensions.at("KHR_materials_ior");

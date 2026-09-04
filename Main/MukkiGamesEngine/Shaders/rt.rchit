@@ -25,6 +25,11 @@ struct Payload
     float iridescenceMin;
     float iridescenceMax;
     float iridescenceThickness;
+    float diffuseTransmissionFactor;
+    float diffuseTransmission;
+    float diffuseTransmissionR;
+    float diffuseTransmissionG;
+    float diffuseTransmissionB;
 };
 
 layout(location = 0) rayPayloadInEXT Payload payload;
@@ -64,6 +69,12 @@ struct PrimitiveInfo
     float iridescenceIor;
     float iridescenceMin;
     float iridescenceMax;
+    float diffuseTransmissionFactor;
+    float diffuseTransmissionR;
+    float diffuseTransmissionG;
+    float diffuseTransmissionB;
+    int diffuseTransmissionTextureIndex;
+
     int metallicRoughnessTextureIndex;
     int iridescenceThicknessTextureIndex;
 };
@@ -179,4 +190,12 @@ void main()
                             texture(textures[nonuniformEXT(iridTexIdx)], uv).r);
     }
     payload.iridescenceThickness = iridThickness;
+    payload.diffuseTransmission = primInfo.diffuseTransmissionFactor;
+    if (primInfo.diffuseTransmissionTextureIndex >= 0) {
+        payload.diffuseTransmission *=
+            texture(textures[nonuniformEXT(primInfo.diffuseTransmissionTextureIndex)], uv).r;
+    }
+    payload.diffuseTransmissionR = primInfo.diffuseTransmissionR;
+    payload.diffuseTransmissionG = primInfo.diffuseTransmissionG;
+    payload.diffuseTransmissionB = primInfo.diffuseTransmissionB;
 }

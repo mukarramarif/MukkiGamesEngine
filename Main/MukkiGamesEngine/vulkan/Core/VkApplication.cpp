@@ -147,6 +147,16 @@ void VulkanApplication::createRayTracingGeometryBuffers() {
           primInfo.attenuationG = mat.attenuationColor.g;
           primInfo.attenuationB = mat.attenuationColor.b;
           primInfo.attenuationDistance = mat.attenuationDistance;
+          primInfo.diffuseTransmissionFactor = mat.diffuseTransmissionFactor;
+          primInfo.diffuseTransmissionR = mat.diffuseTransmissionColor.r;
+          primInfo.diffuseTransmissionR = mat.diffuseTransmissionColor.g;
+          primInfo.diffuseTransmissionR = mat.diffuseTransmissionColor.b;
+          int32_t diffTransTexIdx = mat.diffuseTransmissionTextureIndex;
+          primInfo.diffuseTransmissionTextureIndex =
+              (diffTransTexIdx >= 0 &&
+               textureOffset + static_cast<uint32_t>(diffTransTexIdx) < MAX_RT_TEXTURES)
+                  ? static_cast<int32_t>(textureOffset) + diffTransTexIdx
+                  : -1;
         }
         primInfo.textureIndex =
             (texIdx >= 0 &&

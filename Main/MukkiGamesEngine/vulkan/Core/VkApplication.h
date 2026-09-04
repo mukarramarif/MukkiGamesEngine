@@ -140,6 +140,11 @@ private:
         float iridescenceMax;
         int32_t metallicRoughnessTextureIndex;
         int32_t iridescenceThicknessTextureIndex;
+        float diffuseTransmissionFactor;
+        float diffuseTransmissionR;
+        float diffuseTransmissionG;
+        float diffuseTransmissionB;
+        int32_t diffuseTransmissionTextureIndex;
 	};
 	struct RayTracingMeshInfo {
 		uint32_t primitiveOffset;

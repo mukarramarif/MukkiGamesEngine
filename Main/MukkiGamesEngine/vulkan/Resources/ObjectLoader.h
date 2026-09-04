@@ -50,6 +50,11 @@ struct Material {
 	float iridesceneThicknessMin = 100.0f;
 	float iridesceneThicknessMax = 400.0f;
 	int32_t iridescenceThicknessTextureIndex = -1;
+	float diffuseTransmissionFactor;
+	glm::vec3 diffuseTransmissionColor = glm::vec3(1.0f);
+	int32_t diffuseTransmissionTextureIndex = -1;
+
+	glm::vec3 multiscatterColor;
 };
 
 // A single mesh primitive (submesh)

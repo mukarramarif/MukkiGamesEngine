@@ -56,6 +56,11 @@ struct Payload
     float iridescenceMax;
     int metallicRoughnessTextureIndex;
     float iridescenceThickness;
+    float diffuseTransmissionFactor;
+    float diffuseTransmission;
+    float diffuseTransmissionR;
+    float diffuseTransmissionG;
+    float diffuseTransmissionB;
 };
 
 layout(location = 0) rayPayloadEXT Payload payload;
@@ -383,7 +388,17 @@ void main()
                 origin = hitPos + normal * 0.01;
                 throughput *= Firid / max(F, 1e-3);
             } else {
-                 // ── Spectral dispersion: one random wavelength per glass segment ──
+
+                float dt = payload.diffuseTransmissionFactor;
+                if (dt > 0.0 && rand(rngState) < dt) {
+                    direction = cosineSampleHemisphere(-normal, rngState);
+                    origin = hitPos - normal * 0.01;
+                    throughput *= vec3(payload.diffuseTransmissionR,
+                                       payload.diffuseTransmissionG,
+                                       payload.diffuseTransmissionB);
+                    glassLambda = -1.0; // not a specular dispersion path anymore
+                } else {
+                     // ── Spectral dispersion: one random wavelength per glass segment ──
                 float lambda = 0.55;   // neutral default
                 if (dispersion > 0.0) {
                     if (frontFace == 1) {
@@ -423,6 +438,8 @@ void main()
                         throughput *= pow(atten, vec3(hitT / attenDist));
                     }
                 }
+            }
+
             }
         } else {
 
