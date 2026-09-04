@@ -1,11 +1,13 @@
 # MukkiGamesEngine
-
+Renderer Project following a rewrite of the original Vulkan tutorial. General-purpose renderer for learning and implementing new rendering techniques. This project is designed for rendering multiple glTF objects and multiple lights using principal BRDF techniques in real-time. 
+I will keep adding new rendering techniques here 😁
 ## Progress
 
 | Type of Rendering | Techniques | Images |
 | ----------- | ------------ | ------------ |
 | RayTracing  | Glass Rendering Iridescene| <img width="1709" height="1321" alt="Screenshot 2026-08-24 170027" src="https://github.com/user-attachments/assets/5e74dad3-087e-4609-a507-e6719f555ab8" /> <img width="2337" height="1368" alt="Screenshot 2026-08-24 124139" src="https://github.com/user-attachments/assets/a8c3809d-bbb6-47e1-88e9-91c386d64ffa" />|
 |			  |        Dispersion          | <img width="1431" height="912" alt="Screenshot 2026-08-20 201023" src="https://github.com/user-attachments/assets/73930297-7b1a-48fa-898a-9416d6ea2ffa" />
+|			| Emissive Coal | <img width="2503" height="1326" alt="image" src="https://github.com/user-attachments/assets/5bcad8db-4291-46e5-a392-0581e1ab3eba" />|
 |			| Shadows from directional and point lights | <img width="1405" height="1335" alt="Screenshot 2026-08-13 180242" src="https://github.com/user-attachments/assets/93605918-fd5c-4bea-8263-cc2c728faff2" />| 
 |           | GPU Mesh instancing                               | <img width="2493" height="962" alt="Screenshot 2026-09-01 142150" src="https://github.com/user-attachments/assets/07c0890e-8909-4080-87cb-d760cc38fe6f" /> 
 | RayMarching | Volumetric Clouds(still experimental) | <img width="969" height="933" alt="Screenshot 2026-08-11 230604" src="https://github.com/user-attachments/assets/04b9f660-90f7-4055-98c5-2a2c3988d9a5" /> <img width="1671" height="1237" alt="Screenshot 2026-08-11 234059" src="https://github.com/user-attachments/assets/22f6c1dd-c842-4adf-a84d-3e9bc746ea94" /> <img width="1537" height="1006" alt="Screenshot 2026-08-08 135051" src="https://github.com/user-attachments/assets/3d1ceb1e-574a-4a41-ab3e-9427e514cf21" />
@@ -90,13 +92,17 @@ cd build-debug
 	- [x] Basic Rewrite for VKapplication
  	- [ ] Json format for renderpasses
 - [ ] Adding GLTF 2.0 Support
-	- [ ] Glass Dispersion
- 	- [ ] Glass Iridescence
-  	- [ ] GPU mesh instancing
+	- [x] Glass Dispersion
+ 	- [x] Glass Iridescence
+  	- [x] Specular Support
+  	- [x] Transmission Support
+  	- [x] GPU mesh instancing
+  	- [x] IOR
+  	- [ ] Mesh Shader Support
 - [ ] looking into SIMD
 - [ ] multithreading for rendering and resource loading
-	- [x] std::async for model loading	
-
+	- [x] std::async for model loading
+ 	- [ ] subcommandbuffers? 
 ## Fixes
 - [x] recreating swapchain on window resize
 - [x] validation layers errors when switching from compute to graphics and back
