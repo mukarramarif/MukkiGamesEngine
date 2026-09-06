@@ -54,13 +54,18 @@ struct Payload
     float iridescenceIor;
     float iridescenceMin;
     float iridescenceMax;
-    int metallicRoughnessTextureIndex;
     float iridescenceThickness;
     float diffuseTransmissionFactor;
     float diffuseTransmission;
     float diffuseTransmissionR;
     float diffuseTransmissionG;
     float diffuseTransmissionB;
+    float scatteringR;
+    float scatteringG;
+    float scatteringB;
+    float scatteringDistance;
+    float scatteringAnisotropy;
+    float scatteringRange;
 };
 
 layout(location = 0) rayPayloadEXT Payload payload;
@@ -96,6 +101,26 @@ vec3 cosineSampleHemisphere(vec3 normal, inout uint state)
     vec3 bitangent = cross(normal, tangent);
     return normalize(tangent * cos(phi) * sinTheta + bitangent * sin(phi) * sinTheta + normal * cosTheta);
 }
+vec3 henyeyGreenstein(vec3 dir, float g, inout uint state)
+{
+    float u = rand(state);
+    float cosTheta;
+    if (abs(g) < 1e-3) {
+        cosTheta = 1.0 - 2.0 * u;
+    } else {
+        float g2 = g * g;
+        float t = (1.0 - g2) / (1.0 - g + 2.0 * g * u);
+        cosTheta = (1.0 + g2 - t * t) / (2.0 * g);
+    }
+    vec3 tangent = normalize(abs(dir.y) < 0.999
+        ? cross(dir, vec3(0.0, 1.0, 0.0))
+        : cross(dir, vec3(1.0, 0.0, 0.0)));
+    vec3 bitangent = cross(dir, tangent);
+    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
+    float phi = 2.0 * kPi * rand(state);
+    return normalize(dir * cosTheta + (tangent * cos(phi) + bitangent * sin(phi)) * sinTheta);
+}
+
 float causticIOR(float ior, float dispersion, float lambda){
     float b = (ior - 1.0) * dispersion / 1.910;
     return ior + b * (1.0 / (lambda * lambda)-2.882);
@@ -175,6 +200,8 @@ void main()
     rngState = pcgHash(rngState);
 
     float glassLambda = -1.0;
+    vec3  medColor = vec3(0.0);
+    float medDist = 0.0, medRange = 0.0, medAniso = 0.0;
     for (int bounce = 0; bounce < maxBounces; ++bounce)
     {
         payload.hit = 0;
@@ -198,6 +225,20 @@ void main()
             result += throughput * cubemapColor;
             break;
         }
+        if (payload.hit == 1 && medDist > 0.0 && medRange > 0.0 && payload.hitT > 0.001) {
+            float maxT = min(payload.hitT, medRange);
+            float t = -medDist * log(max(1.0 - rand(rngState), 1e-6));
+            vec3 sc = max(medColor, vec3(1e-6));
+            if (t < maxT) {
+                // scattering event before the next surface
+                throughput *= pow(sc, vec3(t / medDist));
+                origin += direction * t;
+                direction = henyeyGreenstein(direction, medAniso, rngState);
+                continue; // no surface interaction this bounce
+            }
+            // traveled to the surface without scattering
+            throughput *= pow(sc, vec3(maxT / medDist));
+        }
         //snapshot of values before the bounce
         float transmission = payload.transmission;
         float idxReflect = payload.idxReflect;
@@ -214,6 +255,10 @@ void main()
         float iridMax = payload.iridescenceMax;
         float iridThickness = payload.iridescenceThickness;
         float filmThickness = iridThickness > 0.0 ? iridThickness : mix(iridMin, iridMax, 0.5);
+        float diffTrans = payload.diffuseTransmission;
+        float diffTransR = payload.diffuseTransmissionR;
+        float diffTransG = payload.diffuseTransmissionG;
+        float diffTransB = payload.diffuseTransmissionB;
 
         if(payload.transmission < 0.01){
             glassLambda = -1.0f;
@@ -353,14 +398,16 @@ void main()
 
             vec3 kS = F;
 
-            vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
+            // KHR_materials_diffuse_transmission: the diffuse lobe is split
+            // between reflection and transmission.
+            vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic) * (1.0 - diffTrans);
 
             vec3 specular = (NDF * G * F) / max(4.0 * nDotV * nDotL, 0.001);
             vec3 diffuse = kD * albedo / kPi;
             lighting += (diffuse + specular) * light.color.rgb * light.color.a * nDotL * attenuation * intensity * shadow;
         }
 
-        vec3 ambient = ambientStrength * albedo;
+        vec3 ambient = ambientStrength * albedo * (1.0 - diffTrans);
         if(payload.transmission < 0.01){
             result+=throughput * (ambient+lighting);
 
@@ -389,13 +436,11 @@ void main()
                 throughput *= Firid / max(F, 1e-3);
             } else {
 
-                float dt = payload.diffuseTransmissionFactor;
+                float dt = diffTrans;
                 if (dt > 0.0 && rand(rngState) < dt) {
                     direction = cosineSampleHemisphere(-normal, rngState);
                     origin = hitPos - normal * 0.01;
-                    throughput *= vec3(payload.diffuseTransmissionR,
-                                       payload.diffuseTransmissionG,
-                                       payload.diffuseTransmissionB);
+                    throughput *= vec3(diffTransR, diffTransG, diffTransB);
                     glassLambda = -1.0; // not a specular dispersion path anymore
                 } else {
                      // ── Spectral dispersion: one random wavelength per glass segment ──
@@ -432,6 +477,15 @@ void main()
                 } else {
                     direction = refrDir;
                     origin = hitPos + refrDir * 0.01;
+                    if (payload.frontFace == 1) {          // entering medium
+                        medColor = vec3(payload.scatteringR, payload.scatteringG, payload.scatteringB);
+                        medDist = payload.scatteringDistance;
+                        medRange = payload.scatteringRange;
+                        medAniso = payload.scatteringAnisotropy;
+                    } else {                                // exiting to air
+                        medColor = vec3(0.0);
+                        medDist = 0.0; medRange = 0.0; medAniso = 0.0;
+                    }
                     // Beer's law tint for the segment just traveled through glass
                     if (frontFace == 0 && attenDist > 0.0) {
                         vec3 atten = max(vec3(attenR, attenG, attenB), vec3(0.0001));
@@ -463,9 +517,19 @@ void main()
                 direction = reflect(direction, normal);
                 throughput *= bounceF / reflectProb;
             } else {
-                // Diffuse bounce
-                direction = cosineSampleHemisphere(normal, rngState);
-                throughput *= (vec3(1.0) - bounceF) * albedo / (1.0 - reflectProb);
+                // Diffuse bounce: split between diffuse reflection and
+                // diffuse transmission (KHR_materials_diffuse_transmission).
+                // This also covers materials WITHOUT specular transmission
+                // (thin translucent surfaces like cloth, paper, leaves).
+                if (diffTrans > 0.0 && rand(rngState) < diffTrans) {
+                    direction = cosineSampleHemisphere(-normal, rngState);
+                    throughput *= (vec3(1.0) - bounceF) * albedo
+                                / (1.0 - reflectProb)
+                                * vec3(diffTransR, diffTransG, diffTransB);
+                } else {
+                    direction = cosineSampleHemisphere(normal, rngState);
+                    throughput *= (vec3(1.0) - bounceF) * albedo / (1.0 - reflectProb);
+                }
             }
             origin = hitPos + normal * 0.01;
         }

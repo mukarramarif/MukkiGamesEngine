@@ -128,23 +128,37 @@ private:
 		uint32_t vertexOffset;
 		int32_t emissionTextureIndex;
 		float transmissionFactor;
-        float idxReflect;
+		float idxReflect;
 		float attenuationR;
 		float attenuationG;
 		float attenuationB;
 		float attenuationDistance;
 		float dispersion;
 		float iridescenceFactor;
-        float iridescenceIor;
-        float iridescenceMin;
-        float iridescenceMax;
-        int32_t metallicRoughnessTextureIndex;
-        int32_t iridescenceThicknessTextureIndex;
-        float diffuseTransmissionFactor;
-        float diffuseTransmissionR;
-        float diffuseTransmissionG;
-        float diffuseTransmissionB;
-        int32_t diffuseTransmissionTextureIndex;
+		float iridescenceIor;
+		float iridescenceMin;
+		float iridescenceMax;
+		// NOTE: from here on, field order must match GLSL PrimitiveInfo
+		// in rt.rchit / rt.rahit exactly (std430, all fields 4-byte aligned).
+		float diffuseTransmissionFactor;
+		float diffuseTransmissionR;
+		float diffuseTransmissionG;
+		float diffuseTransmissionB;
+		int32_t diffuseTransmissionTextureIndex;
+		float scatteringR;
+		float scatteringG;
+		float scatteringB;
+		float scatteringDistance;
+		float scatteringAnisotropy;
+		float scatteringRange;
+		int32_t metallicRoughnessTextureIndex;
+		int32_t iridescenceThicknessTextureIndex;
+		// KHR_texture_transform per slot: offsetX, offsetY, rotation, scaleX, scaleY
+		float baseColorUvOx, baseColorUvOy, baseColorUvRot, baseColorUvSx, baseColorUvSy;
+		float metallicRoughnessUvOx, metallicRoughnessUvOy, metallicRoughnessUvRot, metallicRoughnessUvSx, metallicRoughnessUvSy;
+		float emissiveUvOx, emissiveUvOy, emissiveUvRot, emissiveUvSx, emissiveUvSy;
+		float iridescenceUvOx, iridescenceUvOy, iridescenceUvRot, iridescenceUvSx, iridescenceUvSy;
+		float diffuseTransmissionUvOx, diffuseTransmissionUvOy, diffuseTransmissionUvRot, diffuseTransmissionUvSx, diffuseTransmissionUvSy;
 	};
 	struct RayTracingMeshInfo {
 		uint32_t primitiveOffset;

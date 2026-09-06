@@ -149,14 +149,47 @@ void VulkanApplication::createRayTracingGeometryBuffers() {
           primInfo.attenuationDistance = mat.attenuationDistance;
           primInfo.diffuseTransmissionFactor = mat.diffuseTransmissionFactor;
           primInfo.diffuseTransmissionR = mat.diffuseTransmissionColor.r;
-          primInfo.diffuseTransmissionR = mat.diffuseTransmissionColor.g;
-          primInfo.diffuseTransmissionR = mat.diffuseTransmissionColor.b;
+          primInfo.diffuseTransmissionG = mat.diffuseTransmissionColor.g;
+          primInfo.diffuseTransmissionB = mat.diffuseTransmissionColor.b;
           int32_t diffTransTexIdx = mat.diffuseTransmissionTextureIndex;
           primInfo.diffuseTransmissionTextureIndex =
               (diffTransTexIdx >= 0 &&
                textureOffset + static_cast<uint32_t>(diffTransTexIdx) < MAX_RT_TEXTURES)
                   ? static_cast<int32_t>(textureOffset) + diffTransTexIdx
                   : -1;
+            primInfo.scatteringR = mat.scatteringColor.r;
+            primInfo.scatteringG = mat.scatteringColor.g;
+            primInfo.scatteringB = mat.scatteringColor.b;
+            primInfo.scatteringDistance = mat.scatteringDistance;
+            primInfo.scatteringAnisotropy = mat.scatteringAnisotropy;
+            primInfo.scatteringRange = mat.scatteringRange;
+
+          // KHR_texture_transform per sampled texture slot
+          primInfo.baseColorUvOx = mat.baseColorUvTransform.offset.x;
+          primInfo.baseColorUvOy = mat.baseColorUvTransform.offset.y;
+          primInfo.baseColorUvRot = mat.baseColorUvTransform.rotation;
+          primInfo.baseColorUvSx = mat.baseColorUvTransform.scale.x;
+          primInfo.baseColorUvSy = mat.baseColorUvTransform.scale.y;
+          primInfo.metallicRoughnessUvOx = mat.metallicRoughnessUvTransform.offset.x;
+          primInfo.metallicRoughnessUvOy = mat.metallicRoughnessUvTransform.offset.y;
+          primInfo.metallicRoughnessUvRot = mat.metallicRoughnessUvTransform.rotation;
+          primInfo.metallicRoughnessUvSx = mat.metallicRoughnessUvTransform.scale.x;
+          primInfo.metallicRoughnessUvSy = mat.metallicRoughnessUvTransform.scale.y;
+          primInfo.emissiveUvOx = mat.emissiveUvTransform.offset.x;
+          primInfo.emissiveUvOy = mat.emissiveUvTransform.offset.y;
+          primInfo.emissiveUvRot = mat.emissiveUvTransform.rotation;
+          primInfo.emissiveUvSx = mat.emissiveUvTransform.scale.x;
+          primInfo.emissiveUvSy = mat.emissiveUvTransform.scale.y;
+          primInfo.iridescenceUvOx = mat.iridescenceThicknessUvTransform.offset.x;
+          primInfo.iridescenceUvOy = mat.iridescenceThicknessUvTransform.offset.y;
+          primInfo.iridescenceUvRot = mat.iridescenceThicknessUvTransform.rotation;
+          primInfo.iridescenceUvSx = mat.iridescenceThicknessUvTransform.scale.x;
+          primInfo.iridescenceUvSy = mat.iridescenceThicknessUvTransform.scale.y;
+          primInfo.diffuseTransmissionUvOx = mat.diffuseTransmissionUvTransform.offset.x;
+          primInfo.diffuseTransmissionUvOy = mat.diffuseTransmissionUvTransform.offset.y;
+          primInfo.diffuseTransmissionUvRot = mat.diffuseTransmissionUvTransform.rotation;
+          primInfo.diffuseTransmissionUvSx = mat.diffuseTransmissionUvTransform.scale.x;
+          primInfo.diffuseTransmissionUvSy = mat.diffuseTransmissionUvTransform.scale.y;
         }
         primInfo.textureIndex =
             (texIdx >= 0 &&

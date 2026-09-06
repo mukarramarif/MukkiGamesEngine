@@ -30,6 +30,12 @@ struct Payload
     float diffuseTransmissionR;
     float diffuseTransmissionG;
     float diffuseTransmissionB;
+    float scatteringR;
+    float scatteringG;
+    float scatteringB;
+    float scatteringDistance;
+    float scatteringAnisotropy;
+    float scatteringRange;
 };
 
 layout(location = 0) rayPayloadInEXT Payload payload;
@@ -74,9 +80,20 @@ struct PrimitiveInfo
     float diffuseTransmissionG;
     float diffuseTransmissionB;
     int diffuseTransmissionTextureIndex;
-
+    float scatteringR;
+    float scatteringG;
+    float scatteringB;
+    float scatteringDistance;
+    float scatteringAnisotropy;
+    float scatteringRange;
     int metallicRoughnessTextureIndex;
     int iridescenceThicknessTextureIndex;
+    // KHR_texture_transform per slot: offsetX, offsetY, rotation, scaleX, scaleY
+    float baseColorUvOx; float baseColorUvOy; float baseColorUvRot; float baseColorUvSx; float baseColorUvSy;
+    float metallicRoughnessUvOx; float metallicRoughnessUvOy; float metallicRoughnessUvRot; float metallicRoughnessUvSx; float metallicRoughnessUvSy;
+    float emissiveUvOx; float emissiveUvOy; float emissiveUvRot; float emissiveUvSx; float emissiveUvSy;
+    float iridescenceUvOx; float iridescenceUvOy; float iridescenceUvRot; float iridescenceUvSx; float iridescenceUvSy;
+    float diffuseTransmissionUvOx; float diffuseTransmissionUvOy; float diffuseTransmissionUvRot; float diffuseTransmissionUvSx; float diffuseTransmissionUvSy;
 };
 
 struct MeshInfo
@@ -111,6 +128,14 @@ layout(set = 0, binding = 8) uniform sampler2D textures[100];
 
 hitAttributeEXT vec2 attribs;
 
+vec2 applyKhrTextureTransform(vec2 uv, float ox, float oy, float rot, float sx, float sy)
+{
+    float c = cos(rot);
+    float s = sin(rot);
+    return vec2(c * sx * uv.x - s * sy * uv.y + ox,
+                s * sx * uv.x + c * sy * uv.y + oy);
+}
+
 void main()
 {
     payload.hit = 1;
@@ -144,18 +169,33 @@ void main()
     }
 
     vec2 uv = v0.texCoord * bary.x + v1.texCoord * bary.y + v2.texCoord * bary.z;
+    vec2 uvBase = applyKhrTextureTransform(uv,
+        primInfo.baseColorUvOx, primInfo.baseColorUvOy,
+        primInfo.baseColorUvRot, primInfo.baseColorUvSx, primInfo.baseColorUvSy);
+    vec2 uvMr = applyKhrTextureTransform(uv,
+        primInfo.metallicRoughnessUvOx, primInfo.metallicRoughnessUvOy,
+        primInfo.metallicRoughnessUvRot, primInfo.metallicRoughnessUvSx, primInfo.metallicRoughnessUvSy);
+    vec2 uvEm = applyKhrTextureTransform(uv,
+        primInfo.emissiveUvOx, primInfo.emissiveUvOy,
+        primInfo.emissiveUvRot, primInfo.emissiveUvSx, primInfo.emissiveUvSy);
+    vec2 uvIrid = applyKhrTextureTransform(uv,
+        primInfo.iridescenceUvOx, primInfo.iridescenceUvOy,
+        primInfo.iridescenceUvRot, primInfo.iridescenceUvSx, primInfo.iridescenceUvSy);
+    vec2 uvDt = applyKhrTextureTransform(uv,
+        primInfo.diffuseTransmissionUvOx, primInfo.diffuseTransmissionUvOy,
+        primInfo.diffuseTransmissionUvRot, primInfo.diffuseTransmissionUvSx, primInfo.diffuseTransmissionUvSy);
     int texIdx = primInfo.textureIndex;
     vec3 albedo;
     vec3 baseColor = vec3(primInfo.baseColorR, primInfo.baseColorG, primInfo.baseColorB);
     if (texIdx >= 0) {
-        albedo = texture(textures[nonuniformEXT(texIdx)], uv).rgb * baseColor;
+        albedo = texture(textures[nonuniformEXT(texIdx)], uvBase).rgb * baseColor;
     } else {
         albedo = baseColor;
     }
     vec3 emissiveColor = vec3(primInfo.emissiveR, primInfo.emissiveG, primInfo.emissiveB);
     int emissiveTexIdx = primInfo.emssiveTextureIndex;
     if(emissiveTexIdx >= 0) {
-        emissiveColor *= texture(textures[nonuniformEXT(emissiveTexIdx)], uv).rgb;
+        emissiveColor *= texture(textures[nonuniformEXT(emissiveTexIdx)], uvEm).rgb;
     }
     payload.normal = normal;
     payload.color = albedo;
@@ -163,7 +203,7 @@ void main()
     float metallic = primInfo.metallicFactor;
     float roughness = primInfo.roughnessFactor;
     if (mrTexIdx >= 0) {
-        vec3 mr = texture(textures[nonuniformEXT(mrTexIdx)], uv).rgb;
+        vec3 mr = texture(textures[nonuniformEXT(mrTexIdx)], uvMr).rgb;
         metallic *= mr.b;   // glTF: B = metallic
         roughness *= mr.g;  // glTF: G = roughness
     }
@@ -187,15 +227,21 @@ void main()
     int iridTexIdx = primInfo.iridescenceThicknessTextureIndex;
     if (iridTexIdx >= 0) {
         iridThickness = mix(primInfo.iridescenceMin, primInfo.iridescenceMax,
-                            texture(textures[nonuniformEXT(iridTexIdx)], uv).r);
+                            texture(textures[nonuniformEXT(iridTexIdx)], uvIrid).r);
     }
     payload.iridescenceThickness = iridThickness;
     payload.diffuseTransmission = primInfo.diffuseTransmissionFactor;
     if (primInfo.diffuseTransmissionTextureIndex >= 0) {
         payload.diffuseTransmission *=
-            texture(textures[nonuniformEXT(primInfo.diffuseTransmissionTextureIndex)], uv).r;
+            texture(textures[nonuniformEXT(primInfo.diffuseTransmissionTextureIndex)], uvDt).r;
     }
     payload.diffuseTransmissionR = primInfo.diffuseTransmissionR;
     payload.diffuseTransmissionG = primInfo.diffuseTransmissionG;
     payload.diffuseTransmissionB = primInfo.diffuseTransmissionB;
+    payload.scatteringR = primInfo.scatteringR;
+    payload.scatteringG = primInfo.scatteringG;
+    payload.scatteringB = primInfo.scatteringB;
+    payload.scatteringDistance = primInfo.scatteringDistance;
+    payload.scatteringAnisotropy = primInfo.scatteringAnisotropy;
+    payload.scatteringRange = primInfo.scatteringRange;
 }

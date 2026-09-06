@@ -64,6 +64,46 @@ void readAccessorFloats(const tinygltf::Model &gltfModel,
   }
 }
 
+// KHR_texture_transform: parses the transform object itself.
+void parseTextureTransformObject(const tinygltf::Value &t, TextureTransform &out) {
+  if (t.Has("offset")) {
+    out.offset = glm::vec2(
+        static_cast<float>(t.Get("offset").Get(0).Get<double>()),
+        static_cast<float>(t.Get("offset").Get(1).Get<double>()));
+  }
+  if (t.Has("rotation")) {
+    out.rotation = static_cast<float>(t.Get("rotation").Get<double>());
+  }
+  if (t.Has("scale")) {
+    out.scale = glm::vec2(
+        static_cast<float>(t.Get("scale").Get(0).Get<double>()),
+        static_cast<float>(t.Get("scale").Get(1).Get<double>()));
+  }
+  out.active = true;
+}
+
+// texInfo = tinygltf Parameter of a texture-info object
+// (e.g. baseColorTexture / metallicRoughnessTexture in material.values).
+// Transforms live on the parsed TextureInfo struct instead.
+void parseTextureTransform(const tinygltf::TextureInfo &texInfo,
+                           TextureTransform &out) {
+  auto it = texInfo.extensions.find("KHR_texture_transform");
+  if (it != texInfo.extensions.end()) {
+    parseTextureTransformObject(it->second, out);
+  }
+}
+
+// texInfo = tinygltf Value of a texture-info object stored inside a material
+// extension (e.g. iridescenceThicknessTexture / diffuseTransmissionTexture).
+void parseTextureTransform(const tinygltf::Value &texInfo, TextureTransform &out) {
+  if (!texInfo.Has("extensions"))
+    return;
+  const tinygltf::Value &exts = texInfo.Get("extensions");
+  if (exts.Has("KHR_texture_transform")) {
+    parseTextureTransformObject(exts.Get("KHR_texture_transform"), out);
+  }
+}
+
 } // namespace
 
 ObjectLoader::~ObjectLoader() { cleanup(); }
@@ -370,8 +410,11 @@ void ObjectLoader::loadMaterials(const tinygltf::Model &gltfModel,
     }
     if (gltfMaterial.values.find("metallicRoughnessTexture") !=
         gltfMaterial.values.end()) {
-      material.metallicRoughnessTextureIndex =
-          gltfMaterial.values.at("metallicRoughnessTexture").TextureIndex();
+      const tinygltf::Parameter &texInfo =
+          gltfMaterial.values.at("metallicRoughnessTexture");
+      material.metallicRoughnessTextureIndex = texInfo.TextureIndex();
+      parseTextureTransform(gltfMaterial.pbrMetallicRoughness.metallicRoughnessTexture,
+                            material.metallicRoughnessUvTransform);
     }
 
     if (gltfMaterial.values.find("metallicFactor") !=
@@ -386,8 +429,11 @@ void ObjectLoader::loadMaterials(const tinygltf::Model &gltfModel,
     }
     if (gltfMaterial.values.find("baseColorTexture") !=
         gltfMaterial.values.end()) {
-      material.baseColorTextureIndex =
-          gltfMaterial.values.at("baseColorTexture").TextureIndex();
+      const tinygltf::Parameter &texInfo =
+          gltfMaterial.values.at("baseColorTexture");
+      material.baseColorTextureIndex = texInfo.TextureIndex();
+      parseTextureTransform(gltfMaterial.pbrMetallicRoughness.baseColorTexture,
+                            material.baseColorUvTransform);
     }
 
     model.materials.push_back(material);
@@ -404,6 +450,7 @@ void ObjectLoader::loadMaterials(const tinygltf::Model &gltfModel,
 
     if (gltfMat.emissiveTexture.index >= 0) {
       mat.emissiveTextureIndex = gltfMat.emissiveTexture.index;
+      parseTextureTransform(gltfMat.emissiveTexture, mat.emissiveUvTransform);
     }
 
     // Mark as emissive if it has emissive texture or non-zero emissive factor
@@ -475,16 +522,29 @@ void ObjectLoader::loadMaterials(const tinygltf::Model &gltfModel,
           mat.diffuseTransmissionTextureIndex =
               static_cast<int>(tex.Get("index").Get<double>());
         }
+        parseTextureTransform(tex, mat.diffuseTransmissionUvTransform);
       }
     }
     if (gltfMat.extensions.contains("KHR_materials_volume_scatter")) {
       const auto &ext = gltfMat.extensions.at("KHR_materials_volume_scatter");
       if (ext.Has("multiscatterColor")) {
         const auto &c = ext.Get("multiscatterColor");
-        mat.multiscatterColor =
+        mat.scatteringColor =
             glm::vec3(static_cast<float>(c.Get(0).Get<double>()),
                       static_cast<float>(c.Get(1).Get<double>()),
                       static_cast<float>(c.Get(2).Get<double>()));
+      }
+      if (ext.Has("multiscatterDistance")) {
+        mat.scatteringDistance =
+            static_cast<float>(ext.Get("multiscatterDistance").Get<double>());
+      }
+      if (ext.Has("multiscatterAnisotropy")) {
+        mat.scatteringAnisotropy =
+            static_cast<float>(ext.Get("multiscatterAnisotropy").Get<double>());
+      }
+      if (ext.Has("multiscatterRange")) {
+        mat.scatteringRange =
+            static_cast<float>(ext.Get("multiscatterRange").Get<double>());
       }
     }
     // KHR_materials_ior → index of refraction
@@ -535,6 +595,7 @@ void ObjectLoader::loadMaterials(const tinygltf::Model &gltfModel,
           mat.iridescenceThicknessTextureIndex =
               static_cast<int>(tex.Get("index").Get<double>());
         }
+        parseTextureTransform(tex, mat.iridescenceThicknessUvTransform);
       }
     }
   }

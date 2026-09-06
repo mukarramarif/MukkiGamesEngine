@@ -20,6 +20,17 @@ struct Payload
     float attenuationB;
     float attenuationDistance;
     float dispersion;
+    float diffuseTransmissionFactor;
+    float diffuseTransmissionR;
+    float diffuseTransmissionG;
+    float diffuseTransmissionB;
+    int diffuseTransmissionTextureIndex;
+    float scatteringR;
+    float scatteringG;
+    float scatteringB;
+    float scatteringDistance;
+    float scatteringAnisotropy;
+    float scatteringRange;
 };
 
 layout(location = 0) rayPayloadInEXT Payload payload;
@@ -51,6 +62,25 @@ struct PrimitiveInfo
     float iridescenceIor;
     float iridescenceMin;
     float iridescenceMax;
+    float diffuseTransmissionFactor;
+    float diffuseTransmissionR;
+    float diffuseTransmissionG;
+    float diffuseTransmissionB;
+    int diffuseTransmissionTextureIndex;
+    float scatteringR;
+    float scatteringG;
+    float scatteringB;
+    float scatteringDistance;
+    float scatteringAnisotropy;
+    float scatteringRange;
+    int metallicRoughnessTextureIndex;
+    int iridescenceThicknessTextureIndex;
+    // KHR_texture_transform per slot: offsetX, offsetY, rotation, scaleX, scaleY
+    float baseColorUvOx; float baseColorUvOy; float baseColorUvRot; float baseColorUvSx; float baseColorUvSy;
+    float metallicRoughnessUvOx; float metallicRoughnessUvOy; float metallicRoughnessUvRot; float metallicRoughnessUvSx; float metallicRoughnessUvSy;
+    float emissiveUvOx; float emissiveUvOy; float emissiveUvRot; float emissiveUvSx; float emissiveUvSy;
+    float iridescenceUvOx; float iridescenceUvOy; float iridescenceUvRot; float iridescenceUvSx; float iridescenceUvSy;
+    float diffuseTransmissionUvOx; float diffuseTransmissionUvOy; float diffuseTransmissionUvRot; float diffuseTransmissionUvSx; float diffuseTransmissionUvSy;
 };
 
 struct MeshInfo

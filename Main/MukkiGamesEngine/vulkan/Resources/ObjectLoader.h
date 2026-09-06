@@ -26,6 +26,15 @@ struct RayTracingVertex {
 	float _pad1;
 };
 
+// KHR_texture_transform: UV transform for a single texture reference.
+// Applied as uv' = R * S * uv + O (scale, then rotate, then offset).
+struct TextureTransform {
+	glm::vec2 offset = glm::vec2(0.0f);
+	float rotation = 0.0f;          // radians, counter-clockwise
+	glm::vec2 scale = glm::vec2(1.0f);
+	bool active = false;
+};
+
 // Material data for PBR rendering
 struct Material {
 	glm::vec4 baseColorFactor = glm::vec4(1.0f);
@@ -50,11 +59,20 @@ struct Material {
 	float iridesceneThicknessMin = 100.0f;
 	float iridesceneThicknessMax = 400.0f;
 	int32_t iridescenceThicknessTextureIndex = -1;
-	float diffuseTransmissionFactor;
+	float diffuseTransmissionFactor = 0.0f;
 	glm::vec3 diffuseTransmissionColor = glm::vec3(1.0f);
 	int32_t diffuseTransmissionTextureIndex = -1;
 
-	glm::vec3 multiscatterColor;
+	glm::vec3 scatteringColor = glm::vec3(1.0f);
+	float scatteringDistance = 0.0F;
+	float scatteringAnisotropy = 0.0F;
+	float scatteringRange = 0.0F;
+	// KHR_texture_transform per sampled texture slot
+	TextureTransform baseColorUvTransform;
+	TextureTransform metallicRoughnessUvTransform;
+	TextureTransform emissiveUvTransform;
+	TextureTransform iridescenceThicknessUvTransform;
+	TextureTransform diffuseTransmissionUvTransform;
 };
 
 // A single mesh primitive (submesh)
