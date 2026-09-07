@@ -65,6 +65,8 @@ public:
 		const std::vector<float>& rpms, const std::vector<int>& gears);
 	void renderDebugLines(const std::vector<DebugLineVertex>& lines,
 		const glm::mat4& view, const glm::mat4& proj, int width, int height);
+	void renderVariantWindow(const std::vector<std::string>& variantNames, int& selectedVariant);
+
 private:
 	VkDevice device = VK_NULL_HANDLE;
 	VkDescriptorPool imguiPool = VK_NULL_HANDLE;

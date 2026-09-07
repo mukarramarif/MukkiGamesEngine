@@ -96,10 +96,19 @@ void VulkanApplication::createRayTracingGeometryBuffers() {
         float transmission = 0.0f;
         float ior = 1.5f;
 
-        if (primitive.materialIndex >= 0 &&
-            primitive.materialIndex <
-                static_cast<int32_t>(rtModel.materials.size())) {
-          const auto &mat = rtModel.materials[primitive.materialIndex];
+        const int32_t matIdx = resolveMaterialIndex(rtModel, primitive);
+
+        if (matIdx >= 0 &&
+            matIdx < static_cast<int32_t>(rtModel.materials.size())) {
+          const auto &mat = rtModel.materials[matIdx];
+          static int32_t lastLoggedVariant = INT32_MIN;
+          if (lastLoggedVariant != rtModel.activeVariantIndex) {
+            lastLoggedVariant = rtModel.activeVariantIndex;
+            std::cout << "RT bake: variant=" << rtModel.activeVariantIndex
+                      << " baseMat=" << primitive.materialIndex
+                      << " resolvedMat=" << matIdx << std::endl;
+          }
+
           texIdx = mat.baseColorTextureIndex;
           metallic = mat.metallicFactor;
           roughness = mat.roughnessFactor;
@@ -114,16 +123,18 @@ void VulkanApplication::createRayTracingGeometryBuffers() {
                    MAX_RT_TEXTURES)
                   ? static_cast<int32_t>(textureOffset) + emissiveTexIdx
                   : -1;
-                    int32_t mrTexIdx = mat.metallicRoughnessTextureIndex;
+          int32_t mrTexIdx = mat.metallicRoughnessTextureIndex;
           primInfo.metallicRoughnessTextureIndex =
               (mrTexIdx >= 0 &&
-               textureOffset + static_cast<uint32_t>(mrTexIdx) < MAX_RT_TEXTURES)
+               textureOffset + static_cast<uint32_t>(mrTexIdx) <
+                   MAX_RT_TEXTURES)
                   ? static_cast<int32_t>(textureOffset) + mrTexIdx
                   : -1;
           int32_t iridTexIdx = mat.iridescenceThicknessTextureIndex;
           primInfo.iridescenceThicknessTextureIndex =
               (iridTexIdx >= 0 &&
-               textureOffset + static_cast<uint32_t>(iridTexIdx) < MAX_RT_TEXTURES)
+               textureOffset + static_cast<uint32_t>(iridTexIdx) <
+                   MAX_RT_TEXTURES)
                   ? static_cast<int32_t>(textureOffset) + iridTexIdx
                   : -1;
 
@@ -132,6 +143,53 @@ void VulkanApplication::createRayTracingGeometryBuffers() {
           primInfo.iridescenceIor = mat.iridesceneIor;
           primInfo.iridescenceMin = mat.iridesceneThicknessMin;
           primInfo.iridescenceMax = mat.iridesceneThicknessMax;
+          primInfo.attenuationR = mat.attenuationColor.r;
+          primInfo.attenuationG = mat.attenuationColor.g;
+          primInfo.attenuationB = mat.attenuationColor.b;
+          primInfo.attenuationDistance = mat.attenuationDistance;
+          primInfo.diffuseTransmissionFactor = mat.diffuseTransmissionFactor;
+          primInfo.diffuseTransmissionR = mat.diffuseTransmissionColor.r;
+          primInfo.diffuseTransmissionG = mat.diffuseTransmissionColor.g;
+          primInfo.diffuseTransmissionB = mat.diffuseTransmissionColor.b;
+          int32_t diffTransTexIdx = mat.diffuseTransmissionTextureIndex;
+          primInfo.diffuseTransmissionTextureIndex =
+              (diffTransTexIdx >= 0 &&
+               textureOffset + static_cast<uint32_t>(diffTransTexIdx) < MAX_RT_TEXTURES)
+                  ? static_cast<int32_t>(textureOffset) + diffTransTexIdx
+                  : -1;
+            primInfo.scatteringR = mat.scatteringColor.r;
+            primInfo.scatteringG = mat.scatteringColor.g;
+            primInfo.scatteringB = mat.scatteringColor.b;
+            primInfo.scatteringDistance = mat.scatteringDistance;
+            primInfo.scatteringAnisotropy = mat.scatteringAnisotropy;
+            primInfo.scatteringRange = mat.scatteringRange;
+
+          // KHR_texture_transform per sampled texture slot
+          primInfo.baseColorUvOx = mat.baseColorUvTransform.offset.x;
+          primInfo.baseColorUvOy = mat.baseColorUvTransform.offset.y;
+          primInfo.baseColorUvRot = mat.baseColorUvTransform.rotation;
+          primInfo.baseColorUvSx = mat.baseColorUvTransform.scale.x;
+          primInfo.baseColorUvSy = mat.baseColorUvTransform.scale.y;
+          primInfo.metallicRoughnessUvOx = mat.metallicRoughnessUvTransform.offset.x;
+          primInfo.metallicRoughnessUvOy = mat.metallicRoughnessUvTransform.offset.y;
+          primInfo.metallicRoughnessUvRot = mat.metallicRoughnessUvTransform.rotation;
+          primInfo.metallicRoughnessUvSx = mat.metallicRoughnessUvTransform.scale.x;
+          primInfo.metallicRoughnessUvSy = mat.metallicRoughnessUvTransform.scale.y;
+          primInfo.emissiveUvOx = mat.emissiveUvTransform.offset.x;
+          primInfo.emissiveUvOy = mat.emissiveUvTransform.offset.y;
+          primInfo.emissiveUvRot = mat.emissiveUvTransform.rotation;
+          primInfo.emissiveUvSx = mat.emissiveUvTransform.scale.x;
+          primInfo.emissiveUvSy = mat.emissiveUvTransform.scale.y;
+          primInfo.iridescenceUvOx = mat.iridescenceThicknessUvTransform.offset.x;
+          primInfo.iridescenceUvOy = mat.iridescenceThicknessUvTransform.offset.y;
+          primInfo.iridescenceUvRot = mat.iridescenceThicknessUvTransform.rotation;
+          primInfo.iridescenceUvSx = mat.iridescenceThicknessUvTransform.scale.x;
+          primInfo.iridescenceUvSy = mat.iridescenceThicknessUvTransform.scale.y;
+          primInfo.diffuseTransmissionUvOx = mat.diffuseTransmissionUvTransform.offset.x;
+          primInfo.diffuseTransmissionUvOy = mat.diffuseTransmissionUvTransform.offset.y;
+          primInfo.diffuseTransmissionUvRot = mat.diffuseTransmissionUvTransform.rotation;
+          primInfo.diffuseTransmissionUvSx = mat.diffuseTransmissionUvTransform.scale.x;
+          primInfo.diffuseTransmissionUvSy = mat.diffuseTransmissionUvTransform.scale.y;
         }
         primInfo.textureIndex =
             (texIdx >= 0 &&
@@ -149,6 +207,7 @@ void VulkanApplication::createRayTracingGeometryBuffers() {
         primInfo.vertexOffset = vertexOffset;
         primInfo.transmissionFactor = transmission;
         primInfo.idxReflect = ior;
+
         primitiveInfos.push_back(primInfo);
       }
 
@@ -783,29 +842,36 @@ void VulkanApplication::createTextureResources() {
 void VulkanApplication::buildFrameGraph() {
   renderGraph.reset();
 
-  // ── Imports ──────────────────────────────────────────────────────────────────────────────
+  // ── Imports
+  // ──────────────────────────────────────────────────────────────────────────────
   FrameGraphResourceInfo dirShadowInfo{};
   dirShadowInfo.external = true;
   // The directional shadow render pass handles UNDEFINED → SHADER_READ_ONLY
   // internally, so the graph only tracks the steady-state layout.
   dirShadowInfo.initialLayout = m_dirShadowLayout;
-  dirShadowInfo.texture = {
-      shadowMap->getShadowMapSize(), shadowMap->getShadowMapSize(), 1, 1,
-      VK_FORMAT_R32_SFLOAT,
-      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-      VK_IMAGE_ASPECT_COLOR_BIT};
+  dirShadowInfo.texture = {shadowMap->getShadowMapSize(),
+                           shadowMap->getShadowMapSize(),
+                           1,
+                           1,
+                           VK_FORMAT_R32_SFLOAT,
+                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_SAMPLED_BIT,
+                           VK_IMAGE_ASPECT_COLOR_BIT};
   m_dirShadowHandle = renderGraph.importTexture(
       dirShadowInfo, shadowMap->getShadowImage(), VK_NULL_HANDLE,
       shadowMap->getShadowMapImageView());
 
   FrameGraphResourceInfo cubeShadowInfo{};
   cubeShadowInfo.external = true;
-  cubeShadowInfo.initialLayout = m_cubeShadowLayout;  // UNDEFINED first frame
-  cubeShadowInfo.texture = {
-      shadowCubeMap->getSize(), shadowCubeMap->getSize(), 6, 1,
-      VK_FORMAT_D32_SFLOAT,
-      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-      VK_IMAGE_ASPECT_DEPTH_BIT};
+  cubeShadowInfo.initialLayout = m_cubeShadowLayout; // UNDEFINED first frame
+  cubeShadowInfo.texture = {shadowCubeMap->getSize(),
+                            shadowCubeMap->getSize(),
+                            6,
+                            1,
+                            VK_FORMAT_D32_SFLOAT,
+                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                                VK_IMAGE_USAGE_SAMPLED_BIT,
+                            VK_IMAGE_ASPECT_DEPTH_BIT};
   m_cubeShadowHandle = renderGraph.importTexture(
       cubeShadowInfo, shadowCubeMap->getCubeMapImage(), VK_NULL_HANDLE,
       shadowCubeMap->getCubeMapImageView());
@@ -856,7 +922,8 @@ void VulkanApplication::drawFrame() {
     recreateSwapChain();
     return;
   } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
-    throw std::runtime_error("failed to acquire swap chain image! VkResult = " + std::to_string(result));
+    throw std::runtime_error("failed to acquire swap chain image! VkResult = " +
+                             std::to_string(result));
   }
 
   // 3. Check if a previous frame is using this image (wait for it)
@@ -1256,6 +1323,31 @@ void VulkanApplication::mainLoop() {
         targetTransform->scale = scl;
       }
     }
+    {
+      // KHR_materials_variants selection for the selected object
+      if (selectedObjectIndex >= 0 &&
+          selectedObjectIndex < static_cast<int>(loadedObjects.size())) {
+        Model &variantModel = loadedObjects[selectedObjectIndex].model;
+        int selectedVariant = variantModel.activeVariantIndex;
+        uiManager->renderVariantWindow(variantModel.variantNames,
+                                       selectedVariant);
+        if (selectedVariant != variantModel.activeVariantIndex) {
+          variantModel.activeVariantIndex = selectedVariant;
+
+          vkDeviceWaitIdle(device->getDevice());
+
+          createRayTracingGeometryBuffers();      // rebuild prim buffer
+          std::cout << "desc before: " << rayTracingDescriptorSet << std::endl;
+          createRayTracingDescriptorSet();        // rebind buffer handles
+          std::cout << "desc after:  " << rayTracingDescriptorSet << std::endl;
+
+          accumulationFrameCount = 0;
+          cameraMoved = true;
+        }
+
+      }
+    }
+
     uiManager->renderLightingWindow(lights, ambientStrength);
     {
       bool resetAcc = false;
@@ -2272,8 +2364,10 @@ void VulkanApplication::recordRayTracingCommandBuffer(
     for (const auto &mesh : rtModel.transparentMeshIndices) {
       const auto &meshRef = rtModel.meshes[mesh];
       for (const auto &primitive : meshRef.primitives) {
-        int32_t matIndex =
-            primitive.materialIndex >= 0 ? primitive.materialIndex : 0;
+        int32_t matIndex = resolveMaterialIndex(rtModel, primitive);
+        if (matIndex < 0)
+          matIndex = 0;
+
         if (matIndex >= static_cast<int32_t>(rtModel.materials.size()) ||
             !rtModel.materials[matIndex].isEmissive) {
           continue;
@@ -4043,11 +4137,10 @@ void VulkanApplication::recordPointShadowPass(VkCommandBuffer cmd) {
     toSampled.srcAccessMask = 0;
     toSampled.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-    vkCmdPipelineBarrier(
-        cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-        0, 0, nullptr, 0, nullptr, 1, &toSampled);
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                             VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &toSampled);
 
     return;
   }
@@ -4123,7 +4216,6 @@ void VulkanApplication::recordPointShadowPass(VkCommandBuffer cmd) {
 
     vkCmdEndRenderPass(cmd);
   }
-
 }
 
 void VulkanApplication::createPipelineLayout() {

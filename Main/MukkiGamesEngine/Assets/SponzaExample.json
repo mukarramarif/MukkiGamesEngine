@@ -1,0 +1,99 @@
+{
+  "sceneName": "Sponza",
+  "skyboxPath": "autumn_field_puresky_4k.hdr",
+  "ambientStrenght": 0.4,
+  "cameraSpawnPos": [0.0, 2.0, 5.0],
+  "Lights": [
+    {
+      "name": "Sun",
+      "type": "Directional",
+      "direction": [-0.5, -1.0, -0.3],
+      "color": [1.0, 0.95, 0.8],
+      "intensity": 1.0,
+      "enabled": true
+    },
+    {
+      "name": "PointLight1",
+      "type": "Point",
+      "position": [2.0, 3.0, 1.0],
+      "color": [1.0, 0.5, 0.5],
+      "intensity": 0.8,
+      "enabled": true
+    },
+    {
+      "name": "PointLight2",
+      "type": "Point",
+      "position": [-2.0, 3.0, 1.0],
+      "color": [0.5, 0.5, 1.0],
+      "intensity": 0.8,
+      "enabled": true
+    },
+    {
+      "name": "PointLight3",
+      "type": "Point",
+      "position": [0.0, 3.0, -2.0],
+      "color": [0.5, 1.0, 0.5],
+      "intensity": 0.8,
+      "enabled": true
+    }
+  ],
+  "Objects": [
+    {
+      "name": "Sponza",
+      "modelPath": "main_sponza/NewSponza_Main_glTF_003.gltf",
+      "position": [0.0, 0.0, 0.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [1.0, 1.0, 1.0],
+      "physics": {
+        "enabled": false,
+        "isDynamic": false,
+        "useMeshShape": false
+      }
+    },
+    {
+      "name": "Curtains",
+      "modelPath": "pkg_a_curtains/NewSponza_Curtains_glTF.gltf",
+      "position": [0.0, 0.0, 0.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [1.0, 1.0, 1.0],
+      "physics": {
+        "enabled": false,
+        "isDynamic": false,
+        "useMeshShape": false
+      }
+    },
+    {
+      "name": "Dragon",
+      "modelPath": "Dragon/DragonDispersion.gltf",
+      "position": [0.0, 1.0, 0.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [1.0,1.0, 1.0],
+      "physics": {
+        "enabled": false,
+        "isDynamic": false,
+        "useMeshShape": false
+      }
+    },
+    {
+      "name": "Lamp",
+      "modelPath": "Lamp/IridescenceLamp.gltf",
+      "position": [5.0, 1.0, 0.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [5.0,5.0, 5.0],
+      "physics": {
+        "enabled": false,
+        "isDynamic": false,
+        "useMeshShape": false}
+    },{
+      "name": "Suz",
+      "modelPath": "GLTF/glTF-Sample-Assets-main/Models/IridescenceSuzanne/glTF/IridescenceSuzanne.gltf",
+      "position": [-2.2, 5.0, 0.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [0.7,0.7, 0.7],
+      "physics": {
+        "enabled": false,
+        "isDynamic": false,
+        "useMeshShape": false}
+    }
+  ]
+}

@@ -133,6 +133,29 @@ void UIManager::init(const UIRenderData& renderData, EngineWindow* window)
 
 	initialized = true;
 }
+void UIManager::renderVariantWindow(const std::vector<std::string>& variantNames, int& selectedVariant)
+{
+
+
+	ImGui::Begin("Material Variants", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+
+	std::vector<const char*> items;
+	items.reserve(variantNames.size() + 1);
+	items.push_back("Default");
+	for (const auto& name : variantNames) {
+		items.push_back(name.c_str());
+	}
+
+	int current = selectedVariant + 1; // 0 = Default, 1..N = variants
+	if (current < 0 || current >= static_cast<int>(items.size())) {
+		current = 0;
+	}
+	if (ImGui::Combo("Variant", &current, items.data(), static_cast<int>(items.size()))) {
+		selectedVariant = current - 1;
+	}
+
+	ImGui::End();
+}
 
 void UIManager::newFrame()
 {

@@ -12,6 +12,7 @@ class MukkiGamesEngine(ConanFile):
         "stb/cci.20240531",
         "gli/cci.20210515",
         "tracy/0.13.1",
+        "ktx/4.4.2"
     ]
     generators = "CMakeDeps", "CMakeToolchain"
 

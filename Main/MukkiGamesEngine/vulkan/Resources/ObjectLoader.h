@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -10,7 +11,7 @@
 #include <unordered_map>
 #include <future>
 #include <mutex>
-
+#include <ktx.h>
 #include "../Core/VkDevice.h"
 #include "../objects/vertex.h"
 
@@ -23,6 +24,15 @@ struct RayTracingVertex {
 	glm::vec2 texCoord;
 	float _pad0;
 	float _pad1;
+};
+
+// KHR_texture_transform: UV transform for a single texture reference.
+// Applied as uv' = R * S * uv + O (scale, then rotate, then offset).
+struct TextureTransform {
+	glm::vec2 offset = glm::vec2(0.0f);
+	float rotation = 0.0f;          // radians, counter-clockwise
+	glm::vec2 scale = glm::vec2(1.0f);
+	bool active = false;
 };
 
 // Material data for PBR rendering
@@ -41,6 +51,7 @@ struct Material {
 	float idxReflect = 1.5;
 	float alphaCutoff = 0.5f;
 	glm::vec3 attenuationColor = glm::vec3(1.0f);
+
 	float attenuationDistance = 1e9F;
 	float dispersion = 0.0f;
 	float iridesceneFactor = 0.0f;
@@ -48,7 +59,20 @@ struct Material {
 	float iridesceneThicknessMin = 100.0f;
 	float iridesceneThicknessMax = 400.0f;
 	int32_t iridescenceThicknessTextureIndex = -1;
+	float diffuseTransmissionFactor = 0.0f;
+	glm::vec3 diffuseTransmissionColor = glm::vec3(1.0f);
+	int32_t diffuseTransmissionTextureIndex = -1;
 
+	glm::vec3 scatteringColor = glm::vec3(1.0f);
+	float scatteringDistance = 0.0F;
+	float scatteringAnisotropy = 0.0F;
+	float scatteringRange = 0.0F;
+	// KHR_texture_transform per sampled texture slot
+	TextureTransform baseColorUvTransform;
+	TextureTransform metallicRoughnessUvTransform;
+	TextureTransform emissiveUvTransform;
+	TextureTransform iridescenceThicknessUvTransform;
+	TextureTransform diffuseTransmissionUvTransform;
 };
 
 // A single mesh primitive (submesh)
@@ -58,6 +82,7 @@ struct Primitive {
 	uint32_t firstVertex;
 	uint32_t vertexCount;
 	int32_t materialIndex = -1;
+	std::vector<int32_t> variantMaterials {};
 };
 
 // A mesh can contain multiple primitives
@@ -101,6 +126,8 @@ struct Model {
 	std::vector<Material> materials;
 	std::vector<LoadedTexture> textures;
 	std::vector<int32_t> rootNodes;
+	std::vector<std::string> variantNames;
+	int32_t activeVariantIndex = -1;
 	//rendering order
 	std::vector<size_t> opaqueMeshIndices;
 	std::vector<size_t> transparentMeshIndices;
@@ -115,6 +142,17 @@ struct Model {
 	VkDeviceMemory rtVertexBufferMemory = VK_NULL_HANDLE;
 
 };
+// Resolves the material a primitive renders with, honoring the currently
+// selected KHR_materials_variants variant. Falls back to the base material.
+inline int32_t resolveMaterialIndex(const Model& model, const Primitive& prim)
+{
+	if (model.activeVariantIndex >= 0 &&
+	    model.activeVariantIndex < static_cast<int32_t>(prim.variantMaterials.size()) &&
+	    prim.variantMaterials[model.activeVariantIndex] >= 0) {
+		return prim.variantMaterials[model.activeVariantIndex];
+	}
+	return prim.materialIndex;
+}
 
 class ObjectLoader {
 public:
@@ -147,6 +185,7 @@ private:
 	// Texture loading helpers
 	void uploadTextureToGPU(const unsigned char* pixelData, int width, int height,
 	                        LoadedTexture& outTexture);
+	void loadVariants(const tinygltf::Model& gltfModel, Model& model);
 	VkSamplerAddressMode getVkWrapMode(int wrapMode);
 	VkFilter getVkFilterMode(int filterMode);
 
