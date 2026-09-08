@@ -2401,6 +2401,9 @@ void VulkanApplication::recordRayTracingCommandBuffer(
 
 void VulkanApplication::loadSceneObjects() {
   const auto &sceneObjects = sceneLoader->getObjects();
+  // Scene switch can destroy pools/buffers that frames in flight still
+  // reference; make sure the device is idle first.
+  vkDeviceWaitIdle(device->getDevice());
   destroyAllLoadedObjects();
 
   // Phase 1: Launch all model loads concurrently
@@ -2504,6 +2507,31 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
 
   size_t materialCount =
       obj.model.materials.empty() ? 1 : obj.model.materials.size();
+
+  // Dedicated descriptor pool for this object. The shared application pool
+  // cannot free individual sets (no FREE_DESCRIPTOR_SET_BIT), so repeated
+  // scene loads would leak sets until allocation fails. Destroying this pool
+  // in destroyLoadedObject() reclaims everything at once.
+  {
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets =
+        static_cast<uint32_t>(materialCount * MAX_FRAMES_IN_FLIGHT);
+    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = poolInfo.maxSets * 2; // UBO + MaterialUBO
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount =
+        poolInfo.maxSets * 3; // baseColor + dir shadow + point shadow
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    if (vkCreateDescriptorPool(device->getDevice(), &poolInfo, nullptr,
+                               &obj.descriptorPool) != VK_SUCCESS) {
+      throw std::runtime_error(
+          "failed to create descriptor pool for loaded object!");
+    }
+  }
+
   obj.descriptorSets.resize(materialCount);
   for (size_t matIndex = 0; matIndex < materialCount; matIndex++) {
     obj.descriptorSets[matIndex].resize(MAX_FRAMES_IN_FLIGHT);
@@ -2512,7 +2540,7 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
                                                descriptorSetLayout);
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = descriptorBoss->getDescriptorPool();
+    allocInfo.descriptorPool = obj.descriptorPool;
     allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
     allocInfo.pSetLayouts = layouts.data();
 
@@ -2666,6 +2694,12 @@ void VulkanApplication::destroyLoadedObject(LoadedObject &obj) {
   obj.materialUniformBuffersMapped.clear();
 
   obj.descriptorSets.clear();
+
+  if (obj.descriptorPool != VK_NULL_HANDLE) {
+    // Frees every descriptor set allocated from it in one call.
+    vkDestroyDescriptorPool(device->getDevice(), obj.descriptorPool, nullptr);
+    obj.descriptorPool = VK_NULL_HANDLE;
+  }
 
   if (obj.model.vertexBuffer != VK_NULL_HANDLE) {
     objectLoader->destroyModel(obj.model);
@@ -3982,22 +4016,22 @@ void VulkanApplication::createRayTracingDescriptorSet() {
   meshWrite.pBufferInfo = &meshBufferInfo;
 
   VkWriteDescriptorSet cubemapWrite{};
-  {
-    VkDescriptorImageInfo cubemapImageInfo{};
-    cubemapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    cubemapImageInfo.imageView = textureImageView;
-    cubemapImageInfo.sampler = textureSampler;
-    if (skybox && skybox->getCubemapImageView() != VK_NULL_HANDLE) {
-      cubemapImageInfo.imageView = skybox->getCubemapImageView();
-      cubemapImageInfo.sampler = skybox->getCubemapSampler();
-    }
-    cubemapWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    cubemapWrite.dstSet = rayTracingDescriptorSet;
-    cubemapWrite.dstBinding = 7;
-    cubemapWrite.descriptorCount = 1;
-    cubemapWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    cubemapWrite.pImageInfo = &cubemapImageInfo;
+  // NOTE: cubemapImageInfo must outlive the vkUpdateDescriptorSets call below;
+  // cubemapWrite.pImageInfo points into it.
+  VkDescriptorImageInfo cubemapImageInfo{};
+  cubemapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  cubemapImageInfo.imageView = textureImageView;
+  cubemapImageInfo.sampler = textureSampler;
+  if (skybox && skybox->getCubemapImageView() != VK_NULL_HANDLE) {
+    cubemapImageInfo.imageView = skybox->getCubemapImageView();
+    cubemapImageInfo.sampler = skybox->getCubemapSampler();
   }
+  cubemapWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  cubemapWrite.dstSet = rayTracingDescriptorSet;
+  cubemapWrite.dstBinding = 7;
+  cubemapWrite.descriptorCount = 1;
+  cubemapWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  cubemapWrite.pImageInfo = &cubemapImageInfo;
 
   VkWriteDescriptorSet textureWrite{};
   std::vector<VkDescriptorImageInfo> texImageInfos(MAX_RT_TEXTURES);
@@ -4118,31 +4152,7 @@ void VulkanApplication::recordPointShadowPass(VkCommandBuffer cmd) {
     }
   }
   if (!pointLight) {
-    // No shadowed point light this frame. The frame graph declared this pass
-    // as leaving the cube map in DEPTH_STENCIL_ATTACHMENT_OPTIMAL, so the
-    // fix-up must bring the real layout in line with the graph's belief.
-
-    VkImageMemoryBarrier toSampled{};
-    toSampled.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    toSampled.oldLayout = m_cubeShadowLayout;
-    toSampled.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    toSampled.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toSampled.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toSampled.image = shadowCubeMap->getCubeMapImage();
-    toSampled.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    toSampled.subresourceRange.baseMipLevel = 0;
-    toSampled.subresourceRange.levelCount = 1;
-    toSampled.subresourceRange.baseArrayLayer = 0;
-    toSampled.subresourceRange.layerCount = 6;
-    toSampled.srcAccessMask = 0;
-    toSampled.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                             VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &toSampled);
-
-    return;
+      return;
   }
 
   const uint32_t size = shadowCubeMap->getSize();
