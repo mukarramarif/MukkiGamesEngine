@@ -2401,6 +2401,9 @@ void VulkanApplication::recordRayTracingCommandBuffer(
 
 void VulkanApplication::loadSceneObjects() {
   const auto &sceneObjects = sceneLoader->getObjects();
+  // Scene switch can destroy pools/buffers that frames in flight still
+  // reference; make sure the device is idle first.
+  vkDeviceWaitIdle(device->getDevice());
   destroyAllLoadedObjects();
 
   // Phase 1: Launch all model loads concurrently
@@ -2504,6 +2507,31 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
 
   size_t materialCount =
       obj.model.materials.empty() ? 1 : obj.model.materials.size();
+
+  // Dedicated descriptor pool for this object. The shared application pool
+  // cannot free individual sets (no FREE_DESCRIPTOR_SET_BIT), so repeated
+  // scene loads would leak sets until allocation fails. Destroying this pool
+  // in destroyLoadedObject() reclaims everything at once.
+  {
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets =
+        static_cast<uint32_t>(materialCount * MAX_FRAMES_IN_FLIGHT);
+    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = poolInfo.maxSets * 2; // UBO + MaterialUBO
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount =
+        poolInfo.maxSets * 3; // baseColor + dir shadow + point shadow
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    if (vkCreateDescriptorPool(device->getDevice(), &poolInfo, nullptr,
+                               &obj.descriptorPool) != VK_SUCCESS) {
+      throw std::runtime_error(
+          "failed to create descriptor pool for loaded object!");
+    }
+  }
+
   obj.descriptorSets.resize(materialCount);
   for (size_t matIndex = 0; matIndex < materialCount; matIndex++) {
     obj.descriptorSets[matIndex].resize(MAX_FRAMES_IN_FLIGHT);
@@ -2512,7 +2540,7 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
                                                descriptorSetLayout);
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = descriptorBoss->getDescriptorPool();
+    allocInfo.descriptorPool = obj.descriptorPool;
     allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
     allocInfo.pSetLayouts = layouts.data();
 
@@ -2666,6 +2694,12 @@ void VulkanApplication::destroyLoadedObject(LoadedObject &obj) {
   obj.materialUniformBuffersMapped.clear();
 
   obj.descriptorSets.clear();
+
+  if (obj.descriptorPool != VK_NULL_HANDLE) {
+    // Frees every descriptor set allocated from it in one call.
+    vkDestroyDescriptorPool(device->getDevice(), obj.descriptorPool, nullptr);
+    obj.descriptorPool = VK_NULL_HANDLE;
+  }
 
   if (obj.model.vertexBuffer != VK_NULL_HANDLE) {
     objectLoader->destroyModel(obj.model);

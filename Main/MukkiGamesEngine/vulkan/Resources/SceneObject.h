@@ -81,5 +81,9 @@ struct LoadedObject {
 	std::vector<std::vector<VkBuffer>> materialUniformBuffers;
 	std::vector<std::vector<VkDeviceMemory>> materialUniformBuffersMemory;
 	std::vector<std::vector<void*>> materialUniformBuffersMapped;
+	// Dedicated pool for this object's material descriptor sets, so scene
+	// switches can reclaim everything by destroying the pool (the shared
+	// app pool would otherwise leak sets and eventually run dry).
+	VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
 	std::vector<std::vector<VkDescriptorSet>> descriptorSets; // [materialIndex][frameIndex]
 };
