@@ -18,6 +18,7 @@
 #include "../Resources/DeletionQueue.h"
 #include "../Resources/ShadowMap.h"
 #include "../Resources/CloudNoiseGenerator.h"
+#include "../Resources/ProbeVolume.h"
 #include "../uiManager/uiManager.h"
 #include "../pipeline/computePipeline.h"
 #include "../pipeline/CloudPipeline.h"
@@ -28,6 +29,7 @@
 #include "ShaderCompiler.h"
 #include "../raytracing/RayTracingAS.h"
 #include "../raytracing/RayTracingPipeline.h"
+#include "../raytracing/ProbeTracingPipeline.h"
 #include "../Physics/PhysicsEngine.h"
 #include "../../Renderer/Renderer.h"
 #include "../Resources/ShadowCubeMap.h"
@@ -93,7 +95,7 @@ private:
 	std::vector<VkSemaphore> renderFinishedSemaphores;
 	std::vector<VkFence> inFlightFences;
 	std::vector<VkFence> imagesInFlight;
-  std::vector<VkImageLayout> swapChainImageLayouts;
+    std::vector<VkImageLayout> swapChainImageLayouts;
 	uint32_t currentFrame = 0;
 
 	// Vertex/Index buffers
@@ -166,6 +168,12 @@ private:
 		uint32_t pad0;
 		uint32_t pad1;
 	};
+	struct ProbeSceneData{
+	    GPULight lights[MAX_LIGHTS];
+		glm::vec4 lightParams;
+		glm::vec4 timeParams;
+	};
+
 	VkBuffer rayTracingPrimitiveBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory rayTracingPrimitiveBufferMemory = VK_NULL_HANDLE;
 	VkBuffer rayTracingMeshBuffer = VK_NULL_HANDLE;
@@ -227,6 +235,17 @@ private:
 	void SetupUIManager();
 	void initComputePipeline();
     void initRayTracingPipeline();
+	void initProbeTracing();
+	void buildProbeVolumeFromScene();
+	void createProbeUniformBuffer();
+	void updateProbeUniformBuffer();
+	void createProbeDescriptorSetLayout();
+	void createProbeDescriptorPool();
+	void createProbeDescriptorSet();
+	void bindProbeDescriptorsToLoadedObjects();
+	void recordProbeUpdatePass(VkCommandBuffer cmd);
+	void resetProbeHistory();
+	void cleanupProbeResources();
 	void createComputeOutputImage();
 	void createRayTracingGeometryBuffers();
 	void cleanupRayTracingGeometryBuffers();
@@ -302,6 +321,17 @@ private:
 
 	std::unique_ptr<RayTracingPipeline> rayTracingPipeline;
 
+	// Probe-based ray-traced global illumination (DDGI-style)
+	std::unique_ptr<ProbeVolume> probeVolume;
+	std::unique_ptr<ProbeTracingPipeline> probeTracingPipeline;
+	VkDescriptorSetLayout probeDescriptorSetLayout = VK_NULL_HANDLE;
+	VkDescriptorPool probeDescriptorPool = VK_NULL_HANDLE;
+	VkDescriptorSet probeDescriptorSet = VK_NULL_HANDLE;
+	VkBuffer probeSceneUniformBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory probeSceneUniformBufferMemory = VK_NULL_HANDLE;
+	void* probeSceneUniformBufferMapped = nullptr;
+	bool probeGIEnabled = true;
+
 	// Accumulation
 	VkImage accumOutputImage = VK_NULL_HANDLE;
 	VkDeviceMemory accumOutputImageMemory = VK_NULL_HANDLE;
@@ -339,7 +369,7 @@ private:
 
 
 	//TODO: find a way to automatically update scenes like hot shader reloading
-	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json","WaterExample.json", "showRoom.json", "GlassDragon.json"};
+	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json", "showRoom.json", "GlassDragon.json", "GLTFTest.json"};
 	int currentSceneIndex = 0;
 
 	//Cloud Pipeline

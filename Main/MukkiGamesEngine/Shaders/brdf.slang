@@ -1,7 +1,7 @@
 // Slang BRDF Shader - Cook-Torrance PBR with GGX microfacet model + Clear Coat
 // Directional light shadow mapping via R32 shadow map
 // Matches the existing GLSL interface for drop-in replacement
-// Inspo from Sasha Williams Slang for PBR Example: https://github.com/SaschaWillems/Vulkan/blob/master/shaders/slang/pbrbasic/pbr.slang
+// Inspo from c: https://github.com/SaschaWillems/Vulkan/blob/master/shaders/slang/pbrbasic/pbr.slang
 
 struct GPULight {
     float4 position;
@@ -38,6 +38,110 @@ struct MaterialUBO {
 [[vk::binding(2, 0)]] ConstantBuffer<MaterialUBO> material;
 [[vk::binding(3, 0)]] Sampler2D<float> shadowMap;
 [[vk::binding(4, 0)]] SamplerCube<float> shadowCubeMap;
+
+// ---- Ray-traced probe GI (mirrors Shaders/probeCommon.glsl) ----
+static const int PROBE_IRRADIANCE_TEXELS = 8;
+static const int PROBE_DEPTH_TEXELS = 16;
+static const float PROBE_GI_STRENGTH = 1.0;  // dial for debugging
+
+struct ProbeVolumeParams {
+    float4 origin;      // xyz = grid min corner
+    int4 probeCounts;   // xyz = probes per axis, w = total probe count
+    float4 params;      // x = spacing, y = maxRayDistance, z = hysteresis, w = normalBias
+    float4 atlas;       // x = tilesPerSide, y = irradianceTexelsPerProbe, z = depthTexelsPerProbe, w = raysPerProbe
+};
+
+[[vk::binding(5, 0)]] Sampler2D<float4> probeIrradiance;  // atlas, GENERAL layout
+[[vk::binding(6, 0)]] Sampler2D<float2> probeDepth;       // atlas, GENERAL layout
+[[vk::binding(7, 0)]] ConstantBuffer<ProbeVolumeParams> probeVolume;
+
+float2 probeOctEncode(float3 n) {
+    n /= (abs(n.x) + abs(n.y) + abs(n.z));
+    if (n.z < 0.0) {
+        float2 tmp = (1.0 - abs(n.yx)) * sign(n.xy);
+        n.x = tmp.x;
+        n.y = tmp.y;
+    }
+    return n.xy * 0.5 + 0.5;
+}
+
+float probeChebyshevWeight(float2 moments, float depth) {
+    float mean = moments.x;
+    float variance = max(moments.y - mean * mean, 0.0001);
+    float d = depth - mean;
+    float p = (d > 0.0) ? variance / (variance + d * d) : 1.0;
+    return max(p * p * p, 0.05);
+}
+
+// Trilinear + octahedral + Chebyshev lookup of the probe volume.
+// The atlases are sampled with a NEAREST clamp sampler at normalized
+// texel centers, which is equivalent to the GLSL texelFetch path.
+float3 sampleProbeGI(float3 pos, float3 normal) {
+    int3 counts = probeVolume.probeCounts.xyz;
+    if (counts.x < 2 || counts.y < 2 || counts.z < 2)
+        return float3(0.0, 0.0, 0.0);
+
+    float3 origin = probeVolume.origin.xyz;
+    float spacing = probeVolume.params.x;
+    float normalBias = probeVolume.params.w;
+    float tilesPerSide = probeVolume.atlas.x;
+    float irrAtlasSize = tilesPerSide * float(PROBE_IRRADIANCE_TEXELS);
+    float depthAtlasSize = tilesPerSide * float(PROBE_DEPTH_TEXELS);
+
+    float3 biasedPos = pos + normal * normalBias;
+    float3 q = (biasedPos - origin) / spacing;
+    float3 qc = clamp(q, float3(0.5, 0.5, 0.5),
+                      float3(counts) - float3(0.5001, 0.5001, 0.5001));
+    float3 basef = qc - float3(0.5, 0.5, 0.5);
+    int3 base = int3(floor(basef));
+    float3 frac = basef - float3(base);
+
+    float3 result = float3(0.0, 0.0, 0.0);
+    float totalWeight = 0.0;
+
+    for (int dz = 0; dz <= 1; dz++)
+    for (int dy = 0; dy <= 1; dy++)
+    for (int dx = 0; dx <= 1; dx++) {
+        int3 idx = base + int3(dx, dy, dz);
+        int probeIndex = (idx.z * counts.y + idx.y) * counts.x + idx.x;
+
+        float3 w = float3(1.0, 1.0, 1.0) - abs(float3(dx, dy, dz) - frac);
+        float weight = w.x * w.y * w.z;
+        if (weight <= 0.0)
+            continue;
+
+        float3 probePos = origin + (float3(idx) + float3(0.5, 0.5, 0.5)) * spacing;
+        float3 toProbe = probePos - biasedPos;
+        float distToProbe = length(toProbe);
+        float3 dirToProbe = toProbe / max(distToProbe, 1e-5);
+
+        float2 oct = probeOctEncode(dirToProbe);
+        int2 tile = int2(probeIndex % int(tilesPerSide),
+                         probeIndex / int(tilesPerSide));
+        int2 irrTexel = int2(clamp(oct * float(PROBE_IRRADIANCE_TEXELS),
+                                   float2(0.0, 0.0),
+                                   float2(PROBE_IRRADIANCE_TEXELS - 1,
+                                          PROBE_IRRADIANCE_TEXELS - 1)));
+        int2 depthTexel = int2(clamp(oct * float(PROBE_DEPTH_TEXELS),
+                                     float2(0.0, 0.0),
+                                     float2(PROBE_DEPTH_TEXELS - 1,
+                                            PROBE_DEPTH_TEXELS - 1)));
+        int2 irrCoord = tile * PROBE_IRRADIANCE_TEXELS + irrTexel;
+        int2 depthCoord = tile * PROBE_DEPTH_TEXELS + depthTexel;
+        float2 irrUV = (float2(irrCoord) + float2(0.5, 0.5)) /
+                       float2(irrAtlasSize, irrAtlasSize);
+        float2 depthUV = (float2(depthCoord) + float2(0.5, 0.5)) /
+                         float2(depthAtlasSize, depthAtlasSize);
+
+        float3 irr = probeIrradiance.Sample(irrUV).rgb;
+        float2 moments = probeDepth.Sample(depthUV).rg;
+        float visibility = probeChebyshevWeight(moments, distToProbe);
+
+        result += irr * (weight * visibility);
+        totalWeight += weight * visibility;
+    }
+    return totalWeight > 0.0 ? result / totalWeight : float3(0.0, 0.0, 0.0);
+}
 struct PSInput {
     [[vk::location(0)]] float3 fragColor : COLOR;
     [[vk::location(1)]] float2 fragTexCoord : TEXCOORD;
@@ -217,7 +321,10 @@ PSOutput main(PSInput input) {
     float roughness = material.roughnessFactor;
 
     float shadow = calculateShadow(input.fragLightSpacePos);
-    float3 ambient = ubo.ambientStrength * albedo;
+    float3 gi = sampleProbeGI(input.fragWorldPos, normal) * PROBE_GI_STRENGTH;
+    // Irradiance field stores cosine-weighted incoming radiance; the diffuse
+    // response scales it by albedo / pi.
+    float3 ambient = ubo.ambientStrength * albedo + gi * albedo / 3.14159265;
     float3 lighting = float3(0.0, 0.0, 0.0);
 
     for (int i = 0; i < ubo.numLights && i < 4; i++) {

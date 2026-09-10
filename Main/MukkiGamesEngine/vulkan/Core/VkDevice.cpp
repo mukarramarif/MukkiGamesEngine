@@ -69,7 +69,18 @@ bool Device::isDeviceSuitable(VkPhysicalDevice device)
 	VkPhysicalDeviceFeatures supportedFeatures;
 	vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
 
-	return indices.isComplete() && extensionsSupported && swapChainAdequate && supportedFeatures.samplerAnisotropy;
+	// Probe GI needs position fetch (probe.rchit)
+	VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR positionFetch{};
+	positionFetch.sType =
+		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR;
+	VkPhysicalDeviceFeatures2 features2{};
+	features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+	features2.pNext = &positionFetch;
+	vkGetPhysicalDeviceFeatures2(device, &features2);
+
+	return indices.isComplete() && extensionsSupported && swapChainAdequate &&
+		   supportedFeatures.samplerAnisotropy &&
+		   positionFetch.rayTracingPositionFetch;
 }
 const VkDevice& Device::getDevice() const
 {
@@ -209,6 +220,13 @@ SwapChainSupportDetails Device::querySwapChainSupport(VkPhysicalDevice device)
     vulkan12Features.bufferDeviceAddress = VK_TRUE;
     vulkan12Features.pNext = &rayTracingFeatures;
 
+    // Required by probe.rchit (gl_HitTriangleVertexPositionsEXT)
+    VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR positionFetchFeatures{};
+    positionFetchFeatures.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR;
+    positionFetchFeatures.rayTracingPositionFetch = VK_TRUE;
+    positionFetchFeatures.pNext = &vulkan12Features;
+
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
@@ -222,7 +240,7 @@ SwapChainSupportDetails Device::querySwapChainSupport(VkPhysicalDevice device)
                          optionalDeviceExtensions.end());
     createInfo.enabledExtensionCount = static_cast<uint32_t>(allExtensions.size());
     createInfo.ppEnabledExtensionNames = allExtensions.data();
-    createInfo.pNext = &vulkan12Features;
+    createInfo.pNext = &positionFetchFeatures;
 
     if (instance && instance->isValidEnabled()) {
         const auto& validationLayers = instance->getValidationLayers();

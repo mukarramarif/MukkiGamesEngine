@@ -1,5 +1,6 @@
 #include "VkDescriptor.h"
 #include "../objects/UBO.h"
+#include "../Resources/ProbeVolume.h"
 #include <stdexcept>
 #include <array>
 
@@ -14,9 +15,9 @@ void VkDescriptorBoss::createDescriptorPool(uint32_t maxSets)
 	uint32_t totalSets = maxSets * 500;
 	std::array<VkDescriptorPoolSize, 3> poolSizes{};
 	poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-	poolSizes[0].descriptorCount = totalSets;
+	poolSizes[0].descriptorCount = totalSets * 3;  // UBO + MaterialUBO + probe params
 	poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	poolSizes[1].descriptorCount = totalSets * 2;  // doubled for shadow map
+	poolSizes[1].descriptorCount = totalSets * 5;  // base + shadows + probes
 	poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	poolSizes[2].descriptorCount = totalSets;
 
@@ -55,7 +56,12 @@ void VkDescriptorBoss::updateDescriptorSets(
 	VkImageView shadowMapImageView,
 	VkSampler shadowMapSampler,
     VkImageView cubeShadowMapImageView,
-    VkSampler cubeShadowMapSampler)
+    VkSampler cubeShadowMapSampler,
+    VkImageView probeIrradianceView,
+    VkSampler probeIrradianceSampler,
+    VkImageView probeDepthView,
+    VkSampler probeDepthSampler,
+    VkBuffer probeParamsBuffer)
 {
 	for (size_t i = 0; i < descriptorSets.size(); i++) {
 		std::vector<VkWriteDescriptorSet> descriptorWrites;
@@ -139,6 +145,57 @@ void VkDescriptorBoss::updateDescriptorSets(
             cubeShadowWrite.descriptorCount = 1;
             cubeShadowWrite.pImageInfo = &cubeShadowInfo;
             descriptorWrites.push_back(cubeShadowWrite);
+        }
+
+        // Probe GI irradiance atlas (binding = 5) - lives in GENERAL layout
+        if (probeIrradianceView != VK_NULL_HANDLE && probeIrradianceSampler != VK_NULL_HANDLE) {
+            VkDescriptorImageInfo probeIrrInfo{};
+            probeIrrInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            probeIrrInfo.imageView = probeIrradianceView;
+            probeIrrInfo.sampler = probeIrradianceSampler;
+
+            VkWriteDescriptorSet probeIrrWrite{};
+            probeIrrWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            probeIrrWrite.dstSet = descriptorSets[i];
+            probeIrrWrite.dstBinding = 5;
+            probeIrrWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            probeIrrWrite.descriptorCount = 1;
+            probeIrrWrite.pImageInfo = &probeIrrInfo;
+            descriptorWrites.push_back(probeIrrWrite);
+        }
+
+        // Probe GI depth atlas (binding = 6)
+        if (probeDepthView != VK_NULL_HANDLE && probeDepthSampler != VK_NULL_HANDLE) {
+            VkDescriptorImageInfo probeDepthInfo{};
+            probeDepthInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            probeDepthInfo.imageView = probeDepthView;
+            probeDepthInfo.sampler = probeDepthSampler;
+
+            VkWriteDescriptorSet probeDepthWrite{};
+            probeDepthWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            probeDepthWrite.dstSet = descriptorSets[i];
+            probeDepthWrite.dstBinding = 6;
+            probeDepthWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            probeDepthWrite.descriptorCount = 1;
+            probeDepthWrite.pImageInfo = &probeDepthInfo;
+            descriptorWrites.push_back(probeDepthWrite);
+        }
+
+        // Probe volume params UBO (binding = 7)
+        if (probeParamsBuffer != VK_NULL_HANDLE) {
+            VkDescriptorBufferInfo probeParamsInfo{};
+            probeParamsInfo.buffer = probeParamsBuffer;
+            probeParamsInfo.offset = 0;
+            probeParamsInfo.range = sizeof(VolumeProbe);
+
+            VkWriteDescriptorSet probeParamsWrite{};
+            probeParamsWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            probeParamsWrite.dstSet = descriptorSets[i];
+            probeParamsWrite.dstBinding = 7;
+            probeParamsWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            probeParamsWrite.descriptorCount = 1;
+            probeParamsWrite.pBufferInfo = &probeParamsInfo;
+            descriptorWrites.push_back(probeParamsWrite);
         }
 		// Update all descriptors
 		vkUpdateDescriptorSets(device->getDevice(), static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);

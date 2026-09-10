@@ -19,7 +19,7 @@ find_package(imguizmo CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(stb CONFIG REQUIRED)
 find_package(gli CONFIG REQUIRED)
-
+find_package(ktx CONFIG REQUIRED)
 find_program(GLSLC_EXECUTABLE glslc
   HINTS ENV VULKAN_SDK
   PATH_SUFFIXES Bin bin
@@ -128,7 +128,7 @@ endif()
 # -----------------------------------------------------
 
 # libraries
-target_link_libraries(MukkiGamesEngine PRIVATE Vulkan::Vulkan glfw imgui::imgui glm::glm imguizmo::imguizmo nlohmann_json::nlohmann_json stb::stb gli Jolt Tracy::TracyClient)
+target_link_libraries(MukkiGamesEngine PRIVATE Vulkan::Vulkan glfw imgui::imgui glm::glm imguizmo::imguizmo nlohmann_json::nlohmann_json stb::stb gli Jolt Tracy::TracyClient KTX::ktx)
 
 # imgui backend headers (imgui_impl_*) are installed to <package_root>/res/bindings
 get_filename_component(_IMGUI_ROOT ${imgui_INCLUDE_DIR} DIRECTORY)
@@ -236,6 +236,9 @@ add_shaders(MukkiGamesEngine
     MukkiGamesEngine/Shaders/rt.rmiss
     MukkiGamesEngine/Shaders/rt.rchit
     MukkiGamesEngine/Shaders/rt.rahit
+    MukkiGamesEngine/Shaders/probeTrace.rgen
+    MukkiGamesEngine/Shaders/probe.rmiss
+    MukkiGamesEngine/Shaders/probe.rchit
 
     MukkiGamesEngine/Shaders/taa.comp
     MukkiGamesEngine/Shaders/clouds.comp
