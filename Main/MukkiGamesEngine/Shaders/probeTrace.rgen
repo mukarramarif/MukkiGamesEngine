@@ -21,11 +21,13 @@ layout(std140, set = 0, binding = 1) uniform ProbeVolumeParamsBlock {
 } probeVolume;
 
 // std430 mirror of ProbeData (vulkan/Resources/ProbeVolume.h)
+// Writable: each thread relocates its own probe when it traces from inside
+// geometry (no cross-thread access, so no atomics are needed).
 struct ProbeData {
     vec4 pos;          // xyz = probe world position
     vec4 rotationSeed; // xy = per-probe random rotation values
 };
-layout(std430, set = 0, binding = 2) readonly buffer ProbeDataBuffer {
+layout(std430, set = 0, binding = 2) buffer ProbeDataBuffer {
     ProbeData probes[];
 };
 
@@ -108,6 +110,19 @@ void main()
     uint raysPerProbe = uint(probeVolume.atlas.w + 0.5);
     if (raysPerProbe > PROBE_RAYS_PER_PROBE) raysPerProbe = PROBE_RAYS_PER_PROBE;
 
+    // Probe relocation bookkeeping. A probe tracing from INSIDE geometry
+    // hits the BACK faces of nearby surfaces: the geometric normal (stored
+    // un-flipped by probe.rchit) points away from the probe, so
+    // s = dot(normal, incoming) < 0 and backfaceWeight < 0.5. A large
+    // backface fraction therefore identifies probes stuck in geometry.
+    // (Not const: GLSL rejects uniform-dependent const initializers.)
+    float relocDistance = probeVolume.params.x * 0.75;
+    float insideMargin  = probeVolume.params.x * 0.1;
+    uint  nearHitCount    = 0u;
+    float nearBackfaceSum = 0.0;
+    float minT   = 1.0e30;
+    vec3  minDir = vec3(0.0);
+
     // Local accumulation (one thread owns the whole probe, no atomics needed)
     vec3  irrAccum[PROBE_IRRADIANCE_TEXELS * PROBE_IRRADIANCE_TEXELS];
     float irrWeight[PROBE_IRRADIANCE_TEXELS * PROBE_IRRADIANCE_TEXELS];
@@ -148,6 +163,16 @@ void main()
             float backfaceWeight = (1.0 + s) * 0.5;
             vec3  sampleNormal   = s >= 0.0 ? hitNormal : -hitNormal;
 
+            // Relocation bookkeeping: track near hits and their orientation.
+            if (hitT < relocDistance) {
+                nearHitCount += 1u;
+                nearBackfaceSum += backfaceWeight;
+                if (hitT < minT) {
+                    minT   = hitT;
+                    minDir = dir;
+                }
+            }
+
             // Radiance arriving at the bounce point = direct light at the
             // bounce + indirect read back from the PREVIOUS frame's probes.
             vec3 radiance = directLighting(hitPos, sampleNormal);
@@ -173,6 +198,18 @@ void main()
             irrAccum[irrIdx]  += texture(probeSkybox, dir).rgb;
             irrWeight[irrIdx] += 1.0;
         }
+    }
+
+    // Relocate probes that are inside geometry: push them just past the
+    // nearest surface so their irradiance stops being a dark/bright blob
+    // inside the volume. Blended half-way per frame so the position
+    // converges smoothly; once outside, backface hits disappear and the
+    // probe stops moving.
+    if (nearHitCount > 0u &&
+        nearBackfaceSum < 0.4 * float(nearHitCount) &&
+        minT < probeVolume.params.x) {
+        vec3 candidate = probePos + minDir * (minT + insideMargin);
+        probes[probeIndex].pos = vec4(mix(probePos, candidate, 0.5), 0.0);
     }
 
     // Hysteresis blend into the output atlases

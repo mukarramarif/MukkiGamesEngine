@@ -84,7 +84,7 @@ static const int PROBE_DEPTH_TEXELS = 16;
 static const float PROBE_GI_STRENGTH = 1.0;  // dial for debugging
 // Glass tuning: env reflection brightness + how much to soften the
 // Beer-Lambert absorption (1.0 = physically correct, lower = brighter).
-static const float GLASS_ENV_STRENGTH = 5.0;
+static const float GLASS_ENV_STRENGTH = 2.0;
 static const float GLASS_ATTENUATION_SOFTEN = 0.5;
 
 struct ProbeVolumeParams {
@@ -453,9 +453,6 @@ PSOutput main(PSInput input) {
         // nearly black under dim studio lighting.
         float3 reflDir = reflect(-viewDir, normal);
         float3 env = skyboxCube.Sample(reflDir).rgb;
-        // The studio skybox has large black regions; a dark reflection would
-        // otherwise turn grazing surfaces into opaque black patches. Floor
-        // the environment with the probe field + a small constant.
         env = max(env, gi * 0.5 / 3.14159265 + float3(0.02, 0.02, 0.02));
         float thickness = max(material.thicknessFactor, 0.0);
         float3 atten = pow(float3(material.attenuationR, material.attenuationG,

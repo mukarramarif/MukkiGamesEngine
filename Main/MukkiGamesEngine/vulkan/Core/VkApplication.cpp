@@ -1031,25 +1031,29 @@ void VulkanApplication::drawFrame() {
     recordRayTracingCommandBuffer(commandBuffer, imageIndex);
     swapChainImageLayouts[imageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
   } else {
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+      throw std::runtime_error("failed to begin recording command buffer!");
+    }
+
+    // Probe-based GI: update the irradiance/depth atlases with ray tracing
+    // BEFORE the raster pass reads them (barriers are inside the pass).
+    // Requires scene geometry (BLAS/TLAS), so only when models are loaded.
+    if (probeGIEnabled && hasLoadedModels) {
+      recordProbeUpdatePass(commandBuffer);
+    }
+
+    // Frame graph: shadow passes + transitions into the main pass. Runs
+    // every frame (even without loaded models) so the cube shadow map
+    // tracks moving point lights and both shadow textures are in
+    // SHADER_READ_ONLY_OPTIMAL before the main pass samples them.
+    buildFrameGraph();
+    renderGraph.execute(commandBuffer);
+    m_dirShadowLayout = renderGraph.getLayout(m_dirShadowHandle);
+    m_cubeShadowLayout = renderGraph.getLayout(m_cubeShadowHandle);
+
     if (hasLoadedModels) {
-      VkCommandBufferBeginInfo beginInfo{};
-      beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-      if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
-        throw std::runtime_error("failed to begin recording command buffer!");
-      }
-
-      // Probe-based GI: update the irradiance/depth atlases with ray tracing
-      // BEFORE the raster pass reads them (barriers are inside the pass).
-      if (probeGIEnabled) {
-        recordProbeUpdatePass(commandBuffer);
-      }
-
-      // Frame graph: shadow passes + transitions into the main pass
-      buildFrameGraph();
-      renderGraph.execute(commandBuffer);
-      m_dirShadowLayout = renderGraph.getLayout(m_dirShadowHandle);
-      m_cubeShadowLayout = renderGraph.getLayout(m_cubeShadowHandle);
-
       VkPipeline mainPipeline = graphicsPipeline->getGraphicsPipeline();
       VkPipeline transparentPipe =
           transparentPipeline ? transparentPipeline->getGraphicsPipeline()
@@ -1078,10 +1082,6 @@ void VulkanApplication::drawFrame() {
       commandBufferManager->endModelRenderPass(commandBuffer);
 
       recordCloudCommandBuffer(commandBuffer, imageIndex);
-
-      if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("failed to record command buffer!");
-      }
     } else {
       // Fallback to default quad rendering
       commandBufferManager->recordCommandBuffer(
@@ -1092,6 +1092,10 @@ void VulkanApplication::drawFrame() {
           indexBuffer, swapChain->getSwapChainImages()[imageIndex],
           swapChainImageLayouts[imageIndex], descriptorSets, currentFrame,
           indexCount, *uiManager);
+    }
+
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("failed to record command buffer!");
     }
     // Track swap chain image layout for graphics mode
     swapChainImageLayouts[imageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
@@ -5003,6 +5007,22 @@ void VulkanApplication::recordProbeUpdatePass(VkCommandBuffer cmd) {
   probeTracingPipeline->vkCmdTraceRaysKHRFunc(
       cmd, &rgenRegion, &missRegion, &hitRegion, &callableRegion,
       probeVolume->getProbeCount(), 1, 1);
+
+  // Probe positions may be updated by the relocation logic in the rgen;
+  // make those writes visible to next frame's dispatch (same pipeline stage,
+  // access-only barrier).
+  VkBufferMemoryBarrier probeDataBarrier{};
+  probeDataBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+  probeDataBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+  probeDataBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  probeDataBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  probeDataBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  probeDataBarrier.buffer = probeVolume->getProbeDataBuffer();
+  probeDataBarrier.offset = 0;
+  probeDataBarrier.size = VK_WHOLE_SIZE;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                       VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0,
+                       nullptr, 1, &probeDataBarrier, 0, nullptr);
 
   // 3. Current copy (view 0): probe shader writes -> this frame's raster
   //    fragment reads.
