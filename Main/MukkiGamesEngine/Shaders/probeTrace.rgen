@@ -1,0 +1,211 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+#include "probeCommon.glsl"
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
+layout(set = 0, binding = 3) uniform sampler2D prevIrradiance;   // history copy (view 1)
+layout(set = 0, binding = 4) uniform sampler2D prevDepth;        // history copy (view 1)
+layout(set = 0, binding = 5, rgba16f) uniform image2D outIrradiance;   // current copy (view 0)
+layout(set = 0, binding = 6, rg16f)    uniform image2D outDepth;       // current copy (view 0)
+layout(set = 0, binding = 8) uniform samplerCube probeSkybox;
+layout(set = 0, binding = 9, rgba16f) uniform image2D outIrradianceHistory; // view 1 (duplicate store)
+layout(set = 0, binding = 10, rg16f)   uniform image2D outDepthHistory;      // view 1 (duplicate store)
+
+// std140 mirror of VolumeProbe (vulkan/Resources/ProbeVolume.h)
+layout(std140, set = 0, binding = 1) uniform ProbeVolumeParamsBlock {
+    vec4  origin;      // xyz = grid min corner
+    ivec4 probeCounts; // xyz = probes per axis, w = total probe count
+    vec4  params;      // x = spacing, y = maxRayDistance, z = hysteresis, w = normalBias
+    vec4  atlas;       // x = tilesPerSide, y = irradianceTexelsPerProbe, z = depthTexelsPerProbe, w = raysPerProbe
+} probeVolume;
+
+// std430 mirror of ProbeData (vulkan/Resources/ProbeVolume.h)
+struct ProbeData {
+    vec4 pos;          // xyz = probe world position
+    vec4 rotationSeed; // xy = per-probe random rotation values
+};
+layout(std430, set = 0, binding = 2) readonly buffer ProbeDataBuffer {
+    ProbeData probes[];
+};
+
+// std140 mirror of GPULight (vulkan/objects/lights.h)
+struct Light {
+    vec4 position;      // w unused
+    vec4 color;         // a = intensity
+    vec4 direction;     // w = spotlight cutoff
+    vec4 attenuation;   // w = light type
+};
+layout(std140, set = 0, binding = 7) uniform ProbeSceneBlock {
+    Light lights[MAX_LIGHTS];
+    vec4 lightParams;   // x = light count, y = ambient strength
+    vec4 timeParams;    // x = deltaTime (seconds)
+} probeScene;
+
+// Must match probe.rmiss / probe.rchit exactly.
+struct ProbePayload {
+    float hitT;
+    vec3 hitNormal;
+};
+
+layout(location = 0) rayPayloadEXT ProbePayload payload;
+
+// Direct diffuse light at the bounce point. Irradiance stores incoming
+// radiance only (NOT modulated by albedo); albedo is applied at final shade.
+vec3 directLighting(vec3 hitPos, vec3 normal)
+{
+    int lightCount = int(probeScene.lightParams.x + 0.5);
+    vec3 lighting = vec3(0.0);
+
+    for (int i = 0; i < lightCount && i < MAX_LIGHTS; ++i) {
+        Light light = probeScene.lights[i];
+        int lightType = int(light.attenuation.w + 0.5);
+        vec3  lightDir    = vec3(0.0);
+        float attenuation = 1.0;
+        float maxDistance = 10000.0;
+        float intensity   = 1.0;
+
+        if (lightType == LIGHT_TYPE_DIRECTIONAL) {
+            lightDir = normalize(-light.direction.xyz);
+        } else {
+            vec3 toLight = light.position.xyz - hitPos;
+            float distance = length(toLight);
+            if (distance > 0.0) { lightDir = toLight / distance; maxDistance = distance; }
+            attenuation = 1.0 / (light.attenuation.x +
+                                 light.attenuation.y * distance +
+                                 light.attenuation.z * distance * distance);
+            if (lightType == LIGHT_TYPE_SPOT) {
+                float theta = dot(lightDir, normalize(-light.direction.xyz));
+                float cutoff = light.direction.w;
+                float outerCutoff = cutoff - 0.1;
+                intensity = clamp((theta - outerCutoff) / max(cutoff - outerCutoff, 1e-4), 0.0, 1.0);
+            }
+        }
+        if (intensity <= 0.0) continue;
+
+        // Shadow ray (opaque occlusion only for v1; same payload location 0)
+        payload.hitT = -1.0;
+        traceRayEXT(topLevelAS, gl_RayFlagsNoneEXT, 0xFF, 0, 0, 0,
+                    hitPos + normal * 0.01, 0.001, lightDir, maxDistance, 0);
+        if (payload.hitT > 0.0) continue;
+
+        float nDotL = max(dot(normal, lightDir), 0.0);
+        if (nDotL <= 0.0) continue;
+
+        lighting += light.color.rgb * light.color.a * nDotL * attenuation * intensity;
+    }
+    return lighting;
+}
+
+void main()
+{
+    uint probeIndex = gl_LaunchIDEXT.x;
+    if (probeIndex >= uint(probeVolume.probeCounts.w)) return;
+
+    vec3 probePos = probes[probeIndex].pos.xyz;
+    vec2 seed     = probes[probeIndex].rotationSeed.xy;
+
+    uint raysPerProbe = uint(probeVolume.atlas.w + 0.5);
+    if (raysPerProbe > PROBE_RAYS_PER_PROBE) raysPerProbe = PROBE_RAYS_PER_PROBE;
+
+    // Local accumulation (one thread owns the whole probe, no atomics needed)
+    vec3  irrAccum[PROBE_IRRADIANCE_TEXELS * PROBE_IRRADIANCE_TEXELS];
+    float irrWeight[PROBE_IRRADIANCE_TEXELS * PROBE_IRRADIANCE_TEXELS];
+    float depthAccum[PROBE_DEPTH_TEXELS * PROBE_DEPTH_TEXELS];
+    float depthSqAccum[PROBE_DEPTH_TEXELS * PROBE_DEPTH_TEXELS];
+    uint  depthCount[PROBE_DEPTH_TEXELS * PROBE_DEPTH_TEXELS];
+
+    for (int i = 0; i < PROBE_IRRADIANCE_TEXELS * PROBE_IRRADIANCE_TEXELS; i++) {
+        irrAccum[i] = vec3(0.0); irrWeight[i] = 0.0;
+    }
+    for (int i = 0; i < PROBE_DEPTH_TEXELS * PROBE_DEPTH_TEXELS; i++) {
+        depthAccum[i] = 0.0; depthSqAccum[i] = 0.0; depthCount[i] = 0u;
+    }
+
+    for (uint i = 0; i < raysPerProbe; i++) {
+        vec3 dir = rotateDir(sphericalFibonacci(i, raysPerProbe), seed);
+        vec2 oct = octEncode(dir);
+
+        payload.hitT = -1.0;
+        payload.hitNormal = vec3(0.0);
+        traceRayEXT(topLevelAS, gl_RayFlagsNoneEXT, 0xFF, 0, 0, 0,
+                    probePos + dir * 0.01, 0.001, dir, probeVolume.params.y, 0);
+
+        ivec2 irrTexel = ivec2(clamp(oct * float(PROBE_IRRADIANCE_TEXELS),
+                                     vec2(0.0), vec2(PROBE_IRRADIANCE_TEXELS - 1.0)));
+        int irrIdx = irrTexel.y * PROBE_IRRADIANCE_TEXELS + irrTexel.x;
+
+        if (payload.hitT > 0.0) {
+            // Snapshot before any shadow trace clobbers the payload
+            float hitT      = payload.hitT;
+            vec3  hitNormal = payload.hitNormal;
+            vec3  hitPos    = probePos + dir * hitT;
+            vec3  incoming  = -dir;
+
+            // Backface weight: rays hitting the far side of a surface are
+            // unreliable (light leaking through walls) so they count less.
+            float s = dot(hitNormal, incoming);
+            float backfaceWeight = (1.0 + s) * 0.5;
+            vec3  sampleNormal   = s >= 0.0 ? hitNormal : -hitNormal;
+
+            // Radiance arriving at the bounce point = direct light at the
+            // bounce + indirect read back from the PREVIOUS frame's probes.
+            vec3 radiance = directLighting(hitPos, sampleNormal);
+            radiance += sampleProbeIrradiance(prevIrradiance, prevDepth,
+                                              hitPos, sampleNormal,
+                                              probeVolume.origin.xyz,
+                                              probeVolume.params.x,
+                                              probeVolume.probeCounts.xyz,
+                                              probeVolume.atlas.x,
+                                              probeVolume.params.w);
+
+            irrAccum[irrIdx]  += radiance * backfaceWeight;
+            irrWeight[irrIdx] += backfaceWeight;
+
+            ivec2 depthTexel = ivec2(clamp(oct * float(PROBE_DEPTH_TEXELS),
+                                           vec2(0.0), vec2(PROBE_DEPTH_TEXELS - 1.0)));
+            int dIdx = depthTexel.y * PROBE_DEPTH_TEXELS + depthTexel.x;
+            depthAccum[dIdx]  += hitT;
+            depthSqAccum[dIdx] += hitT * hitT;
+            depthCount[dIdx]  += 1u;
+        } else {
+            // Miss: sky contributes with full weight, no depth update
+            irrAccum[irrIdx]  += texture(probeSkybox, dir).rgb;
+            irrWeight[irrIdx] += 1.0;
+        }
+    }
+
+    // Hysteresis blend into the output atlases
+    float deltaTime  = max(probeScene.timeParams.x, 1.0 / 60.0);
+    float hysteresis = probeVolume.params.z;
+    float blend      = 1.0 - exp(-deltaTime * mix(4.0, 30.0, hysteresis));
+
+    float tilesPerSide = probeVolume.atlas.x;
+    uvec2 tile = uvec2(probeIndex % uint(tilesPerSide), probeIndex / uint(tilesPerSide));
+
+    for (int i = 0; i < PROBE_IRRADIANCE_TEXELS * PROBE_IRRADIANCE_TEXELS; i++) {
+        ivec2 t = ivec2(i % PROBE_IRRADIANCE_TEXELS, i / PROBE_IRRADIANCE_TEXELS);
+        ivec2 atlasCoord = ivec2(tile) * PROBE_IRRADIANCE_TEXELS + t;
+        vec3 prev = texelFetch(prevIrradiance, atlasCoord, 0).rgb;
+        vec3 newVal = irrWeight[i] > 0.0 ? irrAccum[i] / irrWeight[i] : prev;
+        vec4 outVal = vec4(mix(prev, newVal, blend), 1.0);
+        // Store to BOTH copies: view 0 is what the raster pass reads, view 1
+        // is what the feedback path reads next frame. Avoids a copy pass.
+        imageStore(outIrradiance, atlasCoord, outVal);
+        imageStore(outIrradianceHistory, atlasCoord, outVal);
+    }
+
+    for (int i = 0; i < PROBE_DEPTH_TEXELS * PROBE_DEPTH_TEXELS; i++) {
+        ivec2 t = ivec2(i % PROBE_DEPTH_TEXELS, i / PROBE_DEPTH_TEXELS);
+        ivec2 atlasCoord = ivec2(tile) * PROBE_DEPTH_TEXELS + t;
+        vec2 prev = texelFetch(prevDepth, atlasCoord, 0).rg;
+        vec2 newVal = prev;
+        if (depthCount[i] > 0u) {
+            newVal = vec2(depthAccum[i]  / float(depthCount[i]),
+                          depthSqAccum[i] / float(depthCount[i]));
+        }
+        vec4 outVal = vec4(mix(prev, newVal, blend), 0.0, 0.0);
+        imageStore(outDepth, atlasCoord, outVal);
+        imageStore(outDepthHistory, atlasCoord, outVal);
+    }
+}
