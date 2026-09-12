@@ -53,6 +53,10 @@ struct Material {
 	glm::vec3 attenuationColor = glm::vec3(1.0f);
 
 	float attenuationDistance = 1e9F;
+	// KHR_materials_volume thickness (approximate ray length through the
+	// volume when no thickness texture is available)
+	float thicknessFactor = 0.0f;
+	int32_t thicknessTextureIndex = -1;
 	float dispersion = 0.0f;
 	float iridesceneFactor = 0.0f;
 	float iridesceneIor = 1.3f;
@@ -109,6 +113,7 @@ struct LoadedTexture {
 	VkSampler sampler = VK_NULL_HANDLE;
 	uint32_t width = 0;
 	uint32_t height = 0;
+	uint32_t mipLevels = 1;
 };
 struct GpuMeshInstance{
     glm::vec4 rotation;
@@ -131,6 +136,8 @@ struct Model {
 	//rendering order
 	std::vector<size_t> opaqueMeshIndices;
 	std::vector<size_t> transparentMeshIndices;
+	// MSFT_texture_dds / KTX: per-texture path to a KTX/DDS file (empty = none)
+	std::vector<std::string> ktxTexturePaths;
 	GpuMeshInstance* gpuMeshInstances = nullptr;
 
 	// GPU buffers
@@ -180,11 +187,15 @@ private:
 	void loadMesh(const tinygltf::Model& gltfModel, const tinygltf::Mesh& gltfMesh,
 		Model& model, const glm::mat4& worldTransform);
 	void loadMaterials(const tinygltf::Model& gltfModel, Model& model);
-	void loadTextures(const tinygltf::Model& gltfModel, Model& model);
+	void loadTextures(const tinygltf::Model& gltfModel, Model& model,
+	                  const std::string& baseDir);
 
 	// Texture loading helpers
 	void uploadTextureToGPU(const unsigned char* pixelData, int width, int height,
 	                        LoadedTexture& outTexture);
+	// Loads a KTX1/KTX2/DDS file through libktx (all mip levels). Returns
+	// false if the file or its format is unsupported (caller falls back).
+	bool loadTextureWithKtx(const std::string& path, LoadedTexture& outTexture);
 	void loadVariants(const tinygltf::Model& gltfModel, Model& model);
 	VkSamplerAddressMode getVkWrapMode(int wrapMode);
 	VkFilter getVkFilterMode(int filterMode);

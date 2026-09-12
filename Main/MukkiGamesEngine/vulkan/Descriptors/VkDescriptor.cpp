@@ -17,7 +17,7 @@ void VkDescriptorBoss::createDescriptorPool(uint32_t maxSets)
 	poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	poolSizes[0].descriptorCount = totalSets * 3;  // UBO + MaterialUBO + probe params
 	poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	poolSizes[1].descriptorCount = totalSets * 5;  // base + shadows + probes
+	poolSizes[1].descriptorCount = totalSets * 6;  // base + shadows + probes + skybox
 	poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	poolSizes[2].descriptorCount = totalSets;
 
@@ -61,7 +61,9 @@ void VkDescriptorBoss::updateDescriptorSets(
     VkSampler probeIrradianceSampler,
     VkImageView probeDepthView,
     VkSampler probeDepthSampler,
-    VkBuffer probeParamsBuffer)
+    VkBuffer probeParamsBuffer,
+    VkImageView skyboxView,
+    VkSampler skyboxSampler)
 {
 	for (size_t i = 0; i < descriptorSets.size(); i++) {
 		std::vector<VkWriteDescriptorSet> descriptorWrites;
@@ -196,6 +198,23 @@ void VkDescriptorBoss::updateDescriptorSets(
             probeParamsWrite.descriptorCount = 1;
             probeParamsWrite.pBufferInfo = &probeParamsInfo;
             descriptorWrites.push_back(probeParamsWrite);
+        }
+
+        // Skybox cubemap (binding = 8) - glass environment reflections
+        if (skyboxView != VK_NULL_HANDLE && skyboxSampler != VK_NULL_HANDLE) {
+            VkDescriptorImageInfo skyboxInfo{};
+            skyboxInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            skyboxInfo.imageView = skyboxView;
+            skyboxInfo.sampler = skyboxSampler;
+
+            VkWriteDescriptorSet skyboxWrite{};
+            skyboxWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            skyboxWrite.dstSet = descriptorSets[i];
+            skyboxWrite.dstBinding = 8;
+            skyboxWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            skyboxWrite.descriptorCount = 1;
+            skyboxWrite.pImageInfo = &skyboxInfo;
+            descriptorWrites.push_back(skyboxWrite);
         }
 		// Update all descriptors
 		vkUpdateDescriptorSets(device->getDevice(), static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);

@@ -23,11 +23,17 @@ public:
 	void cleanup();
 	void createImage(uint32_t width, uint32_t height, VkFormat format,
 		VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
-		VkImage& image, VkDeviceMemory& imageMemory, bool isCubemap = false);
-	VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, bool isCubemap = false);
+		VkImage& image, VkDeviceMemory& imageMemory, bool isCubemap = false,
+		uint32_t mipLevels = 1);
+	VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags,
+		bool isCubemap = false, uint32_t mipLevels = 1);
 	void transitionImageLayout(VkImage image, VkFormat format,
-		VkImageLayout oldLayout, VkImageLayout newLayout, bool isCubemap = false);
+		VkImageLayout oldLayout, VkImageLayout newLayout, bool isCubemap = false,
+		uint32_t mipLevels = 1);
 	void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height, bool isCubemap = false);
+	// Multi-mip upload in one command (used by KTX/DDS loading)
+	void copyBufferToImageRegions(VkBuffer buffer, VkImage image,
+		const std::vector<VkBufferImageCopy>& regions);
 	void createTextureImage(const std::string& filePath, VkImage& textureImage, VkDeviceMemory& textureImageMemory);
 	void createCubemapImage(const std::string& filePath, VkImage& cubemapImage, VkDeviceMemory& cubemapImageMemory,
 		CubemapLayout layout = CubemapLayout::HorizontalCross);

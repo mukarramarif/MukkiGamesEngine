@@ -18,6 +18,9 @@ struct RenderConfig {
     int windowHeight=600;
     std::string windowTitle="Mukki Games Engine";
     std::string scenePath;
+    // Capture/debug friendly switches (--no-validation, --no-probes)
+    bool enableValidation = true;
+    bool enableProbeGI = true;
 };
 
 

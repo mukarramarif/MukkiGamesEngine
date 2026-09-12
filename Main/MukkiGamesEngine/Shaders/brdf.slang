@@ -29,8 +29,47 @@ struct MaterialUBO {
     float roughnessFactor;
     float clearCoatFactor;
     float clearCoatRoughness;
-    float3 baseColor;
+    // NOTE: all scalars on purpose - a float3 member would be std140-aligned
+    // to 16 bytes and desync the field offsets from the C++ side.
+    float baseColorR;
+    float baseColorG;
+    float baseColorB;
     float alpha;
+    // KHR_texture_transform per slot: offsetX, offsetY, rotation, scaleX, scaleY
+    float baseColorUvOx;
+    float baseColorUvOy;
+    float baseColorUvRot;
+    float baseColorUvSx;
+    float baseColorUvSy;
+    float metallicRoughnessUvOx;
+    float metallicRoughnessUvOy;
+    float metallicRoughnessUvRot;
+    float metallicRoughnessUvSx;
+    float metallicRoughnessUvSy;
+    float emissiveUvOx;
+    float emissiveUvOy;
+    float emissiveUvRot;
+    float emissiveUvSx;
+    float emissiveUvSy;
+    // KHR_materials_iridescence
+    float iridescenceFactor;
+    float iridescenceIor;
+    float iridescenceThicknessMin;
+    float iridescenceThicknessMax;
+    // KHR_materials_diffuse_transmission
+    float diffuseTransmissionFactor;
+    float diffuseTransmissionR;
+    float diffuseTransmissionG;
+    float diffuseTransmissionB;
+    // KHR_materials_volume
+    float attenuationR;
+    float attenuationG;
+    float attenuationB;
+    float attenuationDistance;
+    float thicknessFactor;
+    // KHR_materials_transmission (glass)
+    float transmissionFactor;
+    float idxReflect;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<UniformBufferObject> ubo;
@@ -43,6 +82,10 @@ struct MaterialUBO {
 static const int PROBE_IRRADIANCE_TEXELS = 8;
 static const int PROBE_DEPTH_TEXELS = 16;
 static const float PROBE_GI_STRENGTH = 1.0;  // dial for debugging
+// Glass tuning: env reflection brightness + how much to soften the
+// Beer-Lambert absorption (1.0 = physically correct, lower = brighter).
+static const float GLASS_ENV_STRENGTH = 5.0;
+static const float GLASS_ATTENUATION_SOFTEN = 0.5;
 
 struct ProbeVolumeParams {
     float4 origin;      // xyz = grid min corner
@@ -54,6 +97,7 @@ struct ProbeVolumeParams {
 [[vk::binding(5, 0)]] Sampler2D<float4> probeIrradiance;  // atlas, GENERAL layout
 [[vk::binding(6, 0)]] Sampler2D<float2> probeDepth;       // atlas, GENERAL layout
 [[vk::binding(7, 0)]] ConstantBuffer<ProbeVolumeParams> probeVolume;
+[[vk::binding(8, 0)]] SamplerCube<float4> skyboxCube;     // glass env reflections
 
 float2 probeOctEncode(float3 n) {
     n /= (abs(n.x) + abs(n.y) + abs(n.z));
@@ -182,6 +226,66 @@ float3 fresnelSchlick(float cosTheta, float3 F0) {
     return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
+// KHR_texture_transform: uv' = R * S * uv + O
+float2 applyKhrTextureTransform(float2 uv, float ox, float oy, float rot, float sx, float sy) {
+    float c = cos(rot);
+    float s = sin(rot);
+    return float2(c * sx * uv.x - s * sy * uv.y + ox,
+                  s * sx * uv.x + c * sy * uv.y + oy);
+}
+
+// Thin-film iridescence (KHR_materials_iridescence), ported from rt.rgen
+float3 iridescenceFresnel(float cosTheta, float filmIor, float thickness, float3 baseF0) {
+    float c0 = clamp(cosTheta, 0.0, 1.0);
+    float n0 = 1.0;                  // air
+    float n1 = max(filmIor, 1.0);    // thin film
+
+    // Substrate IOR per channel (dielectric F0=0.04 -> 1.5, metals from baseColor)
+    float3 sqrtF0 = sqrt(clamp(baseF0, 0.0, 1.0));
+    float3 n2 = (float3(1.0, 1.0, 1.0) + sqrtF0) /
+                max(float3(1.0, 1.0, 1.0) - sqrtF0, float3(0.001, 0.001, 0.001));
+
+    float sin0Sq = 1.0 - c0 * c0;
+    float sin1Sq = (n0 * n0 / (n1 * n1)) * sin0Sq;
+    float3 sin2Sq = (n1 * n1 / (n2 * n2)) * sin1Sq;
+    float c1 = sqrt(max(1.0 - sin1Sq, 0.0));
+    float3 c2 = sqrt(max(float3(1.0, 1.0, 1.0) - sin2Sq, float3(0.0, 0.0, 0.0)));
+
+    // Amplitude reflection coefficients: s and p polarization
+    float rs12 = (n0 * c0 - n1 * c1) / max(n0 * c0 + n1 * c1, 1e-5);
+    float3 rs23 = (n1 * c1 - n2 * c2) / max(n1 * c1 + n2 * c2, float3(1e-5, 1e-5, 1e-5));
+    float rp12 = (n1 * c0 - n0 * c1) / max(n1 * c0 + n0 * c1, 1e-5);
+    float3 rp23 = (n2 * c1 - n1 * c2) / max(n2 * c1 + n1 * c2, float3(1e-5, 1e-5, 1e-5));
+
+    float Rs12 = rs12 * rs12;
+    float3 Rs23 = rs23 * rs23;
+    float Rp12 = rp12 * rp12;
+    float3 Rp23 = rp23 * rp23;
+
+    // Round-trip phase per RGB channel (wavelengths in nm)
+    float3 lambda = float3(650.0, 510.0, 475.0);
+    float3 phase = (4.0 * 3.14159265 * n1 * thickness * c1) / lambda;
+
+    float3 cosPhase = cos(phase);
+    float3 Rs = (Rs12 + Rs23 + 2.0 * sqrt(Rs12 * Rs23) * cosPhase)
+              / (float3(1.0, 1.0, 1.0) + Rs12 * Rs23 + 2.0 * sqrt(Rs12 * Rs23) * cosPhase);
+    float3 Rp = (Rp12 + Rp23 + 2.0 * sqrt(Rp12 * Rp23) * cosPhase)
+              / (float3(1.0, 1.0, 1.0) + Rp12 * Rp23 + 2.0 * sqrt(Rp12 * Rp23) * cosPhase);
+    return 0.5 * (Rs + Rp);
+}
+
+float3 fresnelWithIridescence(float cosTheta, float3 F0) {
+    if (material.iridescenceFactor > 0.001) {
+        float filmThickness = lerp(material.iridescenceThicknessMin,
+                                   material.iridescenceThicknessMax, 0.5);
+        float3 Fbase = fresnelSchlick(cosTheta, F0);
+        float3 Ffilm = iridescenceFresnel(cosTheta, material.iridescenceIor,
+                                          filmThickness, F0);
+        return lerp(Fbase, Ffilm, material.iridescenceFactor);
+    }
+    return fresnelSchlick(cosTheta, F0);
+}
+
 // Percentage-Closer Filtering shadow calculation for a single directional light
 float calculateShadow(float4 lightSpacePos) {
     float3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
@@ -248,11 +352,15 @@ float3 calculateDirectionalLight(GPULight light, float3 normal, float3 viewDir, 
     float NDF = distributionGGX(normal, halfwayDir, roughness);
     float G = geometrySmith(normal, viewDir, lightDir, roughness);
 
-    float3 F = fresnelSchlick(max(dot(halfwayDir, viewDir), 0.0), F0);
+    float3 F = fresnelWithIridescence(max(dot(halfwayDir, viewDir), 0.0), F0);
 
     float3 kS = F;
-    float3 kD = float3(1.0, 1.0, 1.0) - kS;
-    kD *= 1.0 - metallic;
+    // KHR_materials_diffuse_transmission: the diffuse lobe is split between
+    // reflection and transmission. KHR_materials_transmission (glass) has no
+    // diffuse response at all.
+    float3 kD = (float3(1.0, 1.0, 1.0) - kS) * (1.0 - metallic) *
+                (1.0 - material.diffuseTransmissionFactor) *
+                (1.0 - material.transmissionFactor);
 
     float3 numerator = NDF * G * F;
     float denominator = 4.0 * max(dot(normal, viewDir), 0.0) * max(dot(normal, lightDir), 0.0) + 0.0001;
@@ -272,11 +380,15 @@ float3 calculateLight(GPULight light, float3 lightDir, float3 normal, float3 vie
     float NDF = distributionGGX(normal, halfwayDir, roughness);
     float G = geometrySmith(normal, viewDir, lightDir, roughness);
 
-    float3 F = fresnelSchlick(max(dot(halfwayDir, viewDir), 0.0), F0);
+    float3 F = fresnelWithIridescence(max(dot(halfwayDir, viewDir), 0.0), F0);
 
     float3 kS = F;
-    float3 kD = float3(1.0, 1.0, 1.0) - kS;
-    kD *= 1.0 - metallic;
+    // KHR_materials_diffuse_transmission: the diffuse lobe is split between
+    // reflection and transmission. KHR_materials_transmission (glass) has no
+    // diffuse response at all.
+    float3 kD = (float3(1.0, 1.0, 1.0) - kS) * (1.0 - metallic) *
+                (1.0 - material.diffuseTransmissionFactor) *
+                (1.0 - material.transmissionFactor);
 
     float3 numerator = NDF * G * F;
     float denominator = 4.0 * max(dot(normal, viewDir), 0.0) * max(dot(normal, lightDir), 0.0) + 0.0001;
@@ -311,29 +423,96 @@ float3 calculateSpotLight(GPULight light, float3 normal, float3 viewDir, float3 
 PSOutput main(PSInput input) {
     PSOutput output;
 
-    float4 texSample = texSampler.Sample(input.fragTexCoord);
-    float3 albedo = texSample.rgb * material.baseColor * input.fragColor;
-    float alpha = texSample.a * material.alpha;
+    // KHR_texture_transform on the base color slot
+    float2 baseUv = applyKhrTextureTransform(input.fragTexCoord,
+        material.baseColorUvOx, material.baseColorUvOy, material.baseColorUvRot,
+        material.baseColorUvSx, material.baseColorUvSy);
+    float4 texSample = texSampler.Sample(baseUv);
+    float3 baseColorFactor = float3(material.baseColorR, material.baseColorG, material.baseColorB);
+    float3 albedo = texSample.rgb * baseColorFactor * input.fragColor;
     float3 normal = normalize(input.fragNormal);
     float3 viewDir = normalize(ubo.viewPos.xyz - input.fragWorldPos);
 
+    // Glass (KHR_materials_transmission): fresnel-weighted alpha - grazing
+    // angles reflect (opaque-ish edges), head-on transmits (transparent).
+    float transmission = material.transmissionFactor;
+    float alpha = texSample.a * material.alpha;
+    float3 gi = sampleProbeGI(input.fragWorldPos, normal) * PROBE_GI_STRENGTH;
+    float3 glassColor = float3(0.0, 0.0, 0.0);
+    if (transmission > 0.0) {
+        float cosTheta = max(dot(normal, viewDir), 0.0);
+        float iorF0 = (material.idxReflect - 1.0) / (material.idxReflect + 1.0);
+        iorF0 *= iorF0;
+        float F = iorF0 + (1.0 - iorF0) * pow(1.0 - cosTheta, 5.0);
+        alpha = lerp(alpha, 1.0 - transmission * (1.0 - F), transmission);
+
+        // Glass has no diffuse; its color comes from the environment seen
+        // through/off the surface. Cheap approximation: skybox sampled along
+        // the reflection direction, absorbed by the volume (Beer-Lambert).
+        // The optical depth is softened: physically correct absorption reads
+        // nearly black under dim studio lighting.
+        float3 reflDir = reflect(-viewDir, normal);
+        float3 env = skyboxCube.Sample(reflDir).rgb;
+        // The studio skybox has large black regions; a dark reflection would
+        // otherwise turn grazing surfaces into opaque black patches. Floor
+        // the environment with the probe field + a small constant.
+        env = max(env, gi * 0.5 / 3.14159265 + float3(0.02, 0.02, 0.02));
+        float thickness = max(material.thicknessFactor, 0.0);
+        float3 atten = pow(float3(material.attenuationR, material.attenuationG,
+                                  material.attenuationB),
+                           GLASS_ATTENUATION_SOFTEN * thickness /
+                           max(material.attenuationDistance, 1e-3));
+        glassColor = transmission * env * atten * GLASS_ENV_STRENGTH;
+
+        // Don't let dark reflections drive the glass fully opaque: cap the
+        // opacity by the brightness of the environment behind it.
+        float envLum = max(max(env.r, env.g), env.b);
+        alpha = min(alpha, clamp(envLum * 3.0, 0.08, 1.0));
+    }
+
     float metallic = material.metallicFactor;
-    float roughness = material.roughnessFactor;
+    // Floor the roughness: roughness 0 collapses the GGX distribution to a
+    // zero-width spike, killing specular highlights entirely (glass depends
+    // on them for its look).
+    float roughness = max(material.roughnessFactor, 0.02);
 
     float shadow = calculateShadow(input.fragLightSpacePos);
-    float3 gi = sampleProbeGI(input.fragWorldPos, normal) * PROBE_GI_STRENGTH;
     // Irradiance field stores cosine-weighted incoming radiance; the diffuse
     // response scales it by albedo / pi.
-    float3 ambient = ubo.ambientStrength * albedo + gi * albedo / 3.14159265;
+    float3 indirect = ubo.ambientStrength * albedo + gi * albedo / 3.14159265;
+
+    // KHR_materials_diffuse_transmission: the diffuse lobe is split between
+    // reflection and transmission, so the reflected side scales by (1 - dt).
+    // Glass (transmission) has no diffuse response at all.
+    float dt = material.diffuseTransmissionFactor;
+    float3 ambient = indirect * (1.0 - dt) * (1.0 - transmission);
+
+    // Transmitted side: approximate the light coming through the surface
+    // (the raster path has no behind-scene buffer to sample). Beer-Lambert
+    // absorption through the volume (KHR_materials_volume).
+    float thickness = max(material.thicknessFactor, 0.0);
+    float3 atten = pow(float3(material.attenuationR, material.attenuationG, material.attenuationB),
+                       thickness / max(material.attenuationDistance, 1e-3));
+    float3 transmitted = indirect * atten *
+                         float3(material.diffuseTransmissionR,
+                                material.diffuseTransmissionG,
+                                material.diffuseTransmissionB);
+    ambient += dt * (1.0 - transmission) * transmitted;
     float3 lighting = float3(0.0, 0.0, 0.0);
 
     for (int i = 0; i < ubo.numLights && i < 4; i++) {
         int lightType = int(ubo.lights[i].attenuation.w);
         if (lightType == 0) {
-            lighting += calculateDirectionalLight(ubo.lights[i], normal, viewDir, albedo, metallic, roughness, shadow);
+            // Glass is rendered as an opaque caster into the shadow map, so
+            // its interior faces pick up self-shadow patches that read as
+            // random black artifacts once the surface is transparent.
+            // Transmissive materials skip shadows (matches the RT glass path).
+            float dirShadow = (transmission > 0.0) ? 0.0 : shadow;
+            lighting += calculateDirectionalLight(ubo.lights[i], normal, viewDir, albedo, metallic, roughness, dirShadow);
         } else if (lightType == 1) {
             float pointShadow = calculatePointLightShadow(ubo.lights[i].position.xyz,
                                                           input.fragWorldPos);
+            if (transmission > 0.0) pointShadow = 0.0;
             lighting += calculatePointLight(ubo.lights[i], normal, viewDir, input.fragWorldPos,
                                             albedo, metallic, roughness, pointShadow);
         } else if (lightType == 2) {
@@ -341,10 +520,12 @@ PSOutput main(PSInput input) {
         }
     }
 
-    float3 result = ambient + lighting;
+    float3 result = ambient + lighting + glassColor;
 
-    // Clear coat layering (on top of base BRDF)
-    if (material.clearCoatFactor > 0.0) {
+    // Clear coat layering (on top of base BRDF). Skipped for glass: the
+    // coat fresnel zeroes the result at grazing angles, which combined with
+    // fresnel alpha made opaque black patches on transmissive surfaces.
+    if (material.clearCoatFactor > 0.0 && transmission <= 0.0) {
         float ccRoughness = material.clearCoatRoughness;
         float3 ccSpec = 0.0;
         [unroll] for (int i = 0; i < ubo.numLights && i < 4; i++) {

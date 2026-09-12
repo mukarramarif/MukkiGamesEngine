@@ -35,7 +35,8 @@
 #include "../Resources/ShadowCubeMap.h"
 #include "../RenderGraph.h"
 const int MAX_FRAMES_IN_FLIGHT = 2;
-const int MAX_RT_TEXTURES = 100;
+// Bistro alone references ~290 textures; keep headroom for larger scenes.
+const int MAX_RT_TEXTURES = 512;
 
 class VulkanApplication {
 public:
@@ -331,6 +332,9 @@ private:
 	VkDeviceMemory probeSceneUniformBufferMemory = VK_NULL_HANDLE;
 	void* probeSceneUniformBufferMapped = nullptr;
 	bool probeGIEnabled = true;
+	// Gates the probe RT pipeline + trace pass + probe TLAS build. Shading
+	// bindings stay valid either way (--no-probes keeps the atlases zeroed).
+	bool probeTracingEnabled = true;
 
 	// Accumulation
 	VkImage accumOutputImage = VK_NULL_HANDLE;
@@ -369,7 +373,7 @@ private:
 
 
 	//TODO: find a way to automatically update scenes like hot shader reloading
-	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json", "showRoom.json", "GlassDragon.json", "GLTFTest.json"};
+	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json", "showRoom.json", "GlassDragon.json", "GLTFTest.json", "SponzaExample.json", "bistro.json"};
 	int currentSceneIndex = 0;
 
 	//Cloud Pipeline

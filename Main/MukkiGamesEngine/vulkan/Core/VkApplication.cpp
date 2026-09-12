@@ -429,14 +429,24 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
   window->init(config.windowWidgth, config.windowHeight,
                config.windowTitle.c_str());
   glfwSetWindowUserPointer(window->getGLFWwindow(), this);
+
+  // Capture-friendly switches: disable the validation layer and/or the
+  // probe ray tracing pipeline (layer/RenderDoc interaction crashes)
+  instance.enableValidationLayers = config.enableValidation;
+  probeTracingEnabled = config.enableProbeGI;
+  std::cout << "[init] validation=" << (config.enableValidation ? "on" : "off")
+            << " probes=" << (config.enableProbeGI ? "on" : "off") << std::endl;
+
   // 2. Create instance (Vulkan context)
   instance.createInstance();
+  std::cout << "[init] instance created" << std::endl;
 
   // 3. Create surface (connection between Vulkan and window)
   VkSurfaceKHR surface = window->createSurface(instance.getInstance());
 
   // 4. Create device (select GPU and create logical device)
   device = std::make_unique<Device>(instance, surface);
+  std::cout << "[init] logical device created" << std::endl;
 
   // 5. Create swap chain (manages images for presentation)
   swapChain = std::make_unique<VulkanSwap>();
@@ -530,6 +540,7 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
   // descriptor sets: the global sets bind the probe atlases (bindings 5-7)
   // and the per-object sets need a rebind after the volume exists.
   loadSceneObjects();
+  std::cout << "[init] scene objects loaded" << std::endl;
   initProbeTracing();
   bindProbeDescriptorsToLoadedObjects();
   initPhysics();
@@ -553,16 +564,20 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
       probeVolume ? probeVolume->getSampler() : VK_NULL_HANDLE,
       probeVolume ? probeVolume->getDepthView(0) : VK_NULL_HANDLE,
       probeVolume ? probeVolume->getSampler() : VK_NULL_HANDLE,
-      probeVolume ? probeVolume->getParamsBuffer() : VK_NULL_HANDLE);
+      probeVolume ? probeVolume->getParamsBuffer() : VK_NULL_HANDLE,
+      skybox ? skybox->getCubemapImageView() : VK_NULL_HANDLE,
+      skybox ? skybox->getCubemapSampler() : VK_NULL_HANDLE);
 
   createRayTracingDescriptorPool();
   createRayTracingDescriptorSet();
 
   // 15. Create synchronization objects (semaphores and fences)
   createSyncObjects();
+  std::cout << "[init] sync objects created" << std::endl;
 
   // Frame graph
   renderGraph.init(*device);
+  std::cout << "[init] init complete, entering main loop" << std::endl;
 
   // Initialize camera
   glm::vec3 camPos = sceneLoader->hasCameraSettings()
@@ -736,6 +751,13 @@ void VulkanApplication::createDefaultMaterialUniformBuffers() {
   defaultMaterial.baseColorG = 1.0f;
   defaultMaterial.baseColorB = 1.0f;
   defaultMaterial.alpha = 1.0f;
+  // Identity UV transforms (scale 1, no rotation/offset)
+  defaultMaterial.baseColorUvSx = 1.0f;
+  defaultMaterial.baseColorUvSy = 1.0f;
+  defaultMaterial.metallicRoughnessUvSx = 1.0f;
+  defaultMaterial.metallicRoughnessUvSy = 1.0f;
+  defaultMaterial.emissiveUvSx = 1.0f;
+  defaultMaterial.emissiveUvSy = 1.0f;
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     device->createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -1427,7 +1449,9 @@ void VulkanApplication::mainLoop() {
                   probeVolume ? probeVolume->getSampler() : VK_NULL_HANDLE,
                   probeVolume ? probeVolume->getDepthView(0) : VK_NULL_HANDLE,
                   probeVolume ? probeVolume->getSampler() : VK_NULL_HANDLE,
-                  probeVolume ? probeVolume->getParamsBuffer() : VK_NULL_HANDLE);
+                  probeVolume ? probeVolume->getParamsBuffer() : VK_NULL_HANDLE,
+                  skybox ? skybox->getCubemapImageView() : VK_NULL_HANDLE,
+                  skybox ? skybox->getCubemapSampler() : VK_NULL_HANDLE);
             }
           }
           initPhysics();
@@ -2484,7 +2508,7 @@ void VulkanApplication::loadSceneObjects() {
 
   createRayTracingGeometryBuffers();
   if (rayTracingAS &&
-      (currentRenderMode == RenderMode::RAYTRACING || probeGIEnabled)) {
+      (currentRenderMode == RenderMode::RAYTRACING || probeTracingEnabled)) {
     rayTracingAS->clearBLAS();
     for (auto &obj : loadedObjects) {
       if (obj.loaded) {
@@ -2527,16 +2551,50 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
       obj.materialUniformBuffersMapped[matIndex].resize(MAX_FRAMES_IN_FLIGHT);
 
       MaterialUBO materialData{};
-      materialData.metallicFactor =
-          obj.model.materials[matIndex].metallicFactor;
-      materialData.roughnessFactor =
-          obj.model.materials[matIndex].roughnessFactor;
+      const Material &mat = obj.model.materials[matIndex];
+      materialData.metallicFactor = mat.metallicFactor;
+      materialData.roughnessFactor = mat.roughnessFactor;
       materialData.clearCoatFactor = 1.0f;
       materialData.clearCoatRoughness = 0.5f;
-      materialData.baseColorR = obj.model.materials[matIndex].baseColorFactor.r;
-      materialData.baseColorG = obj.model.materials[matIndex].baseColorFactor.g;
-      materialData.baseColorB = obj.model.materials[matIndex].baseColorFactor.b;
-      materialData.alpha = obj.model.materials[matIndex].baseColorFactor.a;
+      materialData.baseColorR = mat.baseColorFactor.r;
+      materialData.baseColorG = mat.baseColorFactor.g;
+      materialData.baseColorB = mat.baseColorFactor.b;
+      materialData.alpha = mat.baseColorFactor.a;
+      // KHR_texture_transform per slot (mirrors the RT bake)
+      materialData.baseColorUvOx = mat.baseColorUvTransform.offset.x;
+      materialData.baseColorUvOy = mat.baseColorUvTransform.offset.y;
+      materialData.baseColorUvRot = mat.baseColorUvTransform.rotation;
+      materialData.baseColorUvSx = mat.baseColorUvTransform.scale.x;
+      materialData.baseColorUvSy = mat.baseColorUvTransform.scale.y;
+      materialData.metallicRoughnessUvOx = mat.metallicRoughnessUvTransform.offset.x;
+      materialData.metallicRoughnessUvOy = mat.metallicRoughnessUvTransform.offset.y;
+      materialData.metallicRoughnessUvRot = mat.metallicRoughnessUvTransform.rotation;
+      materialData.metallicRoughnessUvSx = mat.metallicRoughnessUvTransform.scale.x;
+      materialData.metallicRoughnessUvSy = mat.metallicRoughnessUvTransform.scale.y;
+      materialData.emissiveUvOx = mat.emissiveUvTransform.offset.x;
+      materialData.emissiveUvOy = mat.emissiveUvTransform.offset.y;
+      materialData.emissiveUvRot = mat.emissiveUvTransform.rotation;
+      materialData.emissiveUvSx = mat.emissiveUvTransform.scale.x;
+      materialData.emissiveUvSy = mat.emissiveUvTransform.scale.y;
+      // KHR_materials_iridescence
+      materialData.iridescenceFactor = mat.iridesceneFactor;
+      materialData.iridescenceIor = mat.iridesceneIor;
+      materialData.iridescenceThicknessMin = mat.iridesceneThicknessMin;
+      materialData.iridescenceThicknessMax = mat.iridesceneThicknessMax;
+      // KHR_materials_diffuse_transmission
+      materialData.diffuseTransmissionFactor = mat.diffuseTransmissionFactor;
+      materialData.diffuseTransmissionR = mat.diffuseTransmissionColor.r;
+      materialData.diffuseTransmissionG = mat.diffuseTransmissionColor.g;
+      materialData.diffuseTransmissionB = mat.diffuseTransmissionColor.b;
+      // KHR_materials_volume
+      materialData.attenuationR = mat.attenuationColor.r;
+      materialData.attenuationG = mat.attenuationColor.g;
+      materialData.attenuationB = mat.attenuationColor.b;
+      materialData.attenuationDistance = mat.attenuationDistance;
+      materialData.thicknessFactor = mat.thicknessFactor;
+      // KHR_materials_transmission (glass)
+      materialData.transmissionFactor = mat.transmissionFactor;
+      materialData.idxReflect = mat.idxReflect;
       for (size_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
         device->createBuffer(matBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -2571,7 +2629,7 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
         poolInfo.maxSets * 3; // UBO + MaterialUBO + probe params
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount =
-        poolInfo.maxSets * 5; // baseColor + shadows + probe atlases
+        poolInfo.maxSets * 6; // baseColor + shadows + probes + skybox
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
     if (vkCreateDescriptorPool(device->getDevice(), &poolInfo, nullptr,
@@ -2698,6 +2756,22 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
       cubeShadowWrite.descriptorCount = 1;
       cubeShadowWrite.pImageInfo = &cubeShadowImageInfo;
       descriptorWrites.push_back(cubeShadowWrite);
+
+      if (skybox) {
+        VkDescriptorImageInfo skyImageInfo{};
+        skyImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        skyImageInfo.imageView = skybox->getCubemapImageView();
+        skyImageInfo.sampler = skybox->getCubemapSampler();
+
+        VkWriteDescriptorSet skyWrite{};
+        skyWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        skyWrite.dstSet = obj.descriptorSets[matIndex][frame];
+        skyWrite.dstBinding = 8;
+        skyWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        skyWrite.descriptorCount = 1;
+        skyWrite.pImageInfo = &skyImageInfo;
+        descriptorWrites.push_back(skyWrite);
+      }
       vkUpdateDescriptorSets(device->getDevice(),
                              static_cast<uint32_t>(descriptorWrites.size()),
                              descriptorWrites.data(), 0, nullptr);
@@ -4188,11 +4262,17 @@ void VulkanApplication::createDescriptorSetLayout() {
   probeParamsBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
   probeParamsBinding.descriptorCount = 1;
   probeParamsBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  // Skybox cubemap (binding = 8) - glass environment reflections
+  VkDescriptorSetLayoutBinding skyboxBinding{};
+  skyboxBinding.binding = 8;
+  skyboxBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  skyboxBinding.descriptorCount = 1;
+  skyboxBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-  std::array<VkDescriptorSetLayoutBinding, 8> bindings = {
+  std::array<VkDescriptorSetLayoutBinding, 9> bindings = {
       uboLayoutBinding,       samplerLayoutBinding,  materialLayoutBinding,
       shadowLayoutBinding,    cubeShadowBinding,     probeIrrBinding,
-      probeDepthBinding,      probeParamsBinding};
+      probeDepthBinding,      probeParamsBinding,    skyboxBinding};
 
   VkDescriptorSetLayoutCreateInfo layoutInfo{};
   layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -4817,11 +4897,18 @@ void VulkanApplication::initProbeTracing() {
   if (!probeGIEnabled)
     return;
 
+  // Volume + UBO + descriptors are always created so the raster bindings
+  // stay valid; only the ray tracing pipeline is optional (--no-probes).
   buildProbeVolumeFromScene();
   createProbeUniformBuffer();
   createProbeDescriptorSetLayout();
   createProbeDescriptorSet();
   resetProbeHistory();
+
+  if (!probeTracingEnabled) {
+    std::cout << "Probe GI: shading bindings created, ray tracing disabled\n";
+    return;
+  }
 
   probeTracingPipeline = std::make_unique<ProbeTracingPipeline>();
   probeTracingPipeline->init(device.get());
@@ -4831,7 +4918,8 @@ void VulkanApplication::initProbeTracing() {
 
 void VulkanApplication::recordProbeUpdatePass(VkCommandBuffer cmd) {
   ZoneScopedN("Probe Update Pass");
-  if (!probeGIEnabled || !probeTracingPipeline || !probeVolume)
+  if (!probeGIEnabled || !probeTracingEnabled || !probeTracingPipeline ||
+      !probeVolume)
     return;
   if (!rayTracingAS || rayTracingAS->getTLAS().handle == VK_NULL_HANDLE)
     return;
