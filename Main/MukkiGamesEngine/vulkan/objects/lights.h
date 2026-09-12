@@ -1,7 +1,10 @@
 #pragma once
 #include <glm/glm.hpp>
 
-constexpr int MAX_LIGHTS = 4;
+constexpr int MAX_LIGHTS = 8;
+// Number of point lights that get their own cube shadow map. Additional
+// point lights still illuminate but cast no cube shadows.
+constexpr int MAX_POINT_SHADOWS = 4;
 
 enum class LightType : int {
     Directional = 0,

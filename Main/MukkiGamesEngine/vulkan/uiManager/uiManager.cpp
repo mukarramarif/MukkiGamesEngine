@@ -829,6 +829,8 @@ void UIManager::renderProbeDebugWindow(ProbeDebugState& state)
 	ImGui::Separator();
 	ImGui::Text("Tuning");
 	ImGui::SliderFloat("GI Strength", &state.giStrength, 0.0f, 5.0f);
+	ImGui::SliderFloat("Feedback Gain", &state.feedbackGain, 0.0f, 1.0f);
+	ImGui::SliderFloat("Probe Shadow Strength", &state.probeShadowStrength, 0.0f, 1.0f);
 	ImGui::SliderFloat("Hysteresis", &state.hysteresis, 0.0f, 1.0f);
 	ImGui::SliderFloat("Normal Bias", &state.normalBias, 0.0f, 1.0f);
 	ImGui::SliderFloat("Max Ray Distance", &state.maxRayDistance, 0.1f, 50.0f);
@@ -847,6 +849,12 @@ void UIManager::renderProbeDebugWindow(ProbeDebugState& state)
 	ImGui::Text("Raster Debug View");
 	const char* modes[] = { "Off", "GI only", "GI heatmap", "Probe cells" };
 	ImGui::Combo("Mode", &state.debugMode, modes, IM_ARRAYSIZE(modes));
+
+	ImGui::Separator();
+	ImGui::Text("3D Overlay");
+	ImGui::Checkbox("Show probe positions", &state.showProbes);
+	ImGui::TextWrapped("Green = probe on its grid slot, red = relocated "
+	                   "(was inside geometry).");
 
 	if (ImGui::Button("Reset probe history")) {
 		state.resetHistory = true;

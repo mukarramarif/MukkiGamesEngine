@@ -266,7 +266,7 @@ private:
 	void cleanupTAAPipeline();
 	void updateTAADescriptorSets();
 	void recordShadowPass(VkCommandBuffer commandBuffer);
-	void recordPointShadowPass(VkCommandBuffer commandBuffer);
+	void recordPointShadowPass(VkCommandBuffer commandBuffer, uint32_t slot);
 	void buildFrameGraph();
 	void initCloudPipeline();
 	void createCloudOutputImage();
@@ -362,14 +362,15 @@ private:
 
 	//ShadowMap
 	std::unique_ptr<ShadowMap> shadowMap;
-	std::unique_ptr<ShadowCubeMap> shadowCubeMap;
+	// One cube shadow map per point-light shadow slot.
+	std::vector<std::unique_ptr<ShadowCubeMap>> shadowCubeMaps;
 
 	// Frame graph (owns shadow-map transitions + pass ordering)
 	RenderGraph renderGraph;
 	FrameGraphResourceHandle m_dirShadowHandle{};
-	FrameGraphResourceHandle m_cubeShadowHandle{};
+	std::array<FrameGraphResourceHandle, MAX_POINT_SHADOWS> m_cubeShadowHandles{};
 	VkImageLayout m_dirShadowLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	VkImageLayout m_cubeShadowLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	std::array<VkImageLayout, MAX_POINT_SHADOWS> m_cubeShadowLayouts{};
 
 
 	//TODO: find a way to automatically update scenes like hot shader reloading
@@ -410,14 +411,18 @@ private:
 
 	// Physics
 	std::unique_ptr<PhysicsEngine> physicsEngine;
+
+	// Debug line rendering (probe visualization)
 	void initLineRenderer();
 	void drawDebugLines(VkCommandBuffer commandBuffer, uint32_t currentImage);
-	VkPipeline linePipeline = VK_NULL_HANDLE;
+	std::unique_ptr<VulkanPipeline> linePipeline;
 	VkPipelineLayout linePipelineLayout = VK_NULL_HANDLE;
 	VkDescriptorSetLayout lineDescriptorSetLayout = VK_NULL_HANDLE;
 	VkDescriptorSet lineDescriptorSet = VK_NULL_HANDLE;
 	VkBuffer lineVertexBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory lineVertexBufferMemory = VK_NULL_HANDLE;
+	VkDeviceSize lineVertexBufferCapacity = 0;
+	bool showProbeDebugVisualization = false;
 	uint32_t lineVertexCount = 0;
 	float vehicleThrottle = 0.0f;
 	float vehicleBrake = 0.0f;

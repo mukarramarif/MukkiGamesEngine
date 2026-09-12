@@ -9,12 +9,18 @@ struct UniformBufferObject {
     glm::mat4 normalMatrix{};         // inverse transpose of model matrix
     glm::mat4 lightSpaceMatrix{};     // directional light view-projection for shadow mapping
     glm::vec4 viewPos{};              // camera position
-    GPULight lights[MAX_LIGHTS];
-    int numLights{};
-    float ambientStrength{};
-    float padding[2]{};
-    glm::vec4 pointShadowParams;
-};
+    	GPULight lights[MAX_LIGHTS];
+    	int numLights{};
+    	float ambientStrength{};
+    	float padding[2]{};
+    	// Cube shadow map data, packed in the order the shadow pass assigns
+    	// slots (first N enabled point lights). xyz = light position, w = 1/far.
+    	glm::vec4 pointShadowParams[MAX_POINT_SHADOWS];
+    	// The same point lights, duplicated for static (unrolled) indexing.
+    	GPULight pointLights[MAX_POINT_SHADOWS];
+    	int numPointLights{};
+    	float padPointLights[3]{};
+    };
 
 
 struct MaterialUBO {

@@ -11,9 +11,14 @@ struct VolumeProbe{
    glm::vec4 params; // x = probeSpacing, y = maxRayDistance, z = hysteresis, w = normalBias
    glm::vec4 atlas; // x = tilesPerSide, y = irradianceTexels, z = depthTexels, w = raysPerProbe
    // Debug/tuning: x = raster debug mode (0 off, 1 GI only, 2 GI heatmap,
-   // 3 probe cells), y = GI strength, z = relocation enabled, w = unused.
+   // 3 probe cells), y = GI strength, z = relocation enabled,
+   // w = feedback gain.
    // Must match the mirrors in probeTrace.rgen and brdf.slang (std140).
    glm::vec4 debug;
+   // Shadow information: x = probe shadow strength in the raster (0 = off,
+   // 1 = full), y = penumbra softening, zw = unused. The per-direction
+   // visibility itself lives in the irradiance atlas alpha channel.
+   glm::vec4 shadow;
 };
 
 
@@ -53,6 +58,8 @@ public:
     void setDebugMode(int mode);
     void setGIStrength(float strength);
     void setRelocationEnabled(bool enabled);
+    void setFeedbackGain(float gain);
+    void setProbeShadowStrength(float strength);
 
     // Debug: read the (possibly GPU-relocated) probe positions back from the
     // host-visible probe data buffer. Unsynchronized (torn reads possible) -

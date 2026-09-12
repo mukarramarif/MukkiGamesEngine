@@ -10,6 +10,9 @@ struct GPULight {
     float4 attenuation;
 };
 
+static const int MAX_LIGHTS = 8;
+static const int MAX_POINT_SHADOWS = 4;
+
 struct UniformBufferObject {
     float4x4 model;
     float4x4 view;
@@ -17,11 +20,16 @@ struct UniformBufferObject {
     float4x4 normalMatrix;
     float4x4 lightSpaceMatrix;
     float4 viewPos;
-    GPULight lights[4];
+    GPULight lights[MAX_LIGHTS];
     int numLights;
     float ambientStrength;
     float2 padding;
-    float4 pointShadowParams;
+    // Cube-shadow data, packed in shadow-slot order. xyz = position, w = 1/far.
+    float4 pointShadowParams[MAX_POINT_SHADOWS];
+    // The same point lights duplicated for static (unrolled) indexing.
+    GPULight pointLights[MAX_POINT_SHADOWS];
+    int numPointLights;
+    float3 padPointLights;
 };
 
 struct MaterialUBO {
@@ -76,15 +84,14 @@ struct MaterialUBO {
 [[vk::binding(1, 0)]] Sampler2D<float4> texSampler;
 [[vk::binding(2, 0)]] ConstantBuffer<MaterialUBO> material;
 [[vk::binding(3, 0)]] Sampler2D<float> shadowMap;
-[[vk::binding(4, 0)]] SamplerCube<float> shadowCubeMap;
+[[vk::binding(4, 0)]] SamplerCube<float> shadowCubeMaps[MAX_POINT_SHADOWS];
 
 // ---- Ray-traced probe GI (mirrors Shaders/probeCommon.glsl) ----
 static const int PROBE_IRRADIANCE_TEXELS = 8;
 static const int PROBE_DEPTH_TEXELS = 16;
 // GI strength is a live knob now: probeVolume.debug.y (default 1.0).
-// Glass tuning: env reflection brightness + how much to soften the
-// Beer-Lambert absorption (1.0 = physically correct, lower = brighter).
-static const float GLASS_ENV_STRENGTH = 2.0;
+// Glass tuning: how much to soften the Beer-Lambert absorption
+// (1.0 = physically correct, lower = brighter).
 static const float GLASS_ATTENUATION_SOFTEN = 0.5;
 
 struct ProbeVolumeParams {
@@ -93,12 +100,13 @@ struct ProbeVolumeParams {
     float4 params;      // x = spacing, y = maxRayDistance, z = hysteresis, w = normalBias
     float4 atlas;       // x = tilesPerSide, y = irradianceTexelsPerProbe, z = depthTexelsPerProbe, w = raysPerProbe
     float4 debug;       // x = debug mode (0 off, 1 GI only, 2 heatmap, 3 probe cells), y = GI strength
+    float4 shadow;      // x = probe shadow strength, y = penumbra softening
 };
 
 [[vk::binding(5, 0)]] Sampler2D<float4> probeIrradiance;  // atlas, GENERAL layout
 [[vk::binding(6, 0)]] Sampler2D<float2> probeDepth;       // atlas, GENERAL layout
 [[vk::binding(7, 0)]] ConstantBuffer<ProbeVolumeParams> probeVolume;
-[[vk::binding(8, 0)]] SamplerCube<float4> skyboxCube;     // glass env reflections
+[[vk::binding(8, 0)]] SamplerCube<float4> skyboxCube;     // unused by shading (probes capture the skybox); kept for the binding
 
 float2 probeOctEncode(float3 n) {
     n /= (abs(n.x) + abs(n.y) + abs(n.z));
@@ -144,6 +152,11 @@ float3 sampleProbeGI(float3 pos, float3 normal) {
     float3 result = float3(0.0, 0.0, 0.0);
     float totalWeight = 0.0;
 
+    // Fallback: the nearest probe (highest trilinear weight) regardless of
+    // visibility/backface rejection, so surfaces never sample nothing.
+    float bestTriW = -1.0;
+    float3 bestIrradiance = float3(0.0, 0.0, 0.0);
+
     for (int dz = 0; dz <= 1; dz++)
     for (int dy = 0; dy <= 1; dy++)
     for (int dx = 0; dx <= 1; dx++) {
@@ -151,8 +164,8 @@ float3 sampleProbeGI(float3 pos, float3 normal) {
         int probeIndex = (idx.z * counts.y + idx.y) * counts.x + idx.x;
 
         float3 w = float3(1.0, 1.0, 1.0) - abs(float3(dx, dy, dz) - frac);
-        float weight = w.x * w.y * w.z;
-        if (weight <= 0.0)
+        float triW = w.x * w.y * w.z;
+        if (triW <= 0.0)
             continue;
 
         float3 probePos = origin + (float3(idx) + float3(0.5, 0.5, 0.5)) * spacing;
@@ -182,11 +195,127 @@ float3 sampleProbeGI(float3 pos, float3 normal) {
         float2 moments = probeDepth.Sample(depthUV).rg;
         float visibility = probeChebyshevWeight(moments, distToProbe);
 
-        result += irr * (weight * visibility);
-        totalWeight += weight * visibility;
+        if (triW > bestTriW) {
+            bestTriW = triW;
+            bestIrradiance = irr;
+        }
+
+        // Backface rejection: probes BEHIND the surface (normal points away
+        // from them) leak light through walls - weight them down smoothly so
+        // adjacent triangles don't pop between 0 and full weight.
+        float backface = smoothstep(0.0, 0.2, dot(normal, dirToProbe));
+
+        float weight = triW * visibility * backface;
+        result += irr * weight;
+        totalWeight += weight;
+    }
+    return totalWeight > 1e-5 ? result / totalWeight : bestIrradiance;
+}
+
+// Probe-based soft shadow query: trilinearly blends the per-direction sun
+// visibility stored in the irradiance atlas alpha channel, sampled along the
+// direction toward the light. Occluders soften through the blend, giving
+// contact-soft shadows without a shadow ray.
+float sampleProbeShadow(float3 pos, float3 dirToLight) {
+    int3 counts = probeVolume.probeCounts.xyz;
+    if (counts.x < 2 || counts.y < 2 || counts.z < 2)
+        return 1.0;
+
+    float3 origin = probeVolume.origin.xyz;
+    float spacing = probeVolume.params.x;
+    float tilesPerSide = probeVolume.atlas.x;
+    float irrAtlasSize = tilesPerSide * float(PROBE_IRRADIANCE_TEXELS);
+
+    float3 q = (pos - origin) / spacing;
+    float3 qc = clamp(q, float3(0.5, 0.5, 0.5),
+                      float3(counts) - float3(0.5001, 0.5001, 0.5001));
+    float3 basef = qc - float3(0.5, 0.5, 0.5);
+    int3 base = int3(floor(basef));
+    float3 frac = basef - float3(base);
+
+    float result = 0.0;
+    float totalWeight = 0.0;
+
+    for (int dz = 0; dz <= 1; dz++)
+    for (int dy = 0; dy <= 1; dy++)
+    for (int dx = 0; dx <= 1; dx++) {
+        int3 idx = base + int3(dx, dy, dz);
+        int probeIndex = (idx.z * counts.y + idx.y) * counts.x + idx.x;
+
+        float3 w = float3(1.0, 1.0, 1.0) - abs(float3(dx, dy, dz) - frac);
+        float triW = w.x * w.y * w.z;
+        if (triW <= 0.0)
+            continue;
+
+        float2 oct = probeOctEncode(dirToLight);
+        int2 tile = int2(probeIndex % int(tilesPerSide),
+                         probeIndex / int(tilesPerSide));
+        int2 irrTexel = int2(clamp(oct * float(PROBE_IRRADIANCE_TEXELS),
+                                   float2(0.0, 0.0),
+                                   float2(PROBE_IRRADIANCE_TEXELS - 1,
+                                          PROBE_IRRADIANCE_TEXELS - 1)));
+        int2 coord = tile * PROBE_IRRADIANCE_TEXELS + irrTexel;
+        float2 uv = (float2(coord) + float2(0.5, 0.5)) /
+                    float2(irrAtlasSize, irrAtlasSize);
+
+        float vis = probeIrradiance.Sample(uv).a;
+        result += vis * triW;
+        totalWeight += triW;
+    }
+    return totalWeight > 0.0 ? result / totalWeight : 1.0;
+}
+
+// Probe-based radiance lookup along an arbitrary direction: trilinearly
+// blends the stored per-direction radiance (the probe field captures the
+// skybox on miss rays, so this replaces direct cubemap sampling).
+float3 sampleProbeRadiance(float3 pos, float3 dir) {
+    int3 counts = probeVolume.probeCounts.xyz;
+    if (counts.x < 2 || counts.y < 2 || counts.z < 2)
+        return float3(0.0, 0.0, 0.0);
+
+    float3 origin = probeVolume.origin.xyz;
+    float spacing = probeVolume.params.x;
+    float tilesPerSide = probeVolume.atlas.x;
+    float irrAtlasSize = tilesPerSide * float(PROBE_IRRADIANCE_TEXELS);
+
+    float3 q = (pos - origin) / spacing;
+    float3 qc = clamp(q, float3(0.5, 0.5, 0.5),
+                      float3(counts) - float3(0.5001, 0.5001, 0.5001));
+    float3 basef = qc - float3(0.5, 0.5, 0.5);
+    int3 base = int3(floor(basef));
+    float3 frac = basef - float3(base);
+
+    float3 result = float3(0.0, 0.0, 0.0);
+    float totalWeight = 0.0;
+
+    for (int dz = 0; dz <= 1; dz++)
+    for (int dy = 0; dy <= 1; dy++)
+    for (int dx = 0; dx <= 1; dx++) {
+        int3 idx = base + int3(dx, dy, dz);
+        int probeIndex = (idx.z * counts.y + idx.y) * counts.x + idx.x;
+
+        float3 w = float3(1.0, 1.0, 1.0) - abs(float3(dx, dy, dz) - frac);
+        float triW = w.x * w.y * w.z;
+        if (triW <= 0.0)
+            continue;
+
+        float2 oct = probeOctEncode(dir);
+        int2 tile = int2(probeIndex % int(tilesPerSide),
+                         probeIndex / int(tilesPerSide));
+        int2 irrTexel = int2(clamp(oct * float(PROBE_IRRADIANCE_TEXELS),
+                                   float2(0.0, 0.0),
+                                   float2(PROBE_IRRADIANCE_TEXELS - 1,
+                                          PROBE_IRRADIANCE_TEXELS - 1)));
+        int2 coord = tile * PROBE_IRRADIANCE_TEXELS + irrTexel;
+        float2 uv = (float2(coord) + float2(0.5, 0.5)) /
+                    float2(irrAtlasSize, irrAtlasSize);
+
+        result += probeIrradiance.Sample(uv).rgb * triW;
+        totalWeight += triW;
     }
     return totalWeight > 0.0 ? result / totalWeight : float3(0.0, 0.0, 0.0);
 }
+
 struct PSInput {
     [[vk::location(0)]] float3 fragColor : COLOR;
     [[vk::location(1)]] float2 fragTexCoord : TEXCOORD;
@@ -312,14 +441,15 @@ float calculateShadow(float4 lightSpacePos) {
     shadow /= 9.0;
     return shadow;
 }
-// Cube map shadows for the point light (linear depth)
-float calculatePointLightShadow(float3 lightPos, float3 fragPos) {
-    if (ubo.pointShadowParams.w <= 0.0) return 0.0;   // no shadowed point light
+// Cube map shadows for a point light (linear depth). slot indexes the cube
+// shadow map array statically (callers unroll their loops).
+float calculatePointLightShadow(float3 lightPos, float3 fragPos, int slot) {
+    if (ubo.pointShadowParams[slot].w <= 0.0) return 0.0;   // no shadowed point light
 
     float3 fragToLight = fragPos - lightPos;
-    float currentDepth = length(fragToLight) * ubo.pointShadowParams.w;  // linear, [0,1]
+    float currentDepth = length(fragToLight) * ubo.pointShadowParams[slot].w;  // linear, [0,1]
     float bias = 0.02;                                                    // tune for acne
-    float closestDepth = shadowCubeMap.Sample(fragToLight);               // linear from Part A
+    float closestDepth = shadowCubeMaps[slot].Sample(fragToLight);        // linear depth
     return (currentDepth - bias) < closestDepth ? 1.0 : 0.0;
 }
 
@@ -447,20 +577,22 @@ PSOutput main(PSInput input) {
         float F = iorF0 + (1.0 - iorF0) * pow(1.0 - cosTheta, 5.0);
         alpha = lerp(alpha, 1.0 - transmission * (1.0 - F), transmission);
 
-        // Glass has no diffuse; its color comes from the environment seen
-        // through/off the surface. Cheap approximation: skybox sampled along
-        // the reflection direction, absorbed by the volume (Beer-Lambert).
-        // The optical depth is softened: physically correct absorption reads
-        // nearly black under dim studio lighting.
+        // Glass has no diffuse; like the path tracer (rt.rgen) its color is
+        // the environment seen through/off the surface: probe-field radiance
+        // sampled along the reflection direction (the probes capture the
+        // skybox on miss rays, so no direct cubemap sampling is needed),
+        // absorbed through the volume by Beer-Lambert.
         float3 reflDir = reflect(-viewDir, normal);
-        float3 env = skyboxCube.Sample(reflDir).rgb;
+        float3 env = sampleProbeRadiance(input.fragWorldPos, reflDir);
+        // Floor with the surface GI so glass never goes fully black in
+        // regions the probe field has not captured yet.
         env = max(env, gi * 0.5 / 3.14159265 + float3(0.02, 0.02, 0.02));
         float thickness = max(material.thicknessFactor, 0.0);
         float3 atten = pow(float3(material.attenuationR, material.attenuationG,
                                   material.attenuationB),
                            GLASS_ATTENUATION_SOFTEN * thickness /
                            max(material.attenuationDistance, 1e-3));
-        glassColor = transmission * env * atten * GLASS_ENV_STRENGTH;
+        glassColor = transmission * env * atten;
 
         // Don't let dark reflections drive the glass fully opaque: cap the
         // opacity by the brightness of the environment behind it.
@@ -498,7 +630,7 @@ PSOutput main(PSInput input) {
     ambient += dt * (1.0 - transmission) * transmitted;
     float3 lighting = float3(0.0, 0.0, 0.0);
 
-    for (int i = 0; i < ubo.numLights && i < 4; i++) {
+    for (int i = 0; i < ubo.numLights && i < MAX_LIGHTS; i++) {
         int lightType = int(ubo.lights[i].attenuation.w);
         if (lightType == 0) {
             // Glass is rendered as an opaque caster into the shadow map, so
@@ -506,19 +638,42 @@ PSOutput main(PSInput input) {
             // random black artifacts once the surface is transparent.
             // Transmissive materials skip shadows (matches the RT glass path).
             float dirShadow = (transmission > 0.0) ? 0.0 : shadow;
+            // Probe-stored shadow information: blend the soft probe shadow
+            // into the shadow-map term (probeVolume.shadow.x = strength).
+            if (transmission <= 0.0 && probeVolume.shadow.x > 0.001) {
+                float probeShadow = sampleProbeShadow(
+                    input.fragWorldPos,
+                    -normalize(ubo.lights[i].direction.xyz));
+                dirShadow = lerp(dirShadow, probeShadow,
+                                 clamp(probeVolume.shadow.x, 0.0, 1.0));
+            }
             lighting += calculateDirectionalLight(ubo.lights[i], normal, viewDir, albedo, metallic, roughness, dirShadow);
         } else if (lightType == 1) {
-            float pointShadow = calculatePointLightShadow(ubo.lights[i].position.xyz,
-                                                          input.fragWorldPos);
-            if (transmission > 0.0) pointShadow = 0.0;
-            lighting += calculatePointLight(ubo.lights[i], normal, viewDir, input.fragWorldPos,
-                                            albedo, metallic, roughness, pointShadow);
+            // Point lights with cube shadows are handled by the unrolled
+            // loop below (static sampler-array indexing); skip them here.
+            continue;
         } else if (lightType == 2) {
             lighting += calculateSpotLight(ubo.lights[i], normal, viewDir, input.fragWorldPos, albedo, metallic, roughness);
         }
     }
 
-    float3 result = ambient + lighting + glassColor;
+    // Point lights with cube shadow maps. Unrolled so the sampler array
+    // index (k) is compile-time constant - Vulkan requires static indexing
+    // for resource arrays.
+    [unroll]
+    for (int k = 0; k < MAX_POINT_SHADOWS; k++) {
+        if (k >= ubo.numPointLights) break;
+        float pointShadow = calculatePointLightShadow(
+            ubo.pointLights[k].position.xyz, input.fragWorldPos, k);
+        if (transmission > 0.0) pointShadow = 0.0;
+        lighting += calculatePointLight(ubo.pointLights[k], normal, viewDir,
+                                        input.fragWorldPos, albedo, metallic,
+                                        roughness, pointShadow);
+    }
+
+    // Like the path tracer (rt.rgen), transmissive surfaces skip the direct
+    // light response: glass is purely environment-driven.
+    float3 result = (transmission > 0.0) ? glassColor : (ambient + lighting);
 
     // Clear coat layering (on top of base BRDF). Skipped for glass: the
     // coat fresnel zeroes the result at grazing angles, which combined with
@@ -526,7 +681,7 @@ PSOutput main(PSInput input) {
     if (material.clearCoatFactor > 0.0 && transmission <= 0.0) {
         float ccRoughness = material.clearCoatRoughness;
         float3 ccSpec = 0.0;
-        [unroll] for (int i = 0; i < ubo.numLights && i < 4; i++) {
+        [unroll] for (int i = 0; i < ubo.numLights && i < MAX_LIGHTS; i++) {
             int lightType = int(ubo.lights[i].attenuation.w);
             float3 L;
             float NdotL;

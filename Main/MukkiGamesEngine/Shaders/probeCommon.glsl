@@ -2,7 +2,7 @@
 // Pure functions only - no uniforms. Each consumer shader declares its own
 // bindings and passes values as arguments (keeps raster/RT reuse trivial).
 
-const int MAX_LIGHTS = 4;
+const int MAX_LIGHTS = 8;
 const int LIGHT_TYPE_DIRECTIONAL = 0;
 const int LIGHT_TYPE_POINT = 1;
 const int LIGHT_TYPE_SPOT = 2;
@@ -81,6 +81,11 @@ vec3 sampleProbeIrradiance(sampler2D irrTex, sampler2D depthTex,
     vec3  result      = vec3(0.0);
     float totalWeight = 0.0;
 
+    // Fallback: the nearest probe (highest trilinear weight) regardless of
+    // visibility/backface rejection, so surfaces never sample nothing.
+    float bestTriW  = -1.0;
+    vec3  bestIrradiance = vec3(0.0);
+
     for (int dz = 0; dz <= 1; dz++)
     for (int dy = 0; dy <= 1; dy++)
     for (int dx = 0; dx <= 1; dx++) {
@@ -88,8 +93,8 @@ vec3 sampleProbeIrradiance(sampler2D irrTex, sampler2D depthTex,
         uint probeIndex = uint((idx.z * probeCounts.y + idx.y) * probeCounts.x + idx.x);
 
         vec3 w = vec3(1.0) - abs(vec3(dx, dy, dz) - frac);
-        float weight = w.x * w.y * w.z;
-        if (weight <= 0.0) continue;
+        float triW = w.x * w.y * w.z;
+        if (triW <= 0.0) continue;
 
         vec3  probePos    = volumeOrigin + (vec3(idx) + vec3(0.5)) * probeSpacing;
         vec3  toProbe     = probePos - biasedPos;
@@ -108,8 +113,19 @@ vec3 sampleProbeIrradiance(sampler2D irrTex, sampler2D depthTex,
         vec2  moments    = texelFetch(depthTex, depthCoord, 0).rg;
         float visibility = chebyshevWeight(moments, distToProbe);
 
-        result      += irr * (weight * visibility);
-        totalWeight += weight * visibility;
+        if (triW > bestTriW) {
+            bestTriW = triW;
+            bestIrradiance = irr;
+        }
+
+        // Backface rejection: probes BEHIND the surface (normal points away
+        // from them) leak light through walls - weight them down smoothly so
+        // adjacent triangles don't pop between 0 and full weight.
+        float backface = smoothstep(0.0, 0.2, dot(normal, dirToProbe));
+
+        float weight = triW * visibility * backface;
+        result      += irr * weight;
+        totalWeight += weight;
     }
-    return totalWeight > 0.0 ? result / totalWeight : vec3(0.0);
+    return totalWeight > 1e-5 ? result / totalWeight : bestIrradiance;
 }

@@ -1,6 +1,6 @@
 #version 450
 
-#define MAX_LIGHTS 4
+#define MAX_LIGHTS 8
 
 // Debug modes - change this to test different visualizations
 #define DEBUG_MODE 0

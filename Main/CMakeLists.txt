@@ -244,6 +244,8 @@ add_shaders(MukkiGamesEngine
     MukkiGamesEngine/Shaders/clouds.comp
     MukkiGamesEngine/Shaders/cloudNoise.comp
     MukkiGamesEngine/Shaders/shadowCube.frag
+    MukkiGamesEngine/Shaders/debugLine.vert
+    MukkiGamesEngine/Shaders/debugLine.frag
 
 )
 

@@ -454,8 +454,12 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
   swapChain->createImageViews();
   shadowMap = std::make_unique<ShadowMap>();
   shadowMap->init(device.get(), 2048);
-  shadowCubeMap = std::make_unique<ShadowCubeMap>();
-  shadowCubeMap->init(device.get(), 1024, 50.0f);
+  // One cube shadow map per point-light shadow slot.
+  for (int i = 0; i < MAX_POINT_SHADOWS; ++i) {
+    auto cube = std::make_unique<ShadowCubeMap>();
+    cube->init(device.get(), 1024, 50.0f);
+    shadowCubeMaps.push_back(std::move(cube));
+  }
   // 6. Create render pass (defines how rendering operations are performed)
   renderPassObj = std::make_unique<VulkanRenderPass>(
       device.get(), swapChain->getSwapChainImageFormat());
@@ -517,6 +521,7 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
 
   // 12. Create graphics pipeline (shaders and rendering configuration)
   createGraphicsPipeline();
+  initLineRenderer();
 
   initComputePipeline();
   initCloudPipeline();
@@ -553,13 +558,18 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
       descriptorSetLayout, // Use the member variable
       MAX_FRAMES_IN_FLIGHT, descriptorSets);
 
+  std::vector<VkImageView> cubeViews;
+  std::vector<VkSampler> cubeSamplers;
+  for (auto &cube : shadowCubeMaps) {
+    cubeViews.push_back(cube->getCubeMapImageView());
+    cubeSamplers.push_back(cube->getCubeMapSampler());
+  }
   descriptorBoss->updateDescriptorSets(
       descriptorSets, uniformBuffers, defaultMaterialUniformBuffers,
       textureImageView, textureSampler,
       shadowMap ? shadowMap->getShadowMapImageView() : VK_NULL_HANDLE,
       shadowMap ? shadowMap->getShadowSampler() : VK_NULL_HANDLE,
-      shadowCubeMap ? shadowCubeMap->getCubeMapImageView() : VK_NULL_HANDLE,
-      shadowCubeMap ? shadowCubeMap->getCubeMapSampler() : VK_NULL_HANDLE,
+      cubeViews, cubeSamplers,
       probeVolume ? probeVolume->getIrradianceView(0) : VK_NULL_HANDLE,
       probeVolume ? probeVolume->getSampler() : VK_NULL_HANDLE,
       probeVolume ? probeVolume->getDepthView(0) : VK_NULL_HANDLE,
@@ -805,14 +815,21 @@ void VulkanApplication::updateUniformBuffer(uint32_t currentImage) {
   if (shadowMap) {
     ubo.padding[0] = 1.0f / static_cast<float>(shadowMap->getShadowMapSize());
   }
-  ubo.pointShadowParams = glm::vec4(0.0f);
-  if (shadowCubeMap) {
+  // Cube-shadow slots: the first MAX_POINT_SHADOWS enabled point lights, in
+  // the same order the shadow pass renders them. The shader indexes these
+  // statically (unrolled), so they're packed into their own arrays.
+  ubo.numPointLights = 0;
+  if (!shadowCubeMaps.empty()) {
+    const float invFar = 1.0f / shadowCubeMaps[0]->getFarPlane();
     for (const auto &light : lights) {
-      if (light.enabled && light.type == LightType::Point) {
-        ubo.pointShadowParams =
-            glm::vec4(light.position, 1.0f / shadowCubeMap->getFarPlane());
+      if (!(light.enabled && light.type == LightType::Point))
+        continue;
+      if (ubo.numPointLights >= MAX_POINT_SHADOWS)
         break;
-      }
+      ubo.pointLights[ubo.numPointLights] = light.toGPU();
+      ubo.pointShadowParams[ubo.numPointLights] =
+          glm::vec4(light.position, invFar);
+      ++ubo.numPointLights;
     }
   }
   memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
@@ -854,14 +871,21 @@ void VulkanApplication::updatePerObjectUBO(LoadedObject &obj,
   if (shadowMap) {
     ubo.padding[0] = 1.0f / static_cast<float>(shadowMap->getShadowMapSize());
   }
-  ubo.pointShadowParams = glm::vec4(0.0f);
-  if (shadowCubeMap) {
+  // Cube-shadow slots: the first MAX_POINT_SHADOWS enabled point lights, in
+  // the same order the shadow pass renders them. The shader indexes these
+  // statically (unrolled), so they're packed into their own arrays.
+  ubo.numPointLights = 0;
+  if (!shadowCubeMaps.empty()) {
+    const float invFar = 1.0f / shadowCubeMaps[0]->getFarPlane();
     for (const auto &light : lights) {
-      if (light.enabled && light.type == LightType::Point) {
-        ubo.pointShadowParams =
-            glm::vec4(light.position, 1.0f / shadowCubeMap->getFarPlane());
+      if (!(light.enabled && light.type == LightType::Point))
+        continue;
+      if (ubo.numPointLights >= MAX_POINT_SHADOWS)
         break;
-      }
+      ubo.pointLights[ubo.numPointLights] = light.toGPU();
+      ubo.pointShadowParams[ubo.numPointLights] =
+          glm::vec4(light.position, invFar);
+      ++ubo.numPointLights;
     }
   }
   memcpy(obj.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
@@ -894,20 +918,26 @@ void VulkanApplication::buildFrameGraph() {
       dirShadowInfo, shadowMap->getShadowImage(), VK_NULL_HANDLE,
       shadowMap->getShadowMapImageView());
 
-  FrameGraphResourceInfo cubeShadowInfo{};
-  cubeShadowInfo.external = true;
-  cubeShadowInfo.initialLayout = m_cubeShadowLayout; // UNDEFINED first frame
-  cubeShadowInfo.texture = {shadowCubeMap->getSize(),
-                            shadowCubeMap->getSize(),
-                            6,
-                            1,
-                            VK_FORMAT_D32_SFLOAT,
-                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                                VK_IMAGE_USAGE_SAMPLED_BIT,
-                            VK_IMAGE_ASPECT_DEPTH_BIT};
-  m_cubeShadowHandle = renderGraph.importTexture(
-      cubeShadowInfo, shadowCubeMap->getCubeMapImage(), VK_NULL_HANDLE,
-      shadowCubeMap->getCubeMapImageView());
+  // One cube shadow resource + render pass per point-light shadow slot.
+  for (uint32_t slot = 0; slot < MAX_POINT_SHADOWS; ++slot) {
+    if (slot >= shadowCubeMaps.size())
+      break;
+    auto &cube = shadowCubeMaps[slot];
+    FrameGraphResourceInfo cubeShadowInfo{};
+    cubeShadowInfo.external = true;
+    cubeShadowInfo.initialLayout = m_cubeShadowLayouts[slot]; // UNDEFINED first frame
+    cubeShadowInfo.texture = {cube->getSize(),
+                              cube->getSize(),
+                              6,
+                              1,
+                              VK_FORMAT_D32_SFLOAT,
+                              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                                  VK_IMAGE_USAGE_SAMPLED_BIT,
+                              VK_IMAGE_ASPECT_DEPTH_BIT};
+    m_cubeShadowHandles[slot] = renderGraph.importTexture(
+        cubeShadowInfo, cube->getCubeMapImage(), VK_NULL_HANDLE,
+        cube->getCubeMapImageView());
+  }
 
   // ── Passes (execution order derives from the resource dependencies) ───────
   renderGraph.addPass(
@@ -917,24 +947,34 @@ void VulkanApplication::buildFrameGraph() {
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}},
       [this](VkCommandBuffer cmd) { recordShadowPass(cmd); });
 
-  renderGraph.addPass(
-      "PointShadows", {},
-      {{m_cubeShadowHandle,
-        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}},
-      [this](VkCommandBuffer cmd) { recordPointShadowPass(cmd); });
+  for (uint32_t slot = 0; slot < MAX_POINT_SHADOWS; ++slot) {
+    if (slot >= shadowCubeMaps.size())
+      break;
+    renderGraph.addPass(
+        "PointShadows_" + std::to_string(slot), {},
+        {{m_cubeShadowHandles[slot],
+          VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+              VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+          VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+          VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}},
+        [this, slot](VkCommandBuffer cmd) { recordPointShadowPass(cmd, slot); });
+  }
 
   // Transition-only node: the forward recording runs right after graph
   // execution, but the shadow maps must be in sampled layout first.
-  renderGraph.addPass(
-      "Forward",
-      {{m_dirShadowHandle, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-       {m_cubeShadowHandle, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}},
-      {}, [](VkCommandBuffer) {});
+  std::vector<FrameGraphResourceUsage> forwardReads;
+  forwardReads.push_back({m_dirShadowHandle, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                          VK_ACCESS_SHADER_READ_BIT,
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+  for (uint32_t slot = 0; slot < MAX_POINT_SHADOWS; ++slot) {
+    if (slot >= shadowCubeMaps.size())
+      break;
+    forwardReads.push_back({m_cubeShadowHandles[slot],
+                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                            VK_ACCESS_SHADER_READ_BIT,
+                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+  }
+  renderGraph.addPass("Forward", forwardReads, {}, [](VkCommandBuffer) {});
 
   renderGraph.compile();
 }
@@ -1051,7 +1091,9 @@ void VulkanApplication::drawFrame() {
     buildFrameGraph();
     renderGraph.execute(commandBuffer);
     m_dirShadowLayout = renderGraph.getLayout(m_dirShadowHandle);
-    m_cubeShadowLayout = renderGraph.getLayout(m_cubeShadowHandle);
+    for (uint32_t slot = 0; slot < MAX_POINT_SHADOWS && slot < shadowCubeMaps.size(); ++slot) {
+      m_cubeShadowLayouts[slot] = renderGraph.getLayout(m_cubeShadowHandles[slot]);
+    }
 
     if (hasLoadedModels) {
       VkPipeline mainPipeline = graphicsPipeline->getGraphicsPipeline();
@@ -1078,6 +1120,7 @@ void VulkanApplication::drawFrame() {
         }
       }
 
+      drawDebugLines(commandBuffer, imageIndex);
       uiManager->render(commandBuffer);
       commandBufferManager->endModelRenderPass(commandBuffer);
 
@@ -1442,13 +1485,18 @@ void VulkanApplication::mainLoop() {
             // The global raster sets (fallback path) also hold the old atlas
             // views - rebind them to the rebuilt volume.
             if (descriptorBoss) {
+              std::vector<VkImageView> cubeViews;
+              std::vector<VkSampler> cubeSamplers;
+              for (auto &cube : shadowCubeMaps) {
+                cubeViews.push_back(cube->getCubeMapImageView());
+                cubeSamplers.push_back(cube->getCubeMapSampler());
+              }
               descriptorBoss->updateDescriptorSets(
                   descriptorSets, uniformBuffers, defaultMaterialUniformBuffers,
                   textureImageView, textureSampler,
                   shadowMap ? shadowMap->getShadowMapImageView() : VK_NULL_HANDLE,
                   shadowMap ? shadowMap->getShadowSampler() : VK_NULL_HANDLE,
-                  shadowCubeMap ? shadowCubeMap->getCubeMapImageView() : VK_NULL_HANDLE,
-                  shadowCubeMap ? shadowCubeMap->getCubeMapSampler() : VK_NULL_HANDLE,
+                  cubeViews, cubeSamplers,
                   probeVolume ? probeVolume->getIrradianceView(0) : VK_NULL_HANDLE,
                   probeVolume ? probeVolume->getSampler() : VK_NULL_HANDLE,
                   probeVolume ? probeVolume->getDepthView(0) : VK_NULL_HANDLE,
@@ -1518,6 +1566,9 @@ void VulkanApplication::mainLoop() {
     // ── Probe GI debug / tuning panel ──
     {
       ProbeDebugState probeDbg;
+      // The overlay toggle lives only in the UI state; round-trip it
+      // through the member so the checkbox keeps its value across frames.
+      probeDbg.showProbes = showProbeDebugVisualization;
       if (probeVolume) {
         const VolumeProbe &params = probeVolume->getParams();
         probeDbg.valid = true;
@@ -1531,6 +1582,8 @@ void VulkanApplication::mainLoop() {
         probeDbg.normalBias = params.params.w;
         probeDbg.maxRayDistance = params.params.y;
         probeDbg.giStrength = params.debug.y;
+        probeDbg.feedbackGain = params.debug.w;
+        probeDbg.probeShadowStrength = params.shadow.x;
         probeDbg.debugMode = static_cast<int>(params.debug.x);
         probeDbg.relocationEnabled = params.debug.z > 0.5f;
 
@@ -1556,12 +1609,15 @@ void VulkanApplication::mainLoop() {
       }
 
       uiManager->renderProbeDebugWindow(probeDbg);
+      showProbeDebugVisualization = probeDbg.showProbes;
 
       if (probeVolume) {
         probeVolume->setHysteresis(probeDbg.hysteresis);
         probeVolume->setNormalBias(probeDbg.normalBias);
         probeVolume->setMaxRayDistance(probeDbg.maxRayDistance);
         probeVolume->setGIStrength(probeDbg.giStrength);
+        probeVolume->setFeedbackGain(probeDbg.feedbackGain);
+        probeVolume->setProbeShadowStrength(probeDbg.probeShadowStrength);
         probeVolume->setDebugMode(probeDbg.debugMode);
         probeVolume->setRelocationEnabled(probeDbg.relocationEnabled);
         if (probeDbg.resetHistory) {
@@ -1665,6 +1721,17 @@ void VulkanApplication::cleanup() {
     vkFreeMemory(device->getDevice(), vertexBufferMemory, nullptr);
   }
 
+  // Debug line vertex buffer
+  if (lineVertexBuffer != VK_NULL_HANDLE) {
+    vkDestroyBuffer(device->getDevice(), lineVertexBuffer, nullptr);
+    lineVertexBuffer = VK_NULL_HANDLE;
+  }
+  if (lineVertexBufferMemory != VK_NULL_HANDLE) {
+    vkFreeMemory(device->getDevice(), lineVertexBufferMemory, nullptr);
+    lineVertexBufferMemory = VK_NULL_HANDLE;
+  }
+  linePipeline.reset();
+
   // TAA cleanup
   if (taaPipelineLayout != VK_NULL_HANDLE) {
     vkDestroyPipelineLayout(device->getDevice(), taaPipelineLayout, nullptr);
@@ -1727,10 +1794,10 @@ void VulkanApplication::cleanup() {
     shadowMap->cleanup();
     shadowMap.reset();
   }
-  if (shadowCubeMap) {
-    shadowCubeMap->cleanup();
-    shadowCubeMap.reset();
+  for (auto &cube : shadowCubeMaps) {
+    cube->cleanup();
   }
+  shadowCubeMaps.clear();
   textureManager.reset();
   bufferManager.reset();
   uiManager.reset();
@@ -2689,7 +2756,9 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
         poolInfo.maxSets * 3; // UBO + MaterialUBO + probe params
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount =
-        poolInfo.maxSets * 6; // baseColor + shadows + probes + skybox
+        poolInfo.maxSets *
+        (6 + (MAX_POINT_SHADOWS > 0 ? MAX_POINT_SHADOWS - 1 : 0));
+    // baseColor + dir shadow + MAX_POINT_SHADOWS cube shadows + probes + skybox
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
     if (vkCreateDescriptorPool(device->getDevice(), &poolInfo, nullptr,
@@ -2796,25 +2865,38 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
       shadowWrite.descriptorCount = 1;
       shadowWrite.pImageInfo = &shadowImageInfo;
       descriptorWrites.push_back(shadowWrite);
-      VkDescriptorImageInfo cubeShadowImageInfo{};
-      cubeShadowImageInfo.imageLayout =
-          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-      if (shadowCubeMap) {
-        cubeShadowImageInfo.imageView = shadowCubeMap->getCubeMapImageView();
-        cubeShadowImageInfo.sampler = shadowCubeMap->getCubeMapSampler();
-      } else {
-        cubeShadowImageInfo.imageView = textureImageView;
-        cubeShadowImageInfo.sampler = textureSampler;
+
+      // Binding 4: one cube shadow map per point-light shadow slot.
+      // Unused slots fall back to the first cube map so the descriptors stay
+      // valid (the shader never samples slots beyond numPointLights).
+      std::array<VkDescriptorImageInfo, MAX_POINT_SHADOWS> cubeShadowImageInfos{};
+      VkImageView cubeFallbackView = textureImageView;
+      VkSampler cubeFallbackSampler = textureSampler;
+      if (!shadowCubeMaps.empty()) {
+        cubeFallbackView = shadowCubeMaps[0]->getCubeMapImageView();
+        cubeFallbackSampler = shadowCubeMaps[0]->getCubeMapSampler();
+      }
+      for (uint32_t slot = 0; slot < MAX_POINT_SHADOWS; ++slot) {
+        VkImageView view = cubeFallbackView;
+        VkSampler sampler = cubeFallbackSampler;
+        if (slot < shadowCubeMaps.size() && shadowCubeMaps[slot]) {
+          view = shadowCubeMaps[slot]->getCubeMapImageView();
+          sampler = shadowCubeMaps[slot]->getCubeMapSampler();
+        }
+        cubeShadowImageInfos[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        cubeShadowImageInfos[slot].imageView = view;
+        cubeShadowImageInfos[slot].sampler = sampler;
       }
 
       VkWriteDescriptorSet cubeShadowWrite{};
       cubeShadowWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       cubeShadowWrite.dstSet = obj.descriptorSets[matIndex][frame];
       cubeShadowWrite.dstBinding = 4;
+      cubeShadowWrite.dstArrayElement = 0;
       cubeShadowWrite.descriptorType =
           VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-      cubeShadowWrite.descriptorCount = 1;
-      cubeShadowWrite.pImageInfo = &cubeShadowImageInfo;
+      cubeShadowWrite.descriptorCount = MAX_POINT_SHADOWS;
+      cubeShadowWrite.pImageInfo = cubeShadowImageInfos.data();
       descriptorWrites.push_back(cubeShadowWrite);
 
       if (skybox) {
@@ -4298,11 +4380,11 @@ void VulkanApplication::createDescriptorSetLayout() {
       VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   shadowLayoutBinding.descriptorCount = 1;
   shadowLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-  // Point-Light Shadows (binding = 4)
+  // Point-Light Shadows (binding = 4): one cube map per shadow slot.
   VkDescriptorSetLayoutBinding cubeShadowBinding{};
   cubeShadowBinding.binding = 4;
   cubeShadowBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  cubeShadowBinding.descriptorCount = 1;
+  cubeShadowBinding.descriptorCount = MAX_POINT_SHADOWS;
   cubeShadowBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
   // Probe GI irradiance atlas (binding = 5)
   VkDescriptorSetLayoutBinding probeIrrBinding{};
@@ -4346,17 +4428,25 @@ void VulkanApplication::createDescriptorSetLayout() {
   }
   m_deletionQueue.pushDescriptorSetLayout(vkDev, descriptorSetLayout);
 }
-void VulkanApplication::recordPointShadowPass(VkCommandBuffer cmd) {
+void VulkanApplication::recordPointShadowPass(VkCommandBuffer cmd, uint32_t slot) {
   ZoneScopedN("Point Shadow Pass");
+  if (slot >= shadowCubeMaps.size())
+    return;
+  auto &shadowCubeMap = shadowCubeMaps[slot];
   if (!shadowCubeMap)
     return;
 
-  // Find first enabled point light
+  // Find the (slot+1)-th enabled point light: shadow slots are assigned in
+  // the same order the UBO packs point lights.
   const Light *pointLight = nullptr;
+  uint32_t pointIdx = 0;
   for (const auto &light : lights) {
     if (light.enabled && light.type == LightType::Point) {
-      pointLight = &light;
-      break;
+      if (pointIdx == slot) {
+        pointLight = &light;
+        break;
+      }
+      ++pointIdx;
     }
   }
   if (!pointLight) {
@@ -4480,6 +4570,160 @@ void VulkanApplication::createGraphicsPipeline() {
   additivePipeline =
       std::make_unique<VulkanPipeline>(device.get(), "Shaders/shader.vert.spv",
                                        "Shaders/brdf.frag.spv", additiveConfig);
+}
+
+void VulkanApplication::initLineRenderer() {
+  // Push constant: view-projection matrix for the vertex stage.
+  VkPushConstantRange pushRange{};
+  pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  pushRange.offset = 0;
+  pushRange.size = sizeof(glm::mat4);
+
+  VkPipelineLayoutCreateInfo layoutInfo{};
+  layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  layoutInfo.setLayoutCount = 0;
+  layoutInfo.pSetLayouts = nullptr;
+  layoutInfo.pushConstantRangeCount = 1;
+  layoutInfo.pPushConstantRanges = &pushRange;
+
+  VkDevice vkDev = device->getDevice();
+  if (vkCreatePipelineLayout(vkDev, &layoutInfo, nullptr,
+                             &linePipelineLayout) != VK_SUCCESS) {
+    throw std::runtime_error("failed to create line pipeline layout!");
+  }
+  m_deletionQueue.pushPipelineLayout(vkDev, linePipelineLayout);
+
+  // Depth-tested but depth-write disabled: lines overlay the scene.
+  PipelineConfigInfo config{};
+  VulkanPipeline::defaultPipelineConfigInfo(config);
+  config.inputAssemblyInfo.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+  config.renderPass = renderPass;
+  config.pipelineLayout = linePipelineLayout;
+  config.depthStencilInfo.depthTestEnable = VK_TRUE;
+  config.depthStencilInfo.depthWriteEnable = VK_FALSE;
+  config.depthStencilInfo.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+  config.bindingDescriptions = {
+      {0, sizeof(DebugLineVertex), VK_VERTEX_INPUT_RATE_VERTEX}};
+  config.attributeDescriptions = {
+      {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(DebugLineVertex, pos)},
+      {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(DebugLineVertex, color)}};
+
+  linePipeline = std::make_unique<VulkanPipeline>(
+      device.get(), "Shaders/debugLine.vert.spv", "Shaders/debugLine.frag.spv",
+      config);
+
+  // Host-visible vertex buffer sized for the worst case: every probe (up to
+  // 16384, the cap in buildProbeVolumeFromScene) drawn as a 6-line cross
+  // plus the volume bounds box.
+  constexpr VkDeviceSize kMaxVertices = 16384 * 12 + 48;
+  lineVertexBufferCapacity = kMaxVertices * sizeof(DebugLineVertex);
+  device->createBuffer(lineVertexBufferCapacity,
+                       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       lineVertexBuffer, lineVertexBufferMemory);
+}
+
+void VulkanApplication::drawDebugLines(VkCommandBuffer commandBuffer,
+                                       uint32_t currentImage) {
+  (void)currentImage;
+  if (!showProbeDebugVisualization || !probeVolume || !linePipeline)
+    return;
+  if (lineVertexBuffer == VK_NULL_HANDLE)
+    return;
+
+  // Read the (possibly relocated) probe positions from the host-visible
+  // probe data buffer. Torn reads are fine for a debug overlay.
+  std::vector<glm::vec4> positions;
+  if (!probeVolume->getProbePositionsCPU(positions))
+    return;
+
+  const float spacing = probeVolume->getParams().params.x;
+  const float crossSize = spacing * 0.15f;
+  const glm::vec3 gridColor(0.35f, 0.9f, 0.35f);   // probes on their grid slot
+  const glm::vec3 movedColor(1.0f, 0.25f, 0.1f);   // relocated (was inside geometry)
+
+  std::vector<DebugLineVertex> verts;
+  verts.reserve(positions.size() * 12 + 48);
+
+  auto addLine = [&verts](const glm::vec3 &a, const glm::vec3 &b,
+                          const glm::vec3 &c) {
+    verts.push_back({a, c});
+    verts.push_back({b, c});
+  };
+
+  for (uint32_t i = 0; i < positions.size(); ++i) {
+    const glm::vec3 p = glm::vec3(positions[i]);
+    const float disp =
+        glm::distance(p, probeVolume->gridPositionForIndex(i));
+    // Blend green -> red with displacement as the probe moves off-grid.
+    const glm::vec3 color = glm::mix(
+        gridColor, movedColor,
+        glm::clamp(disp / glm::max(spacing, 1e-4f), 0.0f, 1.0f));
+
+    addLine(p - glm::vec3(crossSize, 0.0f, 0.0f),
+            p + glm::vec3(crossSize, 0.0f, 0.0f), color);
+    addLine(p - glm::vec3(0.0f, crossSize, 0.0f),
+            p + glm::vec3(0.0f, crossSize, 0.0f), color);
+    addLine(p - glm::vec3(0.0f, 0.0f, crossSize),
+            p + glm::vec3(0.0f, 0.0f, crossSize), color);
+  }
+
+  // Volume bounds box so the grid extent is visible.
+  const VolumeProbe &params = probeVolume->getParams();
+  const glm::vec3 min = glm::vec3(params.origin);
+  const glm::vec3 max =
+      min + glm::vec3(glm::ivec3(params.probeCounts) - glm::ivec3(1)) * spacing;
+  const glm::vec3 boxColor(0.4f, 0.5f, 1.0f);
+  for (int i = 0; i < 4; i++) {
+    const glm::vec3 a(min.x + (i & 1 ? max.x - min.x : 0.0f), min.y,
+                      min.z + (i & 2 ? max.z - min.z : 0.0f));
+    const glm::vec3 b(a.x, max.y, a.z);
+    addLine(a, b, boxColor);
+  }
+
+  if (verts.empty())
+    return;
+
+  const VkDeviceSize size = sizeof(DebugLineVertex) * verts.size();
+  if (size > lineVertexBufferCapacity)
+    return; // shouldn't happen; capacity matches the probe cap
+
+  void *data = nullptr;
+  if (vkMapMemory(device->getDevice(), lineVertexBufferMemory, 0, size, 0,
+                  &data) != VK_SUCCESS)
+    return;
+  memcpy(data, verts.data(), static_cast<size_t>(size));
+  vkUnmapMemory(device->getDevice(), lineVertexBufferMemory);
+
+  // Draw inside the currently-bound render pass (dynamic viewport/scissor).
+  VkExtent2D extent = swapChain->getSwapChainExtent();
+  VkViewport viewport{};
+  viewport.x = 0.0f;
+  viewport.y = 0.0f;
+  viewport.width = static_cast<float>(extent.width);
+  viewport.height = static_cast<float>(extent.height);
+  viewport.minDepth = 0.0f;
+  viewport.maxDepth = 1.0f;
+  VkRect2D scissor{};
+  scissor.extent = extent;
+  vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+  vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+  VkBuffer vertexBuffers[] = {lineVertexBuffer};
+  VkDeviceSize offsets[] = {0};
+  vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+  linePipeline->bind(commandBuffer);
+
+  const float aspect =
+      static_cast<float>(extent.width) / static_cast<float>(extent.height);
+  const glm::mat4 viewProj =
+      camera->getProjectionMatrix(aspect) * camera->getViewMatrix();
+  vkCmdPushConstants(commandBuffer, linePipelineLayout,
+                     VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4),
+                     &viewProj);
+
+  vkCmdDraw(commandBuffer, static_cast<uint32_t>(verts.size()), 1, 0, 0);
 }
 
 void *VulkanApplication::getNativeWindow() const {

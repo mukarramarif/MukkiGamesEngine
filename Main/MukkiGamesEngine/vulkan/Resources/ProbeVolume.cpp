@@ -31,7 +31,8 @@ bool ProbeVolume::init(Device* deviceIn,
     m_params.origin      = glm::vec4(origin, 0.0f);
     m_params.probeCounts = glm::ivec4(probeCounts, static_cast<int>(m_probeCount));
     m_params.params      = glm::vec4(probeSpacing, probeSpacing * 4.0f, 0.97f, 0.25f);
-    m_params.debug       = glm::vec4(0.0f, 1.0f, 1.0f, 0.0f); // mode off, GI strength 1, relocation on
+    m_params.debug       = glm::vec4(0.0f, 1.0f, 1.0f, 0.5f); // mode off, GI strength 1, relocation on, feedback gain 0.5
+    m_params.shadow      = glm::vec4(0.0f, 1.0f, 0.0f, 0.0f); // probe shadows off by default
     m_params.atlas       = glm::vec4(static_cast<float>(m_tilesPerSide),
                                      static_cast<float>(m_irradianceTexels),
                                      static_cast<float>(m_depthTexels),
@@ -65,6 +66,8 @@ void ProbeVolume::setMaxRayDistance(float maxRayDistance)   { m_params.params.y 
 void ProbeVolume::setDebugMode(int mode)             { m_params.debug.x = static_cast<float>(mode); updateParams(); }
 void ProbeVolume::setGIStrength(float strength)      { m_params.debug.y = strength;       updateParams(); }
 void ProbeVolume::setRelocationEnabled(bool enabled) { m_params.debug.z = enabled ? 1.0f : 0.0f; updateParams(); }
+void ProbeVolume::setFeedbackGain(float gain)        { m_params.debug.w = gain;           updateParams(); }
+void ProbeVolume::setProbeShadowStrength(float s)    { m_params.shadow.x = s;             updateParams(); }
 
 bool ProbeVolume::getProbePositionsCPU(std::vector<glm::vec4>& outPositions) const
 {

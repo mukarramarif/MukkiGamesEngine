@@ -46,6 +46,8 @@ struct ProbeDebugState {
 	float normalBias = 0.25f;
 	float maxRayDistance = 0.0f;
 	float giStrength = 1.0f;
+	float feedbackGain = 0.5f;
+	float probeShadowStrength = 0.0f;
 	int debugMode = 0;            // 0 = off, 1 = GI only, 2 = heatmap, 3 = probe cells
 	bool relocationEnabled = true;
 	bool resetHistory = false;
@@ -53,6 +55,9 @@ struct ProbeDebugState {
 	// Relocation readback stats (diagnostics only)
 	uint32_t relocatedProbes = 0;
 	float maxRelocation = 0.0f;
+
+	// 3D overlay visualization
+	bool showProbes = false;
 };
 class UIManager {
 public:
