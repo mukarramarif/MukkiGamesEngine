@@ -1514,6 +1514,62 @@ void VulkanApplication::mainLoop() {
                                     physPositions, physSpeeds, physRPMs,
                                     physGears);
     }
+
+    // ── Probe GI debug / tuning panel ──
+    {
+      ProbeDebugState probeDbg;
+      if (probeVolume) {
+        const VolumeProbe &params = probeVolume->getParams();
+        probeDbg.valid = true;
+        probeDbg.counts = glm::ivec3(params.probeCounts);
+        probeDbg.totalProbes = probeVolume->getProbeCount();
+        probeDbg.spacing = params.params.x;
+        probeDbg.origin = glm::vec3(params.origin);
+        probeDbg.raysPerProbe = static_cast<uint32_t>(params.atlas.w);
+        probeDbg.tilesPerSide = probeVolume->getTilesPerSide();
+        probeDbg.hysteresis = params.params.z;
+        probeDbg.normalBias = params.params.w;
+        probeDbg.maxRayDistance = params.params.y;
+        probeDbg.giStrength = params.debug.y;
+        probeDbg.debugMode = static_cast<int>(params.debug.x);
+        probeDbg.relocationEnabled = params.debug.z > 0.5f;
+
+        // Relocation readback: compare GPU probe positions against their
+        // grid slots. The probe data buffer is host-visible and may be
+        // written concurrently by the probe pass (torn reads are fine for
+        // diagnostics).
+        std::vector<glm::vec4> positions;
+        if (probeVolume->getProbePositionsCPU(positions)) {
+          uint32_t moved = 0;
+          float maxD = 0.0f;
+          for (uint32_t i = 0; i < positions.size(); ++i) {
+            const float d = glm::distance(
+                glm::vec3(positions[i]), probeVolume->gridPositionForIndex(i));
+            if (d > 1e-4f) {
+              ++moved;
+              maxD = glm::max(maxD, d);
+            }
+          }
+          probeDbg.relocatedProbes = moved;
+          probeDbg.maxRelocation = maxD;
+        }
+      }
+
+      uiManager->renderProbeDebugWindow(probeDbg);
+
+      if (probeVolume) {
+        probeVolume->setHysteresis(probeDbg.hysteresis);
+        probeVolume->setNormalBias(probeDbg.normalBias);
+        probeVolume->setMaxRayDistance(probeDbg.maxRayDistance);
+        probeVolume->setGIStrength(probeDbg.giStrength);
+        probeVolume->setDebugMode(probeDbg.debugMode);
+        probeVolume->setRelocationEnabled(probeDbg.relocationEnabled);
+        if (probeDbg.resetHistory) {
+          resetProbeHistory();
+        }
+      }
+    }
+
     drawFrame();
   }
 

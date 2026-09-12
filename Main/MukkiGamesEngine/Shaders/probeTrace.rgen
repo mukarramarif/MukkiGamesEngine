@@ -18,6 +18,7 @@ layout(std140, set = 0, binding = 1) uniform ProbeVolumeParamsBlock {
     ivec4 probeCounts; // xyz = probes per axis, w = total probe count
     vec4  params;      // x = spacing, y = maxRayDistance, z = hysteresis, w = normalBias
     vec4  atlas;       // x = tilesPerSide, y = irradianceTexelsPerProbe, z = depthTexelsPerProbe, w = raysPerProbe
+    vec4  debug;       // x = raster debug mode, y = GI strength, z = relocation enabled
 } probeVolume;
 
 // std430 mirror of ProbeData (vulkan/Resources/ProbeVolume.h)
@@ -204,8 +205,9 @@ void main()
     // nearest surface so their irradiance stops being a dark/bright blob
     // inside the volume. Blended half-way per frame so the position
     // converges smoothly; once outside, backface hits disappear and the
-    // probe stops moving.
-    if (nearHitCount > 0u &&
+    // probe stops moving. debug.z toggles this (runtime debug knob).
+    if (probeVolume.debug.z > 0.5 &&
+        nearHitCount > 0u &&
         nearBackfaceSum < 0.4 * float(nearHitCount) &&
         minT < probeVolume.params.x) {
         vec3 candidate = probePos + minDir * (minT + insideMargin);

@@ -81,7 +81,7 @@ struct MaterialUBO {
 // ---- Ray-traced probe GI (mirrors Shaders/probeCommon.glsl) ----
 static const int PROBE_IRRADIANCE_TEXELS = 8;
 static const int PROBE_DEPTH_TEXELS = 16;
-static const float PROBE_GI_STRENGTH = 1.0;  // dial for debugging
+// GI strength is a live knob now: probeVolume.debug.y (default 1.0).
 // Glass tuning: env reflection brightness + how much to soften the
 // Beer-Lambert absorption (1.0 = physically correct, lower = brighter).
 static const float GLASS_ENV_STRENGTH = 2.0;
@@ -92,6 +92,7 @@ struct ProbeVolumeParams {
     int4 probeCounts;   // xyz = probes per axis, w = total probe count
     float4 params;      // x = spacing, y = maxRayDistance, z = hysteresis, w = normalBias
     float4 atlas;       // x = tilesPerSide, y = irradianceTexelsPerProbe, z = depthTexelsPerProbe, w = raysPerProbe
+    float4 debug;       // x = debug mode (0 off, 1 GI only, 2 heatmap, 3 probe cells), y = GI strength
 };
 
 [[vk::binding(5, 0)]] Sampler2D<float4> probeIrradiance;  // atlas, GENERAL layout
@@ -437,7 +438,7 @@ PSOutput main(PSInput input) {
     // angles reflect (opaque-ish edges), head-on transmits (transparent).
     float transmission = material.transmissionFactor;
     float alpha = texSample.a * material.alpha;
-    float3 gi = sampleProbeGI(input.fragWorldPos, normal) * PROBE_GI_STRENGTH;
+    float3 gi = sampleProbeGI(input.fragWorldPos, normal) * probeVolume.debug.y;
     float3 glassColor = float3(0.0, 0.0, 0.0);
     if (transmission > 0.0) {
         float cosTheta = max(dot(normal, viewDir), 0.0);
@@ -544,6 +545,29 @@ PSOutput main(PSInput input) {
         }
         float3 ccFresnel = fresnelSchlickClearCoat(max(dot(normal, viewDir), 0.0));
         result = result * (1.0 - ccFresnel * material.clearCoatFactor) + ccSpec * material.clearCoatFactor;
+    }
+
+    // Probe debug visualization (probeVolume.debug.x):
+    //   1 = GI only, 2 = GI heatmap, 3 = probe grid cells.
+    if (probeVolume.debug.x >= 0.5) {
+        float3 dbg;
+        if (probeVolume.debug.x < 1.5) {
+            dbg = gi * albedo / 3.14159265;  // indirect term only
+        } else if (probeVolume.debug.x < 2.5) {
+            float3 v = gi * albedo / 3.14159265;
+            float t = clamp((v.r + v.g + v.b) / 3.0 * 2.0, 0.0, 1.0);
+            dbg = float3(clamp(1.5 - abs(t * 4.0 - 3.0), 0.0, 1.0),
+                         clamp(1.5 - abs(t * 4.0 - 2.0), 0.0, 1.0),
+                         clamp(1.5 - abs(t * 4.0 - 1.0), 0.0, 1.0));
+        } else {
+            // Color by the fractional position inside the probe cell: shows
+            // the grid density and where cell boundaries fall on surfaces.
+            float3 q = (input.fragWorldPos - probeVolume.origin.xyz) /
+                       max(probeVolume.params.x, 1e-4);
+            dbg = frac(q);
+        }
+        output.outColor = float4(dbg, 1.0);
+        return output;
     }
 
     // Reinhard tone mapping

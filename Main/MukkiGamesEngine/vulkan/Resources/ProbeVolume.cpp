@@ -31,6 +31,7 @@ bool ProbeVolume::init(Device* deviceIn,
     m_params.origin      = glm::vec4(origin, 0.0f);
     m_params.probeCounts = glm::ivec4(probeCounts, static_cast<int>(m_probeCount));
     m_params.params      = glm::vec4(probeSpacing, probeSpacing * 4.0f, 0.97f, 0.25f);
+    m_params.debug       = glm::vec4(0.0f, 1.0f, 1.0f, 0.0f); // mode off, GI strength 1, relocation on
     m_params.atlas       = glm::vec4(static_cast<float>(m_tilesPerSide),
                                      static_cast<float>(m_irradianceTexels),
                                      static_cast<float>(m_depthTexels),
@@ -61,6 +62,39 @@ void ProbeVolume::volumeFromAABB(const glm::vec3& sceneMin, const glm::vec3& sce
 void ProbeVolume::setHysteresis(float hysteresis)    { m_params.params.z = hysteresis;    updateParams(); }
 void ProbeVolume::setNormalBias(float normalBias)    { m_params.params.w = normalBias;    updateParams(); }
 void ProbeVolume::setMaxRayDistance(float maxRayDistance)   { m_params.params.y = maxRayDistance;       updateParams(); }
+void ProbeVolume::setDebugMode(int mode)             { m_params.debug.x = static_cast<float>(mode); updateParams(); }
+void ProbeVolume::setGIStrength(float strength)      { m_params.debug.y = strength;       updateParams(); }
+void ProbeVolume::setRelocationEnabled(bool enabled) { m_params.debug.z = enabled ? 1.0f : 0.0f; updateParams(); }
+
+bool ProbeVolume::getProbePositionsCPU(std::vector<glm::vec4>& outPositions) const
+{
+    if (!device || m_probeDataBuffer == VK_NULL_HANDLE || m_probeCount == 0)
+        return false;
+
+    const VkDeviceSize size = sizeof(ProbeData) * m_probeCount;
+    void* data = nullptr;
+    if (vkMapMemory(device->getDevice(), m_probeDataMemory, 0, size, 0, &data) != VK_SUCCESS)
+        return false;
+
+    outPositions.resize(m_probeCount);
+    const ProbeData* probes = static_cast<const ProbeData*>(data);
+    for (uint32_t i = 0; i < m_probeCount; ++i)
+        outPositions[i] = probes[i].pos;
+
+    vkUnmapMemory(device->getDevice(), m_probeDataMemory);
+    return true;
+}
+
+glm::vec3 ProbeVolume::gridPositionForIndex(uint32_t index) const
+{
+    const glm::ivec3 counts = glm::ivec3(m_params.probeCounts);
+    const uint32_t x = index % static_cast<uint32_t>(counts.x);
+    const uint32_t y = (index / static_cast<uint32_t>(counts.x)) % static_cast<uint32_t>(counts.y);
+    const uint32_t z = index / (static_cast<uint32_t>(counts.x) * static_cast<uint32_t>(counts.y));
+    return glm::vec3(m_params.origin) +
+           (glm::vec3(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)) + 0.5f) *
+               m_params.params.x;
+}
 
 VkImageView ProbeVolume::getIrradianceView(uint32_t index) const { return m_irradianceViews[index]; }
 VkImageView ProbeVolume::getDepthView(uint32_t index)      const { return m_depthViews[index]; }

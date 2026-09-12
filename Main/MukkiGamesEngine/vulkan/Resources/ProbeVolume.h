@@ -1,6 +1,7 @@
 #pragma once
 #include <vulkan/vulkan.h>
 #include <array>
+#include <vector>
 #include <glm/glm.hpp>
 #include "../Core/VkDevice.h"
 
@@ -9,6 +10,10 @@ struct VolumeProbe{
    glm::ivec4 probeCounts; // xyz = probes per axis, w = total probe count
    glm::vec4 params; // x = probeSpacing, y = maxRayDistance, z = hysteresis, w = normalBias
    glm::vec4 atlas; // x = tilesPerSide, y = irradianceTexels, z = depthTexels, w = raysPerProbe
+   // Debug/tuning: x = raster debug mode (0 off, 1 GI only, 2 GI heatmap,
+   // 3 probe cells), y = GI strength, z = relocation enabled, w = unused.
+   // Must match the mirrors in probeTrace.rgen and brdf.slang (std140).
+   glm::vec4 debug;
 };
 
 
@@ -45,6 +50,16 @@ public:
     void setHysteresis(float hysteresis);
     void setNormalBias(float normalBias);
     void setMaxRayDistance(float maxRayDistance);
+    void setDebugMode(int mode);
+    void setGIStrength(float strength);
+    void setRelocationEnabled(bool enabled);
+
+    // Debug: read the (possibly GPU-relocated) probe positions back from the
+    // host-visible probe data buffer. Unsynchronized (torn reads possible) -
+    // debug display only.
+    bool getProbePositionsCPU(std::vector<glm::vec4>& outPositions) const;
+    // Grid position a probe would occupy without relocation.
+    glm::vec3 gridPositionForIndex(uint32_t index) const;
 
     const VolumeProbe& getParams() const { return m_params; }
     uint32_t getProbeCount()   const { return m_probeCount; }
