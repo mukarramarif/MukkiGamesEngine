@@ -576,7 +576,8 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
       probeVolume ? probeVolume->getSampler() : VK_NULL_HANDLE,
       probeVolume ? probeVolume->getParamsBuffer() : VK_NULL_HANDLE,
       skybox ? skybox->getCubemapImageView() : VK_NULL_HANDLE,
-      skybox ? skybox->getCubemapSampler() : VK_NULL_HANDLE);
+      skybox ? skybox->getCubemapSampler() : VK_NULL_HANDLE,
+      probeVolume ? probeVolume->getProbeDataBuffer() : VK_NULL_HANDLE);
 
   createRayTracingDescriptorPool();
   createRayTracingDescriptorSet();
@@ -1503,7 +1504,8 @@ void VulkanApplication::mainLoop() {
                   probeVolume ? probeVolume->getSampler() : VK_NULL_HANDLE,
                   probeVolume ? probeVolume->getParamsBuffer() : VK_NULL_HANDLE,
                   skybox ? skybox->getCubemapImageView() : VK_NULL_HANDLE,
-                  skybox ? skybox->getCubemapSampler() : VK_NULL_HANDLE);
+                  skybox ? skybox->getCubemapSampler() : VK_NULL_HANDLE,
+                  probeVolume ? probeVolume->getProbeDataBuffer() : VK_NULL_HANDLE);
             }
           }
           initPhysics();
@@ -1607,6 +1609,12 @@ void VulkanApplication::mainLoop() {
           probeDbg.maxRelocation = maxD;
         }
       }
+
+      // Live atlas textures for the debug window (recreated if the volume
+      // was rebuilt and the views changed).
+      updateProbeDebugTextures();
+      probeDbg.irradianceTexID = probeIrradianceTexID;
+      probeDbg.depthTexID = probeDepthTexID;
 
       uiManager->renderProbeDebugWindow(probeDbg);
       showProbeDebugVisualization = probeDbg.showProbes;
@@ -1769,6 +1777,18 @@ void VulkanApplication::cleanup() {
                                  rayTracingDescriptorSetLayout, nullptr);
     rayTracingDescriptorSetLayout = VK_NULL_HANDLE;
   }
+
+  // ImGui preview textures reference the probe atlas views; drop them
+  // before the views/sampler are destroyed.
+  if (probeIrradianceTexID) {
+    ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)probeIrradianceTexID);
+    probeIrradianceTexID = nullptr;
+  }
+  if (probeDepthTexID) {
+    ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)probeDepthTexID);
+    probeDepthTexID = nullptr;
+  }
+  m_probeTexSourceView = VK_NULL_HANDLE;
 
   cleanupProbeResources();
 
@@ -2750,7 +2770,7 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets =
         static_cast<uint32_t>(materialCount * MAX_FRAMES_IN_FLIGHT);
-    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    std::array<VkDescriptorPoolSize, 3> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount =
         poolInfo.maxSets * 3; // UBO + MaterialUBO + probe params
@@ -2759,6 +2779,8 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
         poolInfo.maxSets *
         (6 + (MAX_POINT_SHADOWS > 0 ? MAX_POINT_SHADOWS - 1 : 0));
     // baseColor + dir shadow + MAX_POINT_SHADOWS cube shadows + probes + skybox
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[2].descriptorCount = poolInfo.maxSets; // probe data SSBO (binding 9)
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
     if (vkCreateDescriptorPool(device->getDevice(), &poolInfo, nullptr,
@@ -4410,11 +4432,18 @@ void VulkanApplication::createDescriptorSetLayout() {
   skyboxBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   skyboxBinding.descriptorCount = 1;
   skyboxBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  // Probe data SSBO (binding = 9) - relocated probe positions
+  VkDescriptorSetLayoutBinding probeDataBinding{};
+  probeDataBinding.binding = 9;
+  probeDataBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  probeDataBinding.descriptorCount = 1;
+  probeDataBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-  std::array<VkDescriptorSetLayoutBinding, 9> bindings = {
+  std::array<VkDescriptorSetLayoutBinding, 10> bindings = {
       uboLayoutBinding,       samplerLayoutBinding,  materialLayoutBinding,
       shadowLayoutBinding,    cubeShadowBinding,     probeIrrBinding,
-      probeDepthBinding,      probeParamsBinding,    skyboxBinding};
+      probeDepthBinding,      probeParamsBinding,    skyboxBinding,
+      probeDataBinding};
 
   VkDescriptorSetLayoutCreateInfo layoutInfo{};
   layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -4866,6 +4895,17 @@ void VulkanApplication::updateProbeUniformBuffer() {
   if (!probeSceneUniformBufferMapped)
     return;
 
+  // A moved light changes the ray-traced lighting; boost the probe field
+  // blend so it adopts the new measurement immediately for a few frames
+  // instead of lagging behind the hysteresis.
+  constexpr int kRefreshFrames = 3;
+  if (lightsChangedForProbes()) {
+    m_probeRefreshFrames = kRefreshFrames;
+  }
+  const float refreshBoost = m_probeRefreshFrames > 0 ? 1.0f : 0.0f;
+  if (m_probeRefreshFrames > 0)
+    --m_probeRefreshFrames;
+
   ProbeSceneData scene{};
   int lightCount = 0;
   for (size_t i = 0; i < lights.size() && lightCount < MAX_LIGHTS; ++i) {
@@ -4876,8 +4916,67 @@ void VulkanApplication::updateProbeUniformBuffer() {
   }
   scene.lightParams =
       glm::vec4(static_cast<float>(lightCount), ambientStrength, 0.0f, 0.0f);
-  scene.timeParams = glm::vec4(glm::max(deltaTime, 1.0f / 60.0f), 0.0f, 0.0f, 0.0f);
+  scene.timeParams =
+      glm::vec4(glm::max(deltaTime, 1.0f / 60.0f), refreshBoost, 0.0f, 0.0f);
   memcpy(probeSceneUniformBufferMapped, &scene, sizeof(ProbeSceneData));
+}
+
+bool VulkanApplication::lightsChangedForProbes() {
+  std::vector<GPULight> current;
+  current.reserve(lights.size());
+  for (const auto &l : lights) {
+    if (l.enabled)
+      current.push_back(l.toGPU());
+  }
+
+  bool changed = current.size() != m_prevProbeLights.size();
+  if (!changed && !current.empty()) {
+    // GPULight is POD; bitwise compare is safe (identical values write
+    // identical bits).
+    changed = std::memcmp(current.data(), m_prevProbeLights.data(),
+                          sizeof(GPULight) * current.size()) != 0;
+  }
+
+  m_prevProbeLights = std::move(current);
+  return changed;
+}
+
+void VulkanApplication::updateProbeDebugTextures() {
+  if (!probeVolume) {
+    if (probeIrradianceTexID) {
+      ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)probeIrradianceTexID);
+      probeIrradianceTexID = nullptr;
+    }
+    if (probeDepthTexID) {
+      ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)probeDepthTexID);
+      probeDepthTexID = nullptr;
+    }
+    m_probeTexSourceView = VK_NULL_HANDLE;
+    return;
+  }
+
+  // The atlas views are recreated whenever the volume is rebuilt; refresh
+  // the ImGui texture handles when that happens.
+  if (probeVolume->getIrradianceView(0) == m_probeTexSourceView)
+    return;
+
+  if (probeIrradianceTexID) {
+    ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)probeIrradianceTexID);
+    probeIrradianceTexID = nullptr;
+  }
+  if (probeDepthTexID) {
+    ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)probeDepthTexID);
+    probeDepthTexID = nullptr;
+  }
+
+  // The atlases live permanently in VK_IMAGE_LAYOUT_GENERAL.
+  probeIrradianceTexID = ImGui_ImplVulkan_AddTexture(
+      probeVolume->getSampler(), probeVolume->getIrradianceView(0),
+      VK_IMAGE_LAYOUT_GENERAL);
+  probeDepthTexID = ImGui_ImplVulkan_AddTexture(
+      probeVolume->getSampler(), probeVolume->getDepthView(0),
+      VK_IMAGE_LAYOUT_GENERAL);
+  m_probeTexSourceView = probeVolume->getIrradianceView(0);
 }
 
 void VulkanApplication::createProbeDescriptorSetLayout() {
@@ -5309,8 +5408,9 @@ void VulkanApplication::recordProbeUpdatePass(VkCommandBuffer cmd) {
       probeVolume->getProbeCount(), 1, 1);
 
   // Probe positions may be updated by the relocation logic in the rgen;
-  // make those writes visible to next frame's dispatch (same pipeline stage,
-  // access-only barrier).
+  // make those writes visible to the next frame's dispatch AND to this
+  // frame's raster fragment shaders (the raster now reads relocated probe
+  // positions from this buffer for the octahedral/Chebyshev lookup).
   VkBufferMemoryBarrier probeDataBarrier{};
   probeDataBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
   probeDataBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -5321,8 +5421,9 @@ void VulkanApplication::recordProbeUpdatePass(VkCommandBuffer cmd) {
   probeDataBarrier.offset = 0;
   probeDataBarrier.size = VK_WHOLE_SIZE;
   vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                       VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0,
-                       nullptr, 1, &probeDataBarrier, 0, nullptr);
+                       VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR |
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                       0, 0, nullptr, 1, &probeDataBarrier, 0, nullptr);
 
   // 3. Current copy (view 0): probe shader writes -> this frame's raster
   //    fragment reads.
@@ -5360,6 +5461,8 @@ void VulkanApplication::bindProbeDescriptorsToLoadedObjects() {
                                         VK_IMAGE_LAYOUT_GENERAL};
   const VkDescriptorBufferInfo paramsInfo{probeVolume->getParamsBuffer(), 0,
                                           sizeof(VolumeProbe)};
+  const VkDescriptorBufferInfo probeDataInfo{
+      probeVolume->getProbeDataBuffer(), 0, VK_WHOLE_SIZE};
 
   for (auto &obj : loadedObjects) {
     if (!obj.loaded)
@@ -5368,7 +5471,7 @@ void VulkanApplication::bindProbeDescriptorsToLoadedObjects() {
       for (auto &set : perMaterial) {
         if (set == VK_NULL_HANDLE)
           continue;
-        std::array<VkWriteDescriptorSet, 3> writes{};
+        std::array<VkWriteDescriptorSet, 4> writes{};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = set;
@@ -5390,6 +5493,13 @@ void VulkanApplication::bindProbeDescriptorsToLoadedObjects() {
         writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         writes[2].descriptorCount = 1;
         writes[2].pBufferInfo = &paramsInfo;
+
+        writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet = set;
+        writes[3].dstBinding = 9;
+        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[3].descriptorCount = 1;
+        writes[3].pBufferInfo = &probeDataInfo;
 
         vkUpdateDescriptorSets(device->getDevice(),
                                static_cast<uint32_t>(writes.size()),

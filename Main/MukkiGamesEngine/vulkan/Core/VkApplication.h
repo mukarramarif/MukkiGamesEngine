@@ -172,6 +172,9 @@ private:
 	struct ProbeSceneData{
 	    GPULight lights[MAX_LIGHTS];
 		glm::vec4 lightParams;
+		// x = deltaTime (seconds), y = light-change refresh boost:
+		// 1 forces the probe field to adopt the new measurement immediately
+		// (a light moved - don't wait for the hysteresis to catch up).
 		glm::vec4 timeParams;
 	};
 
@@ -335,6 +338,20 @@ private:
 	// Gates the probe RT pipeline + trace pass + probe TLAS build. Shading
 	// bindings stay valid either way (--no-probes keeps the atlases zeroed).
 	bool probeTracingEnabled = true;
+
+	// Light-change detection: snapshots the probe-relevant light state so a
+	// moved light triggers a fast probe-field refresh instead of waiting for
+	// the temporal hysteresis to catch up.
+	std::vector<GPULight> m_prevProbeLights;
+	int m_probeRefreshFrames = 0;
+	bool lightsChangedForProbes();
+
+	// Debug: ImGui texture handles for the live probe atlases (recreated
+	// whenever the volume is rebuilt - the views change).
+	ImTextureID probeIrradianceTexID = nullptr;
+	ImTextureID probeDepthTexID = nullptr;
+	VkImageView m_probeTexSourceView = VK_NULL_HANDLE;
+	void updateProbeDebugTextures();
 
 	// Accumulation
 	VkImage accumOutputImage = VK_NULL_HANDLE;

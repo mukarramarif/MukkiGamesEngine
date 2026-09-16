@@ -58,6 +58,11 @@ struct ProbeDebugState {
 
 	// 3D overlay visualization
 	bool showProbes = false;
+
+	// Live atlas previews (ImGui texture handles owned by VulkanApplication;
+	// null until the probe volume exists and the debug textures are registered)
+	ImTextureID irradianceTexID = nullptr;
+	ImTextureID depthTexID = nullptr;
 };
 class UIManager {
 public:

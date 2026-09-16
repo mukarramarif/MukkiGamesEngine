@@ -60,72 +60,12 @@ float chebyshevWeight(vec2 moments, float depth) {
     return max(p * p * p, 0.05);
 }
 
-// Trilinear + octahedral + Chebyshev probe lookup.
-// This is THE function every consumer uses (probe feedback + final shading).
-vec3 sampleProbeIrradiance(sampler2D irrTex, sampler2D depthTex,
-                           vec3 pos, vec3 normal,
-                           vec3 volumeOrigin, float probeSpacing, ivec3 probeCounts,
-                           float tilesPerSide, float normalBias)
-{
-    // Bias the lookup point off the surface so the shading point's own
-    // probe doesn't self-shadow the sample.
-    vec3 biasedPos = pos + normal * normalBias;
-
-    vec3 q  = (biasedPos - volumeOrigin) / probeSpacing;
-    // Clamp into the grid interior so edge probes still have 8 neighbors.
-    vec3 qc = clamp(q, vec3(0.5), vec3(probeCounts) - vec3(0.5001));
-    vec3 basef = qc - vec3(0.5);
-    ivec3 base = ivec3(floor(basef));
-    vec3 frac  = basef - vec3(base);
-
-    vec3  result      = vec3(0.0);
-    float totalWeight = 0.0;
-
-    // Fallback: the nearest probe (highest trilinear weight) regardless of
-    // visibility/backface rejection, so surfaces never sample nothing.
-    float bestTriW  = -1.0;
-    vec3  bestIrradiance = vec3(0.0);
-
-    for (int dz = 0; dz <= 1; dz++)
-    for (int dy = 0; dy <= 1; dy++)
-    for (int dx = 0; dx <= 1; dx++) {
-        ivec3 idx = base + ivec3(dx, dy, dz);
-        uint probeIndex = uint((idx.z * probeCounts.y + idx.y) * probeCounts.x + idx.x);
-
-        vec3 w = vec3(1.0) - abs(vec3(dx, dy, dz) - frac);
-        float triW = w.x * w.y * w.z;
-        if (triW <= 0.0) continue;
-
-        vec3  probePos    = volumeOrigin + (vec3(idx) + vec3(0.5)) * probeSpacing;
-        vec3  toProbe     = probePos - biasedPos;
-        float distToProbe = length(toProbe);
-        vec3  dirToProbe  = toProbe / max(distToProbe, 1e-5);
-
-        vec2 oct = octEncode(dirToProbe);
-        ivec2 irrTexel   = ivec2(clamp(oct * float(PROBE_IRRADIANCE_TEXELS), vec2(0.0), vec2(PROBE_IRRADIANCE_TEXELS - 1.0)));
-        ivec2 depthTexel = ivec2(clamp(oct * float(PROBE_DEPTH_TEXELS),      vec2(0.0), vec2(PROBE_DEPTH_TEXELS - 1.0)));
-
-        uvec2 tile = uvec2(probeIndex % uint(tilesPerSide), probeIndex / uint(tilesPerSide));
-        ivec2 irrCoord   = ivec2(tile) * PROBE_IRRADIANCE_TEXELS + irrTexel;
-        ivec2 depthCoord = ivec2(tile) * PROBE_DEPTH_TEXELS      + depthTexel;
-
-        vec3  irr        = texelFetch(irrTex,   irrCoord,   0).rgb;
-        vec2  moments    = texelFetch(depthTex, depthCoord, 0).rg;
-        float visibility = chebyshevWeight(moments, distToProbe);
-
-        if (triW > bestTriW) {
-            bestTriW = triW;
-            bestIrradiance = irr;
-        }
-
-        // Backface rejection: probes BEHIND the surface (normal points away
-        // from them) leak light through walls - weight them down smoothly so
-        // adjacent triangles don't pop between 0 and full weight.
-        float backface = smoothstep(0.0, 0.2, dot(normal, dirToProbe));
-
-        float weight = triW * visibility * backface;
-        result      += irr * weight;
-        totalWeight += weight;
-    }
-    return totalWeight > 1e-5 ? result / totalWeight : bestIrradiance;
-}
+// std430 mirror of ProbeData (vulkan/Resources/ProbeVolume.h). Holds the
+// (possibly relocated) probe positions. Relocated probes must be sampled at
+// their ACTUAL positions: the stored octahedral texel directions and depth
+// moments are measured from the relocated origin, so grid-based lookup
+// produces blotchy, mis-indexed shading.
+struct ProbeData {
+    vec4 pos;          // xyz = probe world position
+    vec4 rotationSeed; // xy = per-probe random rotation values
+};

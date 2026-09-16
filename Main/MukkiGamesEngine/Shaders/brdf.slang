@@ -103,10 +103,19 @@ struct ProbeVolumeParams {
     float4 shadow;      // x = probe shadow strength, y = penumbra softening
 };
 
+// std430 mirror of ProbeData (vulkan/Resources/ProbeVolume.h). Relocated
+// probes must be sampled at their ACTUAL positions - the stored octahedral
+// texel directions and depth moments are measured from the relocated origin.
+struct ProbeData {
+    float4 pos;          // xyz = probe world position
+    float4 rotationSeed; // unused by the raster
+};
+
 [[vk::binding(5, 0)]] Sampler2D<float4> probeIrradiance;  // atlas, GENERAL layout
 [[vk::binding(6, 0)]] Sampler2D<float2> probeDepth;       // atlas, GENERAL layout
 [[vk::binding(7, 0)]] ConstantBuffer<ProbeVolumeParams> probeVolume;
 [[vk::binding(8, 0)]] SamplerCube<float4> skyboxCube;     // unused by shading (probes capture the skybox); kept for the binding
+[[vk::binding(9, 0)]] StructuredBuffer<ProbeData> probePositions;
 
 float2 probeOctEncode(float3 n) {
     n /= (abs(n.x) + abs(n.y) + abs(n.z));
@@ -168,7 +177,9 @@ float3 sampleProbeGI(float3 pos, float3 normal) {
         if (triW <= 0.0)
             continue;
 
-        float3 probePos = origin + (float3(idx) + float3(0.5, 0.5, 0.5)) * spacing;
+        // Relocated probes live in the SSBO; the grid formula would index
+        // the wrong octahedral texel and break the Chebyshev depth test.
+        float3 probePos = probePositions[uint(probeIndex)].pos.xyz;
         float3 toProbe = probePos - biasedPos;
         float distToProbe = length(toProbe);
         float3 dirToProbe = toProbe / max(distToProbe, 1e-5);

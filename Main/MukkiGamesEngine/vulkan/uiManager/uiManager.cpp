@@ -851,6 +851,21 @@ void UIManager::renderProbeDebugWindow(ProbeDebugState& state)
 	ImGui::Combo("Mode", &state.debugMode, modes, IM_ARRAYSIZE(modes));
 
 	ImGui::Separator();
+	ImGui::Text("Probe Atlases");
+	if (state.irradianceTexID) {
+		ImGui::Text("Irradiance (rgba16f, A = sun visibility)");
+		ImGui::Image(state.irradianceTexID, ImVec2(256, 256));
+	} else {
+		ImGui::TextDisabled("Irradiance atlas unavailable");
+	}
+	if (state.depthTexID) {
+		ImGui::Text("Depth (rg16f)");
+		ImGui::Image(state.depthTexID, ImVec2(256, 256));
+	} else {
+		ImGui::TextDisabled("Depth atlas unavailable");
+	}
+
+	ImGui::Separator();
 	ImGui::Text("3D Overlay");
 	ImGui::Checkbox("Show probe positions", &state.showProbes);
 	ImGui::TextWrapped("Green = probe on its grid slot, red = relocated "

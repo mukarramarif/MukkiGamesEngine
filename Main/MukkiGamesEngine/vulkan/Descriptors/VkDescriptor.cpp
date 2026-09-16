@@ -63,7 +63,8 @@ void VkDescriptorBoss::updateDescriptorSets(
     VkSampler probeDepthSampler,
     VkBuffer probeParamsBuffer,
     VkImageView skyboxView,
-    VkSampler skyboxSampler)
+    VkSampler skyboxSampler,
+    VkBuffer probeDataBuffer)
 {
 	for (size_t i = 0; i < descriptorSets.size(); i++) {
 		std::vector<VkWriteDescriptorSet> descriptorWrites;
@@ -235,6 +236,23 @@ void VkDescriptorBoss::updateDescriptorSets(
             skyboxWrite.descriptorCount = 1;
             skyboxWrite.pImageInfo = &skyboxInfo;
             descriptorWrites.push_back(skyboxWrite);
+        }
+
+        // Probe data SSBO (binding = 9) - relocated probe positions
+        if (probeDataBuffer != VK_NULL_HANDLE) {
+            VkDescriptorBufferInfo probeDataInfo{};
+            probeDataInfo.buffer = probeDataBuffer;
+            probeDataInfo.offset = 0;
+            probeDataInfo.range = VK_WHOLE_SIZE;
+
+            VkWriteDescriptorSet probeDataWrite{};
+            probeDataWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            probeDataWrite.dstSet = descriptorSets[i];
+            probeDataWrite.dstBinding = 9;
+            probeDataWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            probeDataWrite.descriptorCount = 1;
+            probeDataWrite.pBufferInfo = &probeDataInfo;
+            descriptorWrites.push_back(probeDataWrite);
         }
 		// Update all descriptors
 		vkUpdateDescriptorSets(device->getDevice(), static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
