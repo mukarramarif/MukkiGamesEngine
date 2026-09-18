@@ -831,6 +831,10 @@ void UIManager::renderProbeDebugWindow(ProbeDebugState& state)
 	ImGui::SliderFloat("GI Strength", &state.giStrength, 0.0f, 5.0f);
 	ImGui::SliderFloat("Feedback Gain", &state.feedbackGain, 0.0f, 1.0f);
 	ImGui::SliderFloat("Probe Shadow Strength", &state.probeShadowStrength, 0.0f, 1.0f);
+	ImGui::SliderInt("BRDF Taps", &state.brdfTaps, 1, 32);
+	ImGui::TextWrapped("BRDF taps: 1 = legacy single-direction GI; higher = "
+	                   "cosine-weighted diffuse + roughness-cone specular "
+	                   "taps through the probe field (specular uses half).");
 	ImGui::SliderFloat("Hysteresis", &state.hysteresis, 0.0f, 1.0f);
 	ImGui::SliderFloat("Normal Bias", &state.normalBias, 0.0f, 1.0f);
 	ImGui::SliderFloat("Max Ray Distance", &state.maxRayDistance, 0.1f, 50.0f);

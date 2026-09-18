@@ -16,7 +16,8 @@ struct VolumeProbe{
    // Must match the mirrors in probeTrace.rgen and brdf.slang (std140).
    glm::vec4 debug;
    // Shadow information: x = probe shadow strength in the raster (0 = off,
-   // 1 = full), y = penumbra softening, zw = unused. The per-direction
+   // 1 = full), y = penumbra softening, z = BRDF tap count for the raster
+   // (1 = legacy single-direction lookup), w = unused. The per-direction
    // visibility itself lives in the irradiance atlas alpha channel.
    glm::vec4 shadow;
 };
@@ -60,6 +61,7 @@ public:
     void setRelocationEnabled(bool enabled);
     void setFeedbackGain(float gain);
     void setProbeShadowStrength(float strength);
+    void setBRDFTaps(int taps);
 
     // Debug: read the (possibly GPU-relocated) probe positions back from the
     // host-visible probe data buffer. Unsynchronized (torn reads possible) -

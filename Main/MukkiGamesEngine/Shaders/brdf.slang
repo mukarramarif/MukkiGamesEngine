@@ -100,7 +100,7 @@ struct ProbeVolumeParams {
     float4 params;      // x = spacing, y = maxRayDistance, z = hysteresis, w = normalBias
     float4 atlas;       // x = tilesPerSide, y = irradianceTexelsPerProbe, z = depthTexelsPerProbe, w = raysPerProbe
     float4 debug;       // x = debug mode (0 off, 1 GI only, 2 heatmap, 3 probe cells), y = GI strength
-    float4 shadow;      // x = probe shadow strength, y = penumbra softening
+    float4 shadow;      // x = probe shadow strength, y = penumbra softening, z = BRDF tap count (1 = legacy)
 };
 
 // std430 mirror of ProbeData (vulkan/Resources/ProbeVolume.h). Relocated
@@ -221,6 +221,159 @@ float3 sampleProbeGI(float3 pos, float3 normal) {
         totalWeight += weight;
     }
     return totalWeight > 1e-5 ? result / totalWeight : bestIrradiance;
+}
+
+// Deterministic per-pixel rotation seed so tap patterns decorrelate across
+// fragments (avoids screen-aligned banding from the fibonacci kernel).
+float probeHashRot(float3 p) {
+    return frac(sin(dot(p, float3(12.9898, 78.233, 37.719))) * 43758.5453);
+}
+
+// Cosine-weighted hemisphere sample (fibonacci + golden angle). With this
+// distribution the pdf cancels in the Monte Carlo estimator, so outgoing
+// diffuse radiance is just albedo * mean tap radiance.
+float3 probeCosineHemisphere(float3 n, int i, int taps, float rot) {
+    float3 helper = abs(n.z) < 0.999 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
+    float3 t = normalize(cross(helper, n));
+    float3 b = cross(n, t);
+    float u = (float(i) + 0.5) / float(taps);
+    float phi = 2.399963 * float(i) + rot;
+    float c = sqrt(u);
+    float s = sqrt(max(1.0 - u, 0.0));
+    return normalize(n * c + (t * cos(phi) + b * sin(phi)) * s);
+}
+
+// Sample inside a cone around 'axis' (uniform disk, mapped onto the sphere).
+// coneSin controls the half-angle: small = sharp reflections, large = blurry.
+float3 probeConeSample(float3 axis, int i, int taps, float coneSin, float rot) {
+    float3 helper = abs(axis.z) < 0.999 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
+    float3 t = normalize(cross(helper, axis));
+    float3 b = cross(axis, t);
+    float u = (float(i) + 0.5) / float(taps);
+    float phi = 2.399963 * float(i) + rot;
+    float r = coneSin * sqrt(u);
+    return normalize(axis * sqrt(max(1.0 - r * r, 0.0)) +
+                     (t * cos(phi) + b * sin(phi)) * r);
+}
+
+// Trilinear + octahedral + Chebyshev radiance fetch along an ARBITRARY world
+// direction (used by the BRDF taps). Returns (radiance, totalWeight).
+// Radiance is read from the texel for 'dir'; visibility uses the depth
+// moments along the line of sight to each probe (the only direction the
+// Chebyshev distance test is valid for).
+float4 sampleProbeDirectional(float3 pos, float3 normal, float3 dir) {
+    int3 counts = probeVolume.probeCounts.xyz;
+    if (counts.x < 2 || counts.y < 2 || counts.z < 2)
+        return float4(0.0, 0.0, 0.0, 0.0);
+
+    float3 origin = probeVolume.origin.xyz;
+    float spacing = probeVolume.params.x;
+    float normalBias = probeVolume.params.w;
+    float tilesPerSide = probeVolume.atlas.x;
+    float irrAtlasSize = tilesPerSide * float(PROBE_IRRADIANCE_TEXELS);
+    float depthAtlasSize = tilesPerSide * float(PROBE_DEPTH_TEXELS);
+
+    float3 biasedPos = pos + normal * normalBias;
+    float3 q = (biasedPos - origin) / spacing;
+    float3 qc = clamp(q, float3(0.5, 0.5, 0.5),
+                      float3(counts) - float3(0.5001, 0.5001, 0.5001));
+    float3 basef = qc - float3(0.5, 0.5, 0.5);
+    int3 base = int3(floor(basef));
+    float3 frac = basef - float3(base);
+
+    float3 result = float3(0.0, 0.0, 0.0);
+    float totalWeight = 0.0;
+
+    for (int dz = 0; dz <= 1; dz++)
+    for (int dy = 0; dy <= 1; dy++)
+    for (int dx = 0; dx <= 1; dx++) {
+        int3 idx = base + int3(dx, dy, dz);
+        int probeIndex = (idx.z * counts.y + idx.y) * counts.x + idx.x;
+
+        float3 w = float3(1.0, 1.0, 1.0) - abs(float3(dx, dy, dz) - frac);
+        float triW = w.x * w.y * w.z;
+        if (triW <= 0.0)
+            continue;
+
+        float3 probePos = probePositions[uint(probeIndex)].pos.xyz;
+        float3 toProbe = probePos - biasedPos;
+        float distToProbe = length(toProbe);
+        float3 dirToProbe = toProbe / max(distToProbe, 1e-5);
+
+        int2 tile = int2(probeIndex % int(tilesPerSide),
+                         probeIndex / int(tilesPerSide));
+
+        // Radiance for the queried direction.
+        float2 oct = probeOctEncode(dir);
+        int2 irrTexel = int2(clamp(oct * float(PROBE_IRRADIANCE_TEXELS),
+                                   float2(0.0, 0.0),
+                                   float2(PROBE_IRRADIANCE_TEXELS - 1,
+                                          PROBE_IRRADIANCE_TEXELS - 1)));
+        int2 irrCoord = tile * PROBE_IRRADIANCE_TEXELS + irrTexel;
+        float2 irrUV = (float2(irrCoord) + float2(0.5, 0.5)) /
+                       float2(irrAtlasSize, irrAtlasSize);
+        float3 irr = probeIrradiance.Sample(irrUV).rgb;
+
+        // Visibility along the line of sight to the probe.
+        float2 losOct = probeOctEncode(dirToProbe);
+        int2 depthTexel = int2(clamp(losOct * float(PROBE_DEPTH_TEXELS),
+                                     float2(0.0, 0.0),
+                                     float2(PROBE_DEPTH_TEXELS - 1,
+                                            PROBE_DEPTH_TEXELS - 1)));
+        int2 depthCoord = tile * PROBE_DEPTH_TEXELS + depthTexel;
+        float2 depthUV = (float2(depthCoord) + float2(0.5, 0.5)) /
+                         float2(depthAtlasSize, depthAtlasSize);
+        float2 moments = probeDepth.Sample(depthUV).rg;
+        float visibility = probeChebyshevWeight(moments, distToProbe);
+
+        float backface = smoothstep(0.0, 0.2, dot(normal, dirToProbe));
+        float weight = triW * visibility * backface;
+        result += irr * weight;
+        totalWeight += weight;
+    }
+    return float4(result, totalWeight);
+}
+
+// BRDF diffuse term: cosine-weighted hemisphere taps through the probe field.
+// Returns mean tap radiance (caller multiplies by albedo; the cosine-weighted
+// pdf cancels in the estimator). taps == 1 falls back to the legacy
+// single-direction irradiance lookup.
+float3 sampleProbeDiffuse(float3 pos, float3 normal, int taps) {
+    if (taps <= 1)
+        return sampleProbeGI(pos, normal);
+
+    float rot = probeHashRot(pos) * 6.2831853;
+    float3 sum = float3(0.0, 0.0, 0.0);
+    float wsum = 0.0;
+    for (int i = 0; i < taps; i++) {
+        float3 dir = probeCosineHemisphere(normal, i, taps, rot);
+        float4 tap = sampleProbeDirectional(pos, normal, dir);
+        sum += tap.rgb;
+        wsum += tap.w;
+    }
+    return wsum > 1e-4 ? sum / max(wsum, 1e-4) : sampleProbeGI(pos, normal);
+}
+
+// BRDF specular term: cone taps around the reflection direction, spread by
+// roughness (no roughness mips, so the cone average substitutes for the
+// prefilter). Returns mean reflection radiance; the caller modulates with
+// Fresnel. taps == 1 samples the mirror direction directly.
+float3 sampleProbeSpecular(float3 pos, float3 normal, float3 viewDir,
+                           float roughness, int taps) {
+    float3 R = reflect(-viewDir, normal);
+    float coneSin = lerp(0.03, 0.9, clamp(roughness, 0.0, 1.0));
+    float rot = probeHashRot(pos + R * 3.0) * 6.2831853;
+
+    float3 sum = float3(0.0, 0.0, 0.0);
+    float wsum = 0.0;
+    for (int i = 0; i < taps; i++) {
+        float3 dir = probeConeSample(R, i, taps, coneSin, rot);
+        float4 tap = sampleProbeDirectional(pos, normal, dir);
+        sum += tap.rgb;
+        wsum += tap.w;
+    }
+    return wsum > 1e-4 ? sum / max(wsum, 1e-4)
+                       : sampleProbeGI(pos, normal) / 3.14159265;
 }
 
 // Probe-based soft shadow query: trilinearly blends the per-direction sun
@@ -617,16 +770,28 @@ PSOutput main(PSInput input) {
     // on them for its look).
     float roughness = max(material.roughnessFactor, 0.02);
 
+    // BRDF probe sampling: diffuse = cosine-weighted hemisphere taps,
+    // specular = roughness-cone taps around the reflection direction. Tap
+    // count is the live quality knob (probeVolume.shadow.z); 1 tap falls
+    // back to the legacy single-direction lookup.
+    int giTaps = clamp(int(probeVolume.shadow.z), 1, 32);
+    float3 giDiffuse = sampleProbeDiffuse(input.fragWorldPos, normal, giTaps) *
+                       probeVolume.debug.y;
+    float3 giSpecular =
+        sampleProbeSpecular(input.fragWorldPos, normal, viewDir, roughness,
+                            max(giTaps / 2, 1)) *
+        probeVolume.debug.y;
+
     float shadow = calculateShadow(input.fragLightSpacePos);
-    // Irradiance field stores cosine-weighted incoming radiance; the diffuse
-    // response scales it by albedo / pi.
-    float3 indirect = ubo.ambientStrength * albedo + gi * albedo / 3.14159265;
+    // Cosine-weighted taps make the pdf cancel: outgoing diffuse radiance is
+    // albedo * mean tap radiance (the field stores cosine-weighted radiance).
+    float3 indirectDiffuse = ubo.ambientStrength * albedo + giDiffuse * albedo;
 
     // KHR_materials_diffuse_transmission: the diffuse lobe is split between
     // reflection and transmission, so the reflected side scales by (1 - dt).
     // Glass (transmission) has no diffuse response at all.
     float dt = material.diffuseTransmissionFactor;
-    float3 ambient = indirect * (1.0 - dt) * (1.0 - transmission);
+    float3 ambient = indirectDiffuse * (1.0 - dt) * (1.0 - transmission);
 
     // Transmitted side: approximate the light coming through the surface
     // (the raster path has no behind-scene buffer to sample). Beer-Lambert
@@ -634,7 +799,7 @@ PSOutput main(PSInput input) {
     float thickness = max(material.thicknessFactor, 0.0);
     float3 atten = pow(float3(material.attenuationR, material.attenuationG, material.attenuationB),
                        thickness / max(material.attenuationDistance, 1e-3));
-    float3 transmitted = indirect * atten *
+    float3 transmitted = indirectDiffuse * atten *
                          float3(material.diffuseTransmissionR,
                                 material.diffuseTransmissionG,
                                 material.diffuseTransmissionB);
@@ -684,7 +849,13 @@ PSOutput main(PSInput input) {
 
     // Like the path tracer (rt.rgen), transmissive surfaces skip the direct
     // light response: glass is purely environment-driven.
-    float3 result = (transmission > 0.0) ? glassColor : (ambient + lighting);
+    // Probe-field specular: Fresnel modulates the cone-averaged reflection
+    // (F0 = albedo for metals, so reflections tint with the base color).
+    float3 F0gi = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
+    float3 Fgi = fresnelWithIridescence(max(dot(normal, viewDir), 0.0), F0gi);
+    float3 result = (transmission > 0.0)
+        ? glassColor
+        : (ambient + lighting + giSpecular * Fgi * (1.0 - dt));
 
     // Clear coat layering (on top of base BRDF). Skipped for glass: the
     // coat fresnel zeroes the result at grazing angles, which combined with

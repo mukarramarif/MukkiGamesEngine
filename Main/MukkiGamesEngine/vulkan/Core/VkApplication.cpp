@@ -1586,6 +1586,7 @@ void VulkanApplication::mainLoop() {
         probeDbg.giStrength = params.debug.y;
         probeDbg.feedbackGain = params.debug.w;
         probeDbg.probeShadowStrength = params.shadow.x;
+        probeDbg.brdfTaps = std::max(1, static_cast<int>(params.shadow.z));
         probeDbg.debugMode = static_cast<int>(params.debug.x);
         probeDbg.relocationEnabled = params.debug.z > 0.5f;
 
@@ -1626,6 +1627,7 @@ void VulkanApplication::mainLoop() {
         probeVolume->setGIStrength(probeDbg.giStrength);
         probeVolume->setFeedbackGain(probeDbg.feedbackGain);
         probeVolume->setProbeShadowStrength(probeDbg.probeShadowStrength);
+        probeVolume->setBRDFTaps(probeDbg.brdfTaps);
         probeVolume->setDebugMode(probeDbg.debugMode);
         probeVolume->setRelocationEnabled(probeDbg.relocationEnabled);
         if (probeDbg.resetHistory) {

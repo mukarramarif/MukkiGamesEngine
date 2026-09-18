@@ -32,7 +32,7 @@ bool ProbeVolume::init(Device* deviceIn,
     m_params.probeCounts = glm::ivec4(probeCounts, static_cast<int>(m_probeCount));
     m_params.params      = glm::vec4(probeSpacing, probeSpacing * 4.0f, 0.97f, 0.25f);
     m_params.debug       = glm::vec4(0.0f, 1.0f, 1.0f, 0.5f); // mode off, GI strength 1, relocation on, feedback gain 0.5
-    m_params.shadow      = glm::vec4(0.0f, 1.0f, 0.0f, 0.0f); // probe shadows off by default
+    m_params.shadow      = glm::vec4(0.0f, 1.0f, 8.0f, 0.0f); // probe shadows off, BRDF taps = 8
     m_params.atlas       = glm::vec4(static_cast<float>(m_tilesPerSide),
                                      static_cast<float>(m_irradianceTexels),
                                      static_cast<float>(m_depthTexels),
@@ -68,6 +68,7 @@ void ProbeVolume::setGIStrength(float strength)      { m_params.debug.y = streng
 void ProbeVolume::setRelocationEnabled(bool enabled) { m_params.debug.z = enabled ? 1.0f : 0.0f; updateParams(); }
 void ProbeVolume::setFeedbackGain(float gain)        { m_params.debug.w = gain;           updateParams(); }
 void ProbeVolume::setProbeShadowStrength(float s)    { m_params.shadow.x = s;             updateParams(); }
+void ProbeVolume::setBRDFTaps(int taps)              { m_params.shadow.z = static_cast<float>(taps); updateParams(); }
 
 bool ProbeVolume::getProbePositionsCPU(std::vector<glm::vec4>& outPositions) const
 {

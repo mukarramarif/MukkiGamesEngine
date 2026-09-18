@@ -48,6 +48,7 @@ struct ProbeDebugState {
 	float giStrength = 1.0f;
 	float feedbackGain = 0.5f;
 	float probeShadowStrength = 0.0f;
+	int brdfTaps = 8;             // probe-field BRDF tap count (1 = legacy)
 	int debugMode = 0;            // 0 = off, 1 = GI only, 2 = heatmap, 3 = probe cells
 	bool relocationEnabled = true;
 	bool resetHistory = false;

@@ -19,7 +19,7 @@ layout(std140, set = 0, binding = 1) uniform ProbeVolumeParamsBlock {
     vec4  params;      // x = spacing, y = maxRayDistance, z = hysteresis, w = normalBias
     vec4  atlas;       // x = tilesPerSide, y = irradianceTexelsPerProbe, z = depthTexelsPerProbe, w = raysPerProbe
     vec4  debug;       // x = raster debug mode, y = GI strength, z = relocation enabled, w = feedback gain
-    vec4  shadow;      // x = raster probe-shadow strength, y = penumbra softening
+    vec4  shadow;      // x = raster probe-shadow strength, y = penumbra softening, z = BRDF tap count
 } probeVolume;
 
 // ProbeData now lives in probeCommon.glsl (shared with the sampler).
