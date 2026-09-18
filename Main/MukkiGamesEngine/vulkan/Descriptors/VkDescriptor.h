@@ -26,8 +26,18 @@ public:
 				VkSampler textureSampler,
 				VkImageView shadowMapImageView = VK_NULL_HANDLE,
 				VkSampler shadowMapSampler = VK_NULL_HANDLE,
-		        VkImageView cubeShadowImageView = VK_NULL_HANDLE,
-		        VkSampler cubeShadowSampler = VK_NULL_HANDLE);
+		        const std::vector<VkImageView>& cubeShadowImageViews = {},
+		        const std::vector<VkSampler>& cubeShadowSamplers = {},
+		                VkImageView probeIrradianceView = VK_NULL_HANDLE,
+		                VkSampler probeIrradianceSampler = VK_NULL_HANDLE,
+		                VkImageView probeDepthView = VK_NULL_HANDLE,
+		                VkSampler probeDepthSampler = VK_NULL_HANDLE,
+		            VkBuffer probeParamsBuffer = VK_NULL_HANDLE,
+		            VkImageView skyboxView = VK_NULL_HANDLE,
+		            VkSampler skyboxSampler = VK_NULL_HANDLE,
+		            VkImageView emissiveView = VK_NULL_HANDLE,
+		            VkSampler emissiveSampler = VK_NULL_HANDLE,
+		            VkBuffer probeDataBuffer = VK_NULL_HANDLE);
 		void destroyDescriptorPool();
 		~VkDescriptorBoss();
 		void cleanup();

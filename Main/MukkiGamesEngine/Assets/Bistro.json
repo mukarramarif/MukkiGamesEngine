@@ -1,46 +1,33 @@
 {
-  "sceneName": "Bistro",
+  "sceneName": "Amazon Lumberyard Bistro",
   "skyboxPath": "autumn_field_puresky_4k.hdr",
-  "ambientStrenght": 0.4,
-  "cameraSpawnPos": [0.0, 2.0, 5.0],
+  "ambientStrenght": 0.35,
+  "cameraSpawnPos": [0.0, 2.0, 12.0],
   "Lights": [
     {
       "name": "Sun",
       "type": "Directional",
-      "direction": [-0.5, -1.0, -0.3],
-      "color": [1.0, 0.95, 0.8],
-      "intensity": 1.0,
+      "direction": [-0.4, -0.9, -0.3],
+      "color": [1.0, 0.95, 0.85],
+      "intensity": 1.2,
       "enabled": true
     },
     {
-      "name": "PointLight1",
+      "name": "CourtyardFill",
       "type": "Point",
-      "position": [2.0, 3.0, 1.0],
-      "color": [1.0, 0.5, 0.5],
-      "intensity": 0.8,
-      "enabled": true
-    },
-    {
-      "name": "PointLight2",
-      "type": "Point",
-      "position": [-2.0, 3.0, 1.0],
-      "color": [0.5, 0.5, 1.0],
-      "intensity": 0.8,
-      "enabled": true
-    },
-    {
-      "name": "PointLight3",
-      "type": "Point",
-      "position": [0.0, 3.0, -2.0],
-      "color": [0.5, 1.0, 0.5],
-      "intensity": 0.8,
+      "position": [0.0, 6.0, 0.0],
+      "color": [0.7, 0.75, 0.8],
+      "intensity": 6.0,
+      "constant": 1.0,
+      "linear": 0.09,
+      "quadratic": 0.032,
       "enabled": true
     }
   ],
   "Objects": [
     {
       "name": "Bistro",
-      "modelPath": "niagara_bistro-master/niagara_bistro-master/bistrox.gltf",
+      "modelPath": "niagara_bistro-master/niagara_bistro-master/bistro.gltf",
       "position": [0.0, 0.0, 0.0],
       "rotation": [0.0, 0.0, 0.0],
       "scale": [1.0, 1.0, 1.0],

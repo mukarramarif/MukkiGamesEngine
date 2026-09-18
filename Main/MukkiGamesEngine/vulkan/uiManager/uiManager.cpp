@@ -810,3 +810,74 @@ void UIManager::renderCloudNoiseWindow(struct CloudNoiseParams& params, bool& re
 	ImGui::EndDisabled();
 	ImGui::End();
 }
+
+void UIManager::renderProbeDebugWindow(ProbeDebugState& state)
+{
+	ImGui::Begin("Probe Debug");
+	if (!state.valid) {
+		ImGui::Text("No probe volume (probes disabled).");
+		ImGui::End();
+		return;
+	}
+
+	ImGui::Text("Grid: %d x %d x %d = %u probes",
+	            state.counts.x, state.counts.y, state.counts.z, state.totalProbes);
+	ImGui::Text("Spacing: %.3f | Rays/probe: %u | Atlas tiles: %u",
+	            state.spacing, state.raysPerProbe, state.tilesPerSide);
+	ImGui::Text("Origin: (%.2f, %.2f, %.2f)", state.origin.x, state.origin.y, state.origin.z);
+
+	ImGui::Separator();
+	ImGui::Text("Tuning");
+	ImGui::SliderFloat("GI Strength", &state.giStrength, 0.0f, 5.0f);
+	ImGui::SliderFloat("Feedback Gain", &state.feedbackGain, 0.0f, 1.0f);
+	ImGui::SliderFloat("Probe Shadow Strength", &state.probeShadowStrength, 0.0f, 1.0f);
+	ImGui::SliderInt("BRDF Taps", &state.brdfTaps, 1, 32);
+	ImGui::TextWrapped("BRDF taps: 1 = legacy single-direction GI; higher = "
+	                   "cosine-weighted diffuse + roughness-cone specular "
+	                   "taps through the probe field (specular uses half).");
+	ImGui::SliderFloat("Hysteresis", &state.hysteresis, 0.0f, 1.0f);
+	ImGui::SliderFloat("Normal Bias", &state.normalBias, 0.0f, 1.0f);
+	ImGui::SliderFloat("Max Ray Distance", &state.maxRayDistance, 0.1f, 50.0f);
+
+	ImGui::Separator();
+	ImGui::Text("Relocation");
+	ImGui::Checkbox("Probe relocation", &state.relocationEnabled);
+	float relocPct = state.totalProbes > 0
+	    ? 100.0f * static_cast<float>(state.relocatedProbes) / static_cast<float>(state.totalProbes)
+	    : 0.0f;
+	ImGui::Text("Relocated probes: %u / %u (%.1f%%)", state.relocatedProbes,
+	            state.totalProbes, relocPct);
+	ImGui::Text("Max relocation: %.3f", state.maxRelocation);
+
+	ImGui::Separator();
+	ImGui::Text("Raster Debug View");
+	const char* modes[] = { "Off", "GI only", "GI heatmap", "Probe cells", "Probe quality" };
+	ImGui::Combo("Mode", &state.debugMode, modes, IM_ARRAYSIZE(modes));
+
+	ImGui::Separator();
+	ImGui::Text("Probe Atlases");
+	if (state.irradianceTexID) {
+		ImGui::Text("Irradiance (rgba16f, A = sun visibility)");
+		ImGui::Image(state.irradianceTexID, ImVec2(256, 256));
+	} else {
+		ImGui::TextDisabled("Irradiance atlas unavailable");
+	}
+	if (state.depthTexID) {
+		ImGui::Text("Depth (rg16f)");
+		ImGui::Image(state.depthTexID, ImVec2(256, 256));
+	} else {
+		ImGui::TextDisabled("Depth atlas unavailable");
+	}
+
+	ImGui::Separator();
+	ImGui::Text("3D Overlay");
+	ImGui::Checkbox("Show probe positions", &state.showProbes);
+	ImGui::TextWrapped("Green = probe on its grid slot, red = relocated "
+	                   "(was inside geometry).");
+
+	if (ImGui::Button("Reset probe history")) {
+		state.resetHistory = true;
+	}
+
+	ImGui::End();
+}

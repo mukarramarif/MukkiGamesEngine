@@ -3,9 +3,12 @@
 #include "TextureManager.h"
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <iostream>
 #include <stdexcept>
+#include <nlohmann/json.hpp>
+#include <ktxvulkan.h>  // ktxTexture_GetVkFormat etc.
 
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
@@ -129,13 +132,107 @@ bool ObjectLoader::loadGLTF(const std::string &filepath, Model &outModel) {
   tinygltf::TinyGLTF loader;
   std::string err, warn;
 
-  bool result = false;
+  	bool result = false;
 
-  if (filepath.find(".glb") != std::string::npos) {
-    result = loader.LoadBinaryFromFile(&gltfModel, &err, &warn, filepath);
-  } else {
-    result = loader.LoadASCIIFromFile(&gltfModel, &err, &warn, filepath);
-  }
+  	// Base directory for resolving relative asset paths
+  	const std::string baseDir =
+  		filepath.substr(0, filepath.find_last_of("/\\") + 1);
+
+  	if (filepath.find(".glb") != std::string::npos) {
+  		result = loader.LoadBinaryFromFile(&gltfModel, &err, &warn, filepath);
+  	} else {
+  		// MSFT_texture_dds / DDS images are not decodable by tinygltf, so
+  		// preprocess the JSON: record the KTX/DDS variants for later loading
+  		// through libktx and strip them from the document tinygltf parses.
+  		std::ifstream ifs(filepath, std::ios::binary);
+  		std::string jsonText((std::istreambuf_iterator<char>(ifs)),
+  		                     std::istreambuf_iterator<char>());
+  		ifs.close();
+
+  		outModel.ktxTexturePaths.clear();
+  		try {
+  			nlohmann::json j = nlohmann::json::parse(jsonText);
+  			if (j.contains("images") && j["images"].is_array()) {
+  				auto &images = j["images"];
+  				std::vector<bool> isDds(images.size(), false);
+  				std::vector<std::string> imageDdsPath(images.size());
+
+  				for (size_t i = 0; i < images.size(); ++i) {
+  					auto &img = images[i];
+  					if (img.contains("extensions") &&
+  					    img["extensions"].contains("MSFT_texture_dds")) {
+  						int ddsSource =
+  						    img["extensions"]["MSFT_texture_dds"].value("source", -1);
+  						if (ddsSource >= 0 &&
+  						    ddsSource < static_cast<int>(images.size())) {
+  							isDds[ddsSource] = true;
+  							imageDdsPath[i] =
+  							    images[ddsSource].value("uri", std::string());
+  						}
+  						img["extensions"].erase("MSFT_texture_dds");
+  						if (img["extensions"].empty())
+  							img.erase("extensions");
+  					}
+  				}
+
+				// Texture index -> DDS path (recorded before renumbering), and
+				// the set of images referenced by any texture's source.
+				std::vector<bool> referenced(images.size(), false);
+				if (j.contains("textures") && j["textures"].is_array()) {
+					outModel.ktxTexturePaths.resize(j["textures"].size());
+					for (size_t t = 0; t < j["textures"].size(); ++t) {
+						const auto &tex = j["textures"][t];
+						if (!tex.contains("source"))
+							continue;
+						int s = tex["source"].get<int>();
+						if (s >= 0 && s < static_cast<int>(images.size())) {
+							referenced[s] = true;
+							outModel.ktxTexturePaths[t] = imageDdsPath[s];
+						}
+					}
+				}
+
+				// Drop the DDS images and renumber the remaining sources.
+				// Any unreferenced .dds file is removed too (e.g. splash
+				// images): tinygltf cannot decode DDS and a single failure
+				// poisons the whole load.
+				std::vector<int> remap(images.size(), -1);
+				nlohmann::json newImages = nlohmann::json::array();
+				for (size_t i = 0; i < images.size(); ++i) {
+					if (isDds[i])
+						continue;
+					const std::string uri = images[i].value("uri", std::string());
+					const bool isDdsFile =
+					    uri.size() >= 4 && uri.compare(uri.size() - 4, 4, ".dds") == 0;
+					if (isDdsFile && !referenced[i])
+						continue;
+					remap[i] = static_cast<int>(newImages.size());
+					newImages.push_back(images[i]);
+				}
+				j["images"] = newImages;
+
+  				if (j.contains("textures") && j["textures"].is_array()) {
+  					for (auto &tex : j["textures"]) {
+  						if (!tex.contains("source"))
+  							continue;
+  						int oldSrc = tex["source"].get<int>();
+  						if (oldSrc >= 0 && oldSrc < static_cast<int>(remap.size()) &&
+  						    remap[oldSrc] >= 0)
+  							tex["source"] = remap[oldSrc];
+  					}
+  				}
+  			}
+  			jsonText = j.dump();
+  		} catch (const std::exception &e) {
+  			std::cerr << "glTF preprocessing failed (" << e.what()
+  			          << "); falling back to raw parse" << std::endl;
+  		}
+
+  		result = loader.LoadASCIIFromString(&gltfModel, &err, &warn,
+  		                                    jsonText.c_str(),
+  		                                    static_cast<unsigned int>(jsonText.size()),
+  		                                    baseDir);
+  	}
 
   if (!warn.empty()) {
     std::cout << "glTF Warning: " << warn << std::endl;
@@ -158,7 +255,7 @@ bool ObjectLoader::loadGLTF(const std::string &filepath, Model &outModel) {
   std::cout << "  Images: " << gltfModel.images.size() << std::endl;
   std::cout << "  Nodes: " << gltfModel.nodes.size() << std::endl;
 
-  loadTextures(gltfModel, outModel);
+  	loadTextures(gltfModel, outModel, baseDir);
   loadMaterials(gltfModel, outModel);
   loadVariants(gltfModel, outModel);
   if (!outModel.variantNames.empty()) {
@@ -205,7 +302,7 @@ bool ObjectLoader::loadGLTF(const std::string &filepath, Model &outModel) {
 }
 
 void ObjectLoader::loadTextures(const tinygltf::Model &gltfModel,
-                                Model &model) {
+                                Model &model, const std::string &baseDir) {
   size_t textureCount = gltfModel.textures.size();
   model.textures.resize(textureCount);
 
@@ -256,29 +353,40 @@ void ObjectLoader::loadTextures(const tinygltf::Model &gltfModel,
     f.get();
   }
 
-  // Phase 2: Upload textures to GPU sequentially
-  for (size_t i = 0; i < textureCount; i++) {
-    const tinygltf::Texture &gltfTexture = gltfModel.textures[i];
-    const tinygltf::Image &gltfImage = gltfModel.images[gltfTexture.source];
+  	// Phase 2: Upload textures to GPU sequentially
+  	for (size_t i = 0; i < textureCount; i++) {
+  		const tinygltf::Texture &gltfTexture = gltfModel.textures[i];
+  		LoadedTexture &outTexture = model.textures[i];
 
-    if (gltfImage.image.empty() || gltfImage.width == 0 ||
-        gltfImage.height == 0) {
-      std::cerr << "Invalid image data for texture " << i << std::endl;
-      continue;
-    }
+  		// Prefer the KTX/DDS variant (MSFT_texture_dds) loaded through libktx:
+  		// BC-compressed, smaller on the GPU, and carries a full mip chain.
+  		bool loadedViaKtx = false;
+  		if (i < model.ktxTexturePaths.size() &&
+  		    !model.ktxTexturePaths[i].empty()) {
+  			loadedViaKtx =
+  			    loadTextureWithKtx(baseDir + model.ktxTexturePaths[i], outTexture);
+  		}
 
-    int channels = gltfImage.component;
-    LoadedTexture &outTexture = model.textures[i];
-    outTexture.width = static_cast<uint32_t>(widths[i]);
-    outTexture.height = static_cast<uint32_t>(heights[i]);
+  		if (!loadedViaKtx) {
+  			const tinygltf::Image &gltfImage = gltfModel.images[gltfTexture.source];
+  			if (gltfImage.image.empty() || gltfImage.width == 0 ||
+  			    gltfImage.height == 0) {
+  				std::cerr << "Invalid image data for texture " << i << std::endl;
+  				continue;
+  			}
 
-    const unsigned char *pixelData =
-        channels == 4 ? gltfImage.image.data() : convertedBuffers[i].data();
+  			int channels = gltfImage.component;
+  			outTexture.width = static_cast<uint32_t>(widths[i]);
+  			outTexture.height = static_cast<uint32_t>(heights[i]);
 
-    uploadTextureToGPU(pixelData, widths[i], heights[i], outTexture);
+  			const unsigned char *pixelData =
+  			    channels == 4 ? gltfImage.image.data() : convertedBuffers[i].data();
 
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  			uploadTextureToGPU(pixelData, widths[i], heights[i], outTexture);
+  		}
+
+  		VkSamplerCreateInfo samplerInfo{};
+  		samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 
     if (gltfTexture.sampler >= 0 &&
         gltfTexture.sampler < static_cast<int>(gltfModel.samplers.size())) {
@@ -295,21 +403,23 @@ void ObjectLoader::loadTextures(const tinygltf::Model &gltfModel,
       samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     }
 
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.anisotropyEnable = VK_TRUE;
+    		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    		samplerInfo.anisotropyEnable = VK_TRUE;
 
-    VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(device->getPhysicalDevice(), &properties);
-    samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+    		VkPhysicalDeviceProperties properties{};
+    		vkGetPhysicalDeviceProperties(device->getPhysicalDevice(), &properties);
+    		samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
 
-    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    samplerInfo.mipLodBias = 0.0f;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 0.0f;
+    		samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    		samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    		samplerInfo.compareEnable = VK_FALSE;
+    		samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    		samplerInfo.mipLodBias = 0.0f;
+    		samplerInfo.minLod = 0.0f;
+    		// KTX/DDS textures carry a full mip chain
+    		samplerInfo.maxLod =
+    		    static_cast<float>(outTexture.mipLevels > 1 ? outTexture.mipLevels - 1 : 0);
 
     {
       std::lock_guard<std::mutex> lock(vulkanMutex);
@@ -362,7 +472,113 @@ void ObjectLoader::uploadTextureToGPU(const unsigned char *pixelData, int width,
   outTexture.imageView = textureManager->createImageView(
       outTexture.image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 
-  bufferManager->destroyBuffer(stagingBuffer, stagingBufferMemory);
+  	bufferManager->destroyBuffer(stagingBuffer, stagingBufferMemory);
+}
+
+bool ObjectLoader::loadTextureWithKtx(const std::string &path,
+                                      LoadedTexture &outTexture) {
+	ktxTexture *texture = nullptr;
+	KTX_error_code result = ktxTexture_CreateFromNamedFile(
+	    path.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &texture);
+	if (result != KTX_SUCCESS || !texture)
+		return false;
+
+	VkFormat format = ktxTexture_GetVkFormat(texture);
+	if (format == VK_FORMAT_UNDEFINED) {
+		ktxTexture_Destroy(texture);
+		return false;
+	}
+
+	// The format must be sampleable with optimal tiling on this device
+	VkFormatProperties props{};
+	vkGetPhysicalDeviceFormatProperties(device->getPhysicalDevice(), format, &props);
+	if (!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {
+		ktxTexture_Destroy(texture);
+		return false;
+	}
+
+	const uint32_t width = texture->baseWidth;
+	const uint32_t height = texture->baseHeight;
+	const uint32_t mipLevels = texture->numLevels;
+	if (width == 0 || height == 0 || mipLevels == 0) {
+		ktxTexture_Destroy(texture);
+		return false;
+	}
+
+	const ktx_size_t totalSize = ktxTexture_GetDataSize(texture);
+	const ktx_uint8_t *srcData = ktxTexture_GetData(texture);
+	const bool blockCompressed = texture->isCompressed == KTX_TRUE;
+
+	// Everything from here touches Vulkan resources; async model loads can
+	// run concurrently, so take the same mutex as uploadTextureToGPU.
+	std::lock_guard<std::mutex> lock(vulkanMutex);
+
+	VkBuffer stagingBuffer;
+	VkDeviceMemory stagingMemory;
+	bufferManager->createBuffer(totalSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+	                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+	                                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+	                            stagingBuffer, stagingMemory);
+
+	void *mapped = nullptr;
+	vkMapMemory(device->getDevice(), stagingMemory, 0, totalSize, 0, &mapped);
+
+	std::vector<VkBufferImageCopy> regions(mipLevels);
+	VkDeviceSize running = 0;
+	for (uint32_t level = 0; level < mipLevels; ++level) {
+		ktx_size_t offset = 0;
+		if (ktxTexture_GetImageOffset(texture, level, 0, 0, &offset) != KTX_SUCCESS) {
+			vkUnmapMemory(device->getDevice(), stagingMemory);
+			bufferManager->destroyBuffer(stagingBuffer, stagingMemory);
+			ktxTexture_Destroy(texture);
+			return false;
+		}
+		const ktx_size_t size = ktxTexture_GetImageSize(texture, level);
+		memcpy(static_cast<char *>(mapped) + running, srcData + offset,
+		       static_cast<size_t>(size));
+
+		uint32_t mipW = std::max(1u, width >> level);
+		uint32_t mipH = std::max(1u, height >> level);
+		if (blockCompressed) {
+			// Block-compressed (BCn/ETC2) mip extents must be multiples of 4
+			mipW = std::max(4u, ((mipW + 3) / 4) * 4);
+			mipH = std::max(4u, ((mipH + 3) / 4) * 4);
+		}
+
+		regions[level] = {};
+		regions[level].bufferOffset = running;
+		regions[level].imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		regions[level].imageSubresource.mipLevel = level;
+		regions[level].imageSubresource.baseArrayLayer = 0;
+		regions[level].imageSubresource.layerCount = 1;
+		regions[level].imageExtent = {mipW, mipH, 1};
+		running += size;
+	}
+	vkUnmapMemory(device->getDevice(), stagingMemory);
+
+	textureManager->createImage(
+	    width, height, format, VK_IMAGE_TILING_OPTIMAL,
+	    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+	    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, outTexture.image,
+	    outTexture.memory, false, mipLevels);
+	textureManager->transitionImageLayout(
+	    outTexture.image, format, VK_IMAGE_LAYOUT_UNDEFINED,
+	    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, false, mipLevels);
+	textureManager->copyBufferToImageRegions(stagingBuffer, outTexture.image,
+	                                         regions);
+	textureManager->transitionImageLayout(
+	    outTexture.image, format, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false, mipLevels);
+	outTexture.imageView = textureManager->createImageView(
+	    outTexture.image, format, VK_IMAGE_ASPECT_COLOR_BIT, false, mipLevels);
+
+	bufferManager->destroyBuffer(stagingBuffer, stagingMemory);
+	ktxTexture_Destroy(texture);
+
+	outTexture.width = width;
+	outTexture.height = height;
+	outTexture.mipLevels = mipLevels;
+	return true;
 }
 
 VkSamplerAddressMode ObjectLoader::getVkWrapMode(int wrapMode) {
@@ -427,16 +643,57 @@ void ObjectLoader::loadMaterials(const tinygltf::Model &gltfModel,
       material.roughnessFactor = static_cast<float>(
           gltfMaterial.values.at("roughnessFactor").Factor());
     }
-    if (gltfMaterial.values.find("baseColorTexture") !=
-        gltfMaterial.values.end()) {
-      const tinygltf::Parameter &texInfo =
-          gltfMaterial.values.at("baseColorTexture");
-      material.baseColorTextureIndex = texInfo.TextureIndex();
-      parseTextureTransform(gltfMaterial.pbrMetallicRoughness.baseColorTexture,
-                            material.baseColorUvTransform);
-    }
+    	if (gltfMaterial.values.find("baseColorTexture") !=
+    	    gltfMaterial.values.end()) {
+    		const tinygltf::Parameter &texInfo =
+    		    gltfMaterial.values.at("baseColorTexture");
+    		material.baseColorTextureIndex = texInfo.TextureIndex();
+    		parseTextureTransform(gltfMaterial.pbrMetallicRoughness.baseColorTexture,
+    		                      material.baseColorUvTransform);
+    	}
 
-    model.materials.push_back(material);
+    	// KHR_materials_pbrSpecularGlossiness (Bistro uses this): convert to the
+    	// metallic-roughness model (approximation, three.js-style).
+    	if (gltfMaterial.extensions.contains("KHR_materials_pbrSpecularGlossiness")) {
+    		const auto &sg = gltfMaterial.extensions.at("KHR_materials_pbrSpecularGlossiness");
+    		if (sg.Has("diffuseFactor")) {
+    			const auto &c = sg.Get("diffuseFactor");
+    			material.baseColorFactor = glm::vec4(
+    			    static_cast<float>(c.Get(0).Get<double>()),
+    			    static_cast<float>(c.Get(1).Get<double>()),
+    			    static_cast<float>(c.Get(2).Get<double>()),
+    			    static_cast<float>(c.Get(3).Get<double>()));
+    		}
+    		float specLum = 1.0f;
+    		if (sg.Has("specularFactor")) {
+    			const auto &c = sg.Get("specularFactor");
+    			float r = static_cast<float>(c.Get(0).Get<double>());
+    			float g = static_cast<float>(c.Get(1).Get<double>());
+    			float b = static_cast<float>(c.Get(2).Get<double>());
+    			specLum = std::max(r, std::max(g, b));
+    		}
+    		if (sg.Has("glossinessFactor")) {
+    			float gloss =
+    			    static_cast<float>(sg.Get("glossinessFactor").Get<double>());
+    			material.roughnessFactor = 1.0f - gloss;
+    		}
+    		material.metallicFactor = glm::clamp(specLum, 0.0f, 1.0f);
+    		material.baseColorFactor.r *= (1.0f - material.metallicFactor);
+    		material.baseColorFactor.g *= (1.0f - material.metallicFactor);
+    		material.baseColorFactor.b *= (1.0f - material.metallicFactor);
+    		if (sg.Has("diffuseTexture")) {
+    			const auto &t = sg.Get("diffuseTexture");
+    			if (t.Has("index"))
+    				material.baseColorTextureIndex = t.Get("index").Get<int>();
+    		}
+    		if (sg.Has("specularGlossinessTexture")) {
+    			const auto &t = sg.Get("specularGlossinessTexture");
+    			if (t.Has("index"))
+    				material.metallicRoughnessTextureIndex = t.Get("index").Get<int>();
+    		}
+    	}
+
+    	model.materials.push_back(material);
   }
   // Process emissive properties
   for (size_t i = 0; i < gltfModel.materials.size(); i++) {
@@ -487,6 +744,11 @@ void ObjectLoader::loadMaterials(const tinygltf::Model &gltfModel,
         mat.transmissionFactor =
             static_cast<float>(ext.Get("transmissionFactor").Get<double>());
       }
+      // Glass renders through the transparent pass (fresnel alpha blend),
+      // regardless of alphaMode.
+      if (mat.transmissionFactor > 0.0f) {
+        mat.isTransparent = true;
+      }
     }
     if (gltfMat.extensions.contains("KHR_materials_volume")) {
       const auto &ext = gltfMat.extensions.at("KHR_materials_volume");
@@ -500,6 +762,17 @@ void ObjectLoader::loadMaterials(const tinygltf::Model &gltfModel,
       if (ext.Has("attenuationDistance")) {
         mat.attenuationDistance =
             static_cast<float>(ext.Get("attenuationDistance").Get<double>());
+      }
+      if (ext.Has("thicknessFactor")) {
+        mat.thicknessFactor =
+            static_cast<float>(ext.Get("thicknessFactor").Get<double>());
+      }
+      if (ext.Has("thicknessTexture")) {
+        const auto &tex = ext.Get("thicknessTexture");
+        if (tex.Has("index")) {
+          mat.thicknessTextureIndex =
+              static_cast<int>(tex.Get("index").Get<double>());
+        }
       }
     }
     if (gltfMat.extensions.contains("KHR_materials_diffuse_transmission")) {

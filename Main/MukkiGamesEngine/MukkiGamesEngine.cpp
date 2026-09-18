@@ -22,6 +22,10 @@ int main(int argc, char* argv[])
 			config.windowHeight = std::stoi(argv[++i]);
 		} else if (arg == "--title" && i + 1 < argc) {
 			config.windowTitle = argv[++i];
+		} else if (arg == "--no-validation") {
+			config.enableValidation = false;
+		} else if (arg == "--no-probes") {
+			config.enableProbeGI = false;
 		}
 	}
 
@@ -32,7 +36,7 @@ int main(int argc, char* argv[])
 		renderer.shutdown();
 	} else {
 		std::cout << "Unknown backend: " << backend << std::endl;
-		std::cout << "Usage: ./exe --backend vulkan [--scene <path>] [--width <w>] [--height <h>] [--title <title>]" << std::endl;
+		std::cout << "Usage: ./exe --backend vulkan [--scene <path>] [--width <w>] [--height <h>] [--title <title>] [--no-validation] [--no-probes]" << std::endl;
 	}
 
 	return 0;

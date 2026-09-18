@@ -31,6 +31,40 @@ struct ModelTransform {
 	float autoRotateSpeed = 0.5f;
 	int autoRotateAxis = 1;
 };
+// Live probe GI debug/tuning state shared between VulkanApplication and the UI.
+struct ProbeDebugState {
+	bool valid = false;
+	glm::ivec3 counts = glm::ivec3(0);
+	uint32_t totalProbes = 0;
+	float spacing = 0.0f;
+	glm::vec3 origin = glm::vec3(0.0f);
+	uint32_t raysPerProbe = 0;
+	uint32_t tilesPerSide = 0;
+
+	// Tuning knobs (applied to the probe volume after the window runs)
+	float hysteresis = 0.97f;
+	float normalBias = 0.25f;
+	float maxRayDistance = 0.0f;
+	float giStrength = 1.0f;
+	float feedbackGain = 0.5f;
+	float probeShadowStrength = 0.0f;
+	int brdfTaps = 8;             // probe-field BRDF tap count (1 = legacy)
+	int debugMode = 0;            // 0 = off, 1 = GI only, 2 = heatmap, 3 = probe cells
+	bool relocationEnabled = true;
+	bool resetHistory = false;
+
+	// Relocation readback stats (diagnostics only)
+	uint32_t relocatedProbes = 0;
+	float maxRelocation = 0.0f;
+
+	// 3D overlay visualization
+	bool showProbes = false;
+
+	// Live atlas previews (ImGui texture handles owned by VulkanApplication;
+	// null until the probe volume exists and the debug textures are registered)
+	ImTextureID irradianceTexID = nullptr;
+	ImTextureID depthTexID = nullptr;
+};
 class UIManager {
 public:
 	UIManager();
@@ -66,6 +100,7 @@ public:
 	void renderDebugLines(const std::vector<DebugLineVertex>& lines,
 		const glm::mat4& view, const glm::mat4& proj, int width, int height);
 	void renderVariantWindow(const std::vector<std::string>& variantNames, int& selectedVariant);
+	void renderProbeDebugWindow(ProbeDebugState& state);
 
 private:
 	VkDevice device = VK_NULL_HANDLE;

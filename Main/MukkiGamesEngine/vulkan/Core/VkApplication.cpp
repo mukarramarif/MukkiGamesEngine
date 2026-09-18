@@ -16,6 +16,7 @@
 #include <array>
 #include <bindings/imgui_impl_vulkan.h>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 // Example vertices (triangle)
@@ -428,14 +429,24 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
   window->init(config.windowWidgth, config.windowHeight,
                config.windowTitle.c_str());
   glfwSetWindowUserPointer(window->getGLFWwindow(), this);
+
+  // Capture-friendly switches: disable the validation layer and/or the
+  // probe ray tracing pipeline (layer/RenderDoc interaction crashes)
+  instance.enableValidationLayers = config.enableValidation;
+  probeTracingEnabled = config.enableProbeGI;
+  std::cout << "[init] validation=" << (config.enableValidation ? "on" : "off")
+            << " probes=" << (config.enableProbeGI ? "on" : "off") << std::endl;
+
   // 2. Create instance (Vulkan context)
   instance.createInstance();
+  std::cout << "[init] instance created" << std::endl;
 
   // 3. Create surface (connection between Vulkan and window)
   VkSurfaceKHR surface = window->createSurface(instance.getInstance());
 
   // 4. Create device (select GPU and create logical device)
   device = std::make_unique<Device>(instance, surface);
+  std::cout << "[init] logical device created" << std::endl;
 
   // 5. Create swap chain (manages images for presentation)
   swapChain = std::make_unique<VulkanSwap>();
@@ -443,8 +454,12 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
   swapChain->createImageViews();
   shadowMap = std::make_unique<ShadowMap>();
   shadowMap->init(device.get(), 2048);
-  shadowCubeMap = std::make_unique<ShadowCubeMap>();
-  shadowCubeMap->init(device.get(), 1024, 50.0f);
+  // One cube shadow map per point-light shadow slot.
+  for (int i = 0; i < MAX_POINT_SHADOWS; ++i) {
+    auto cube = std::make_unique<ShadowCubeMap>();
+    cube->init(device.get(), 1024, 50.0f);
+    shadowCubeMaps.push_back(std::move(cube));
+  }
   // 6. Create render pass (defines how rendering operations are performed)
   renderPassObj = std::make_unique<VulkanRenderPass>(
       device.get(), swapChain->getSwapChainImageFormat());
@@ -506,6 +521,7 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
 
   // 12. Create graphics pipeline (shaders and rendering configuration)
   createGraphicsPipeline();
+  initLineRenderer();
 
   initComputePipeline();
   initCloudPipeline();
@@ -525,6 +541,15 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
     setupDefaultLights();
   }
 
+  // Load the scene and build the probe volume BEFORE creating the raster
+  // descriptor sets: the global sets bind the probe atlases (bindings 5-7)
+  // and the per-object sets need a rebind after the volume exists.
+  loadSceneObjects();
+  std::cout << "[init] scene objects loaded" << std::endl;
+  initProbeTracing();
+  bindProbeDescriptorsToLoadedObjects();
+  initPhysics();
+
   // 14. Create descriptor sets (for uniforms, textures, etc.)
   descriptorBoss =
       std::make_unique<VkDescriptorBoss>(device.get(), MAX_FRAMES_IN_FLIGHT);
@@ -533,25 +558,38 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
       descriptorSetLayout, // Use the member variable
       MAX_FRAMES_IN_FLIGHT, descriptorSets);
 
+  std::vector<VkImageView> cubeViews;
+  std::vector<VkSampler> cubeSamplers;
+  for (auto &cube : shadowCubeMaps) {
+    cubeViews.push_back(cube->getCubeMapImageView());
+    cubeSamplers.push_back(cube->getCubeMapSampler());
+  }
   descriptorBoss->updateDescriptorSets(
       descriptorSets, uniformBuffers, defaultMaterialUniformBuffers,
       textureImageView, textureSampler,
       shadowMap ? shadowMap->getShadowMapImageView() : VK_NULL_HANDLE,
       shadowMap ? shadowMap->getShadowSampler() : VK_NULL_HANDLE,
-      shadowCubeMap ? shadowCubeMap->getCubeMapImageView() : VK_NULL_HANDLE,
-      shadowCubeMap ? shadowCubeMap->getCubeMapSampler() : VK_NULL_HANDLE);
+      cubeViews, cubeSamplers,
+      probeVolume ? probeVolume->getIrradianceView(0) : VK_NULL_HANDLE,
+      probeVolume ? probeVolume->getSampler() : VK_NULL_HANDLE,
+      probeVolume ? probeVolume->getDepthView(0) : VK_NULL_HANDLE,
+      probeVolume ? probeVolume->getSampler() : VK_NULL_HANDLE,
+      probeVolume ? probeVolume->getParamsBuffer() : VK_NULL_HANDLE,
+      skybox ? skybox->getCubemapImageView() : VK_NULL_HANDLE,
+      skybox ? skybox->getCubemapSampler() : VK_NULL_HANDLE,
+      textureImageView, textureSampler,
+      probeVolume ? probeVolume->getProbeDataBuffer() : VK_NULL_HANDLE);
 
   createRayTracingDescriptorPool();
   createRayTracingDescriptorSet();
 
-  loadSceneObjects();
-  initPhysics();
-
   // 15. Create synchronization objects (semaphores and fences)
   createSyncObjects();
+  std::cout << "[init] sync objects created" << std::endl;
 
   // Frame graph
   renderGraph.init(*device);
+  std::cout << "[init] init complete, entering main loop" << std::endl;
 
   // Initialize camera
   glm::vec3 camPos = sceneLoader->hasCameraSettings()
@@ -725,6 +763,13 @@ void VulkanApplication::createDefaultMaterialUniformBuffers() {
   defaultMaterial.baseColorG = 1.0f;
   defaultMaterial.baseColorB = 1.0f;
   defaultMaterial.alpha = 1.0f;
+  // Identity UV transforms (scale 1, no rotation/offset)
+  defaultMaterial.baseColorUvSx = 1.0f;
+  defaultMaterial.baseColorUvSy = 1.0f;
+  defaultMaterial.metallicRoughnessUvSx = 1.0f;
+  defaultMaterial.metallicRoughnessUvSy = 1.0f;
+  defaultMaterial.emissiveUvSx = 1.0f;
+  defaultMaterial.emissiveUvSy = 1.0f;
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     device->createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -772,14 +817,21 @@ void VulkanApplication::updateUniformBuffer(uint32_t currentImage) {
   if (shadowMap) {
     ubo.padding[0] = 1.0f / static_cast<float>(shadowMap->getShadowMapSize());
   }
-  ubo.pointShadowParams = glm::vec4(0.0f);
-  if (shadowCubeMap) {
+  // Cube-shadow slots: the first MAX_POINT_SHADOWS enabled point lights, in
+  // the same order the shadow pass renders them. The shader indexes these
+  // statically (unrolled), so they're packed into their own arrays.
+  ubo.numPointLights = 0;
+  if (!shadowCubeMaps.empty()) {
+    const float invFar = 1.0f / shadowCubeMaps[0]->getFarPlane();
     for (const auto &light : lights) {
-      if (light.enabled && light.type == LightType::Point) {
-        ubo.pointShadowParams =
-            glm::vec4(light.position, 1.0f / shadowCubeMap->getFarPlane());
+      if (!(light.enabled && light.type == LightType::Point))
+        continue;
+      if (ubo.numPointLights >= MAX_POINT_SHADOWS)
         break;
-      }
+      ubo.pointLights[ubo.numPointLights] = light.toGPU();
+      ubo.pointShadowParams[ubo.numPointLights] =
+          glm::vec4(light.position, invFar);
+      ++ubo.numPointLights;
     }
   }
   memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
@@ -821,14 +873,21 @@ void VulkanApplication::updatePerObjectUBO(LoadedObject &obj,
   if (shadowMap) {
     ubo.padding[0] = 1.0f / static_cast<float>(shadowMap->getShadowMapSize());
   }
-  ubo.pointShadowParams = glm::vec4(0.0f);
-  if (shadowCubeMap) {
+  // Cube-shadow slots: the first MAX_POINT_SHADOWS enabled point lights, in
+  // the same order the shadow pass renders them. The shader indexes these
+  // statically (unrolled), so they're packed into their own arrays.
+  ubo.numPointLights = 0;
+  if (!shadowCubeMaps.empty()) {
+    const float invFar = 1.0f / shadowCubeMaps[0]->getFarPlane();
     for (const auto &light : lights) {
-      if (light.enabled && light.type == LightType::Point) {
-        ubo.pointShadowParams =
-            glm::vec4(light.position, 1.0f / shadowCubeMap->getFarPlane());
+      if (!(light.enabled && light.type == LightType::Point))
+        continue;
+      if (ubo.numPointLights >= MAX_POINT_SHADOWS)
         break;
-      }
+      ubo.pointLights[ubo.numPointLights] = light.toGPU();
+      ubo.pointShadowParams[ubo.numPointLights] =
+          glm::vec4(light.position, invFar);
+      ++ubo.numPointLights;
     }
   }
   memcpy(obj.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
@@ -861,20 +920,26 @@ void VulkanApplication::buildFrameGraph() {
       dirShadowInfo, shadowMap->getShadowImage(), VK_NULL_HANDLE,
       shadowMap->getShadowMapImageView());
 
-  FrameGraphResourceInfo cubeShadowInfo{};
-  cubeShadowInfo.external = true;
-  cubeShadowInfo.initialLayout = m_cubeShadowLayout; // UNDEFINED first frame
-  cubeShadowInfo.texture = {shadowCubeMap->getSize(),
-                            shadowCubeMap->getSize(),
-                            6,
-                            1,
-                            VK_FORMAT_D32_SFLOAT,
-                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                                VK_IMAGE_USAGE_SAMPLED_BIT,
-                            VK_IMAGE_ASPECT_DEPTH_BIT};
-  m_cubeShadowHandle = renderGraph.importTexture(
-      cubeShadowInfo, shadowCubeMap->getCubeMapImage(), VK_NULL_HANDLE,
-      shadowCubeMap->getCubeMapImageView());
+  // One cube shadow resource + render pass per point-light shadow slot.
+  for (uint32_t slot = 0; slot < MAX_POINT_SHADOWS; ++slot) {
+    if (slot >= shadowCubeMaps.size())
+      break;
+    auto &cube = shadowCubeMaps[slot];
+    FrameGraphResourceInfo cubeShadowInfo{};
+    cubeShadowInfo.external = true;
+    cubeShadowInfo.initialLayout = m_cubeShadowLayouts[slot]; // UNDEFINED first frame
+    cubeShadowInfo.texture = {cube->getSize(),
+                              cube->getSize(),
+                              6,
+                              1,
+                              VK_FORMAT_D32_SFLOAT,
+                              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                                  VK_IMAGE_USAGE_SAMPLED_BIT,
+                              VK_IMAGE_ASPECT_DEPTH_BIT};
+    m_cubeShadowHandles[slot] = renderGraph.importTexture(
+        cubeShadowInfo, cube->getCubeMapImage(), VK_NULL_HANDLE,
+        cube->getCubeMapImageView());
+  }
 
   // ── Passes (execution order derives from the resource dependencies) ───────
   renderGraph.addPass(
@@ -884,24 +949,34 @@ void VulkanApplication::buildFrameGraph() {
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}},
       [this](VkCommandBuffer cmd) { recordShadowPass(cmd); });
 
-  renderGraph.addPass(
-      "PointShadows", {},
-      {{m_cubeShadowHandle,
-        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}},
-      [this](VkCommandBuffer cmd) { recordPointShadowPass(cmd); });
+  for (uint32_t slot = 0; slot < MAX_POINT_SHADOWS; ++slot) {
+    if (slot >= shadowCubeMaps.size())
+      break;
+    renderGraph.addPass(
+        "PointShadows_" + std::to_string(slot), {},
+        {{m_cubeShadowHandles[slot],
+          VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+              VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+          VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+          VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}},
+        [this, slot](VkCommandBuffer cmd) { recordPointShadowPass(cmd, slot); });
+  }
 
   // Transition-only node: the forward recording runs right after graph
   // execution, but the shadow maps must be in sampled layout first.
-  renderGraph.addPass(
-      "Forward",
-      {{m_dirShadowHandle, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-       {m_cubeShadowHandle, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}},
-      {}, [](VkCommandBuffer) {});
+  std::vector<FrameGraphResourceUsage> forwardReads;
+  forwardReads.push_back({m_dirShadowHandle, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                          VK_ACCESS_SHADER_READ_BIT,
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+  for (uint32_t slot = 0; slot < MAX_POINT_SHADOWS; ++slot) {
+    if (slot >= shadowCubeMaps.size())
+      break;
+    forwardReads.push_back({m_cubeShadowHandles[slot],
+                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                            VK_ACCESS_SHADER_READ_BIT,
+                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+  }
+  renderGraph.addPass("Forward", forwardReads, {}, [](VkCommandBuffer) {});
 
   renderGraph.compile();
 }
@@ -983,6 +1058,10 @@ void VulkanApplication::drawFrame() {
     skybox->updateUniformBuffer(currentFrame, view);
   }
 
+  if (probeGIEnabled) {
+    updateProbeUniformBuffer();
+  }
+
   // 5. Record command buffer
   commandBufferManager->resetCommandBuffer(currentFrame);
   VkCommandBuffer commandBuffer =
@@ -994,19 +1073,31 @@ void VulkanApplication::drawFrame() {
     recordRayTracingCommandBuffer(commandBuffer, imageIndex);
     swapChainImageLayouts[imageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
   } else {
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+      throw std::runtime_error("failed to begin recording command buffer!");
+    }
+
+    // Probe-based GI: update the irradiance/depth atlases with ray tracing
+    // BEFORE the raster pass reads them (barriers are inside the pass).
+    // Requires scene geometry (BLAS/TLAS), so only when models are loaded.
+    if (probeGIEnabled && hasLoadedModels) {
+      recordProbeUpdatePass(commandBuffer);
+    }
+
+    // Frame graph: shadow passes + transitions into the main pass. Runs
+    // every frame (even without loaded models) so the cube shadow map
+    // tracks moving point lights and both shadow textures are in
+    // SHADER_READ_ONLY_OPTIMAL before the main pass samples them.
+    buildFrameGraph();
+    renderGraph.execute(commandBuffer);
+    m_dirShadowLayout = renderGraph.getLayout(m_dirShadowHandle);
+    for (uint32_t slot = 0; slot < MAX_POINT_SHADOWS && slot < shadowCubeMaps.size(); ++slot) {
+      m_cubeShadowLayouts[slot] = renderGraph.getLayout(m_cubeShadowHandles[slot]);
+    }
+
     if (hasLoadedModels) {
-      VkCommandBufferBeginInfo beginInfo{};
-      beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-      if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
-        throw std::runtime_error("failed to begin recording command buffer!");
-      }
-
-      // Frame graph: shadow passes + transitions into the main pass
-      buildFrameGraph();
-      renderGraph.execute(commandBuffer);
-      m_dirShadowLayout = renderGraph.getLayout(m_dirShadowHandle);
-      m_cubeShadowLayout = renderGraph.getLayout(m_cubeShadowHandle);
-
       VkPipeline mainPipeline = graphicsPipeline->getGraphicsPipeline();
       VkPipeline transparentPipe =
           transparentPipeline ? transparentPipeline->getGraphicsPipeline()
@@ -1031,14 +1122,11 @@ void VulkanApplication::drawFrame() {
         }
       }
 
+      drawDebugLines(commandBuffer, imageIndex);
       uiManager->render(commandBuffer);
       commandBufferManager->endModelRenderPass(commandBuffer);
 
       recordCloudCommandBuffer(commandBuffer, imageIndex);
-
-      if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("failed to record command buffer!");
-      }
     } else {
       // Fallback to default quad rendering
       commandBufferManager->recordCommandBuffer(
@@ -1049,6 +1137,10 @@ void VulkanApplication::drawFrame() {
           indexBuffer, swapChain->getSwapChainImages()[imageIndex],
           swapChainImageLayouts[imageIndex], descriptorSets, currentFrame,
           indexCount, *uiManager);
+    }
+
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("failed to record command buffer!");
     }
     // Track swap chain image layout for graphics mode
     swapChainImageLayouts[imageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
@@ -1387,6 +1479,37 @@ void VulkanApplication::mainLoop() {
           }
 
           loadSceneObjects();
+          if (probeGIEnabled && probeTracingPipeline) {
+            buildProbeVolumeFromScene();
+            createProbeDescriptorSet();  // rebind new atlas views
+            resetProbeHistory();
+            bindProbeDescriptorsToLoadedObjects();
+            // The global raster sets (fallback path) also hold the old atlas
+            // views - rebind them to the rebuilt volume.
+            if (descriptorBoss) {
+              std::vector<VkImageView> cubeViews;
+              std::vector<VkSampler> cubeSamplers;
+              for (auto &cube : shadowCubeMaps) {
+                cubeViews.push_back(cube->getCubeMapImageView());
+                cubeSamplers.push_back(cube->getCubeMapSampler());
+              }
+              descriptorBoss->updateDescriptorSets(
+                  descriptorSets, uniformBuffers, defaultMaterialUniformBuffers,
+                  textureImageView, textureSampler,
+                  shadowMap ? shadowMap->getShadowMapImageView() : VK_NULL_HANDLE,
+                  shadowMap ? shadowMap->getShadowSampler() : VK_NULL_HANDLE,
+                  cubeViews, cubeSamplers,
+                  probeVolume ? probeVolume->getIrradianceView(0) : VK_NULL_HANDLE,
+                  probeVolume ? probeVolume->getSampler() : VK_NULL_HANDLE,
+                  probeVolume ? probeVolume->getDepthView(0) : VK_NULL_HANDLE,
+                  probeVolume ? probeVolume->getSampler() : VK_NULL_HANDLE,
+                  probeVolume ? probeVolume->getParamsBuffer() : VK_NULL_HANDLE,
+                  skybox ? skybox->getCubemapImageView() : VK_NULL_HANDLE,
+                  skybox ? skybox->getCubemapSampler() : VK_NULL_HANDLE,
+                  textureImageView, textureSampler,
+                  probeVolume ? probeVolume->getProbeDataBuffer() : VK_NULL_HANDLE);
+            }
+          }
           initPhysics();
 
           if (sceneLoader->hasCameraSettings()) {
@@ -1443,6 +1566,78 @@ void VulkanApplication::mainLoop() {
                                     physPositions, physSpeeds, physRPMs,
                                     physGears);
     }
+
+    // ── Probe GI debug / tuning panel ──
+    {
+      ProbeDebugState probeDbg;
+      // The overlay toggle lives only in the UI state; round-trip it
+      // through the member so the checkbox keeps its value across frames.
+      probeDbg.showProbes = showProbeDebugVisualization;
+      if (probeVolume) {
+        const VolumeProbe &params = probeVolume->getParams();
+        probeDbg.valid = true;
+        probeDbg.counts = glm::ivec3(params.probeCounts);
+        probeDbg.totalProbes = probeVolume->getProbeCount();
+        probeDbg.spacing = params.params.x;
+        probeDbg.origin = glm::vec3(params.origin);
+        probeDbg.raysPerProbe = static_cast<uint32_t>(params.atlas.w);
+        probeDbg.tilesPerSide = probeVolume->getTilesPerSide();
+        probeDbg.hysteresis = params.params.z;
+        probeDbg.normalBias = params.params.w;
+        probeDbg.maxRayDistance = params.params.y;
+        probeDbg.giStrength = params.debug.y;
+        probeDbg.feedbackGain = params.debug.w;
+        probeDbg.probeShadowStrength = params.shadow.x;
+        probeDbg.brdfTaps = std::max(1, static_cast<int>(params.shadow.z));
+        probeDbg.debugMode = static_cast<int>(params.debug.x);
+        probeDbg.relocationEnabled = params.debug.z > 0.5f;
+
+        // Relocation readback: compare GPU probe positions against their
+        // grid slots. The probe data buffer is host-visible and may be
+        // written concurrently by the probe pass (torn reads are fine for
+        // diagnostics).
+        std::vector<glm::vec4> positions;
+        if (probeVolume->getProbePositionsCPU(positions)) {
+          uint32_t moved = 0;
+          float maxD = 0.0f;
+          for (uint32_t i = 0; i < positions.size(); ++i) {
+            const float d = glm::distance(
+                glm::vec3(positions[i]), probeVolume->gridPositionForIndex(i));
+            if (d > 1e-4f) {
+              ++moved;
+              maxD = glm::max(maxD, d);
+            }
+          }
+          probeDbg.relocatedProbes = moved;
+          probeDbg.maxRelocation = maxD;
+        }
+      }
+
+      // Live atlas textures for the debug window (recreated if the volume
+      // was rebuilt and the views changed).
+      updateProbeDebugTextures();
+      probeDbg.irradianceTexID = probeIrradianceTexID;
+      probeDbg.depthTexID = probeDepthTexID;
+
+      uiManager->renderProbeDebugWindow(probeDbg);
+      showProbeDebugVisualization = probeDbg.showProbes;
+
+      if (probeVolume) {
+        probeVolume->setHysteresis(probeDbg.hysteresis);
+        probeVolume->setNormalBias(probeDbg.normalBias);
+        probeVolume->setMaxRayDistance(probeDbg.maxRayDistance);
+        probeVolume->setGIStrength(probeDbg.giStrength);
+        probeVolume->setFeedbackGain(probeDbg.feedbackGain);
+        probeVolume->setProbeShadowStrength(probeDbg.probeShadowStrength);
+        probeVolume->setBRDFTaps(probeDbg.brdfTaps);
+        probeVolume->setDebugMode(probeDbg.debugMode);
+        probeVolume->setRelocationEnabled(probeDbg.relocationEnabled);
+        if (probeDbg.resetHistory) {
+          resetProbeHistory();
+        }
+      }
+    }
+
     drawFrame();
   }
 
@@ -1538,6 +1733,17 @@ void VulkanApplication::cleanup() {
     vkFreeMemory(device->getDevice(), vertexBufferMemory, nullptr);
   }
 
+  // Debug line vertex buffer
+  if (lineVertexBuffer != VK_NULL_HANDLE) {
+    vkDestroyBuffer(device->getDevice(), lineVertexBuffer, nullptr);
+    lineVertexBuffer = VK_NULL_HANDLE;
+  }
+  if (lineVertexBufferMemory != VK_NULL_HANDLE) {
+    vkFreeMemory(device->getDevice(), lineVertexBufferMemory, nullptr);
+    lineVertexBufferMemory = VK_NULL_HANDLE;
+  }
+  linePipeline.reset();
+
   // TAA cleanup
   if (taaPipelineLayout != VK_NULL_HANDLE) {
     vkDestroyPipelineLayout(device->getDevice(), taaPipelineLayout, nullptr);
@@ -1576,6 +1782,20 @@ void VulkanApplication::cleanup() {
     rayTracingDescriptorSetLayout = VK_NULL_HANDLE;
   }
 
+  // ImGui preview textures reference the probe atlas views; drop them
+  // before the views/sampler are destroyed.
+  if (probeIrradianceTexID) {
+    ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)probeIrradianceTexID);
+    probeIrradianceTexID = nullptr;
+  }
+  if (probeDepthTexID) {
+    ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)probeDepthTexID);
+    probeDepthTexID = nullptr;
+  }
+  m_probeTexSourceView = VK_NULL_HANDLE;
+
+  cleanupProbeResources();
+
   commandBufferManager.reset();
   skybox.reset();
   graphicsPipeline.reset();
@@ -1598,10 +1818,10 @@ void VulkanApplication::cleanup() {
     shadowMap->cleanup();
     shadowMap.reset();
   }
-  if (shadowCubeMap) {
-    shadowCubeMap->cleanup();
-    shadowCubeMap.reset();
+  for (auto &cube : shadowCubeMaps) {
+    cube->cleanup();
   }
+  shadowCubeMaps.clear();
   textureManager.reset();
   bufferManager.reset();
   uiManager.reset();
@@ -2438,7 +2658,8 @@ void VulkanApplication::loadSceneObjects() {
   }
 
   createRayTracingGeometryBuffers();
-  if (rayTracingAS && currentRenderMode == RenderMode::RAYTRACING) {
+  if (rayTracingAS &&
+      (currentRenderMode == RenderMode::RAYTRACING || probeTracingEnabled)) {
     rayTracingAS->clearBLAS();
     for (auto &obj : loadedObjects) {
       if (obj.loaded) {
@@ -2446,7 +2667,9 @@ void VulkanApplication::loadSceneObjects() {
       }
     }
     rayTracingAS->buildTLASAll(loadedObjects, 0);
-    createRayTracingDescriptorSet();
+    if (rayTracingDescriptorPool != VK_NULL_HANDLE) {
+      createRayTracingDescriptorSet();
+    }
   }
 }
 
@@ -2479,16 +2702,60 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
       obj.materialUniformBuffersMapped[matIndex].resize(MAX_FRAMES_IN_FLIGHT);
 
       MaterialUBO materialData{};
-      materialData.metallicFactor =
-          obj.model.materials[matIndex].metallicFactor;
-      materialData.roughnessFactor =
-          obj.model.materials[matIndex].roughnessFactor;
+      const Material &mat = obj.model.materials[matIndex];
+      materialData.metallicFactor = mat.metallicFactor;
+      materialData.roughnessFactor = mat.roughnessFactor;
       materialData.clearCoatFactor = 1.0f;
       materialData.clearCoatRoughness = 0.5f;
-      materialData.baseColorR = obj.model.materials[matIndex].baseColorFactor.r;
-      materialData.baseColorG = obj.model.materials[matIndex].baseColorFactor.g;
-      materialData.baseColorB = obj.model.materials[matIndex].baseColorFactor.b;
-      materialData.alpha = obj.model.materials[matIndex].baseColorFactor.a;
+      materialData.baseColorR = mat.baseColorFactor.r;
+      materialData.baseColorG = mat.baseColorFactor.g;
+      materialData.baseColorB = mat.baseColorFactor.b;
+      materialData.alpha = mat.baseColorFactor.a;
+      // KHR_texture_transform per slot (mirrors the RT bake)
+      materialData.baseColorUvOx = mat.baseColorUvTransform.offset.x;
+      materialData.baseColorUvOy = mat.baseColorUvTransform.offset.y;
+      materialData.baseColorUvRot = mat.baseColorUvTransform.rotation;
+      materialData.baseColorUvSx = mat.baseColorUvTransform.scale.x;
+      materialData.baseColorUvSy = mat.baseColorUvTransform.scale.y;
+      materialData.metallicRoughnessUvOx = mat.metallicRoughnessUvTransform.offset.x;
+      materialData.metallicRoughnessUvOy = mat.metallicRoughnessUvTransform.offset.y;
+      materialData.metallicRoughnessUvRot = mat.metallicRoughnessUvTransform.rotation;
+      materialData.metallicRoughnessUvSx = mat.metallicRoughnessUvTransform.scale.x;
+      materialData.metallicRoughnessUvSy = mat.metallicRoughnessUvTransform.scale.y;
+      materialData.emissiveUvOx = mat.emissiveUvTransform.offset.x;
+      materialData.emissiveUvOy = mat.emissiveUvTransform.offset.y;
+      materialData.emissiveUvRot = mat.emissiveUvTransform.rotation;
+      materialData.emissiveUvSx = mat.emissiveUvTransform.scale.x;
+      materialData.emissiveUvSy = mat.emissiveUvTransform.scale.y;
+      // KHR_materials_iridescence
+      materialData.iridescenceFactor = mat.iridesceneFactor;
+      materialData.iridescenceIor = mat.iridesceneIor;
+      materialData.iridescenceThicknessMin = mat.iridesceneThicknessMin;
+      materialData.iridescenceThicknessMax = mat.iridesceneThicknessMax;
+      // KHR_materials_diffuse_transmission
+      materialData.diffuseTransmissionFactor = mat.diffuseTransmissionFactor;
+      materialData.diffuseTransmissionR = mat.diffuseTransmissionColor.r;
+      materialData.diffuseTransmissionG = mat.diffuseTransmissionColor.g;
+      materialData.diffuseTransmissionB = mat.diffuseTransmissionColor.b;
+      // KHR_materials_volume
+      materialData.attenuationR = mat.attenuationColor.r;
+      materialData.attenuationG = mat.attenuationColor.g;
+      materialData.attenuationB = mat.attenuationColor.b;
+      materialData.attenuationDistance = mat.attenuationDistance;
+      materialData.thicknessFactor = mat.thicknessFactor;
+      // KHR_materials_transmission (glass)
+      materialData.transmissionFactor = mat.transmissionFactor;
+      materialData.idxReflect = mat.idxReflect;
+      // KHR_materials_emissive. Zero the factor when no emissive texture is
+      // bound: the descriptor falls back to an opaque texture and the
+      // factor doubles as the shader-side enable flag.
+      if (mat.emissiveTextureIndex >= 0 &&
+          mat.emissiveTextureIndex <
+              static_cast<int32_t>(obj.model.textures.size())) {
+        materialData.emissiveR = mat.emissiveFactor.r;
+        materialData.emissiveG = mat.emissiveFactor.g;
+        materialData.emissiveB = mat.emissiveFactor.b;
+      }
       for (size_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
         device->createBuffer(matBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -2517,12 +2784,17 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets =
         static_cast<uint32_t>(materialCount * MAX_FRAMES_IN_FLIGHT);
-    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    std::array<VkDescriptorPoolSize, 3> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = poolInfo.maxSets * 2; // UBO + MaterialUBO
+    poolSizes[0].descriptorCount =
+        poolInfo.maxSets * 3; // UBO + MaterialUBO + probe params
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount =
-        poolInfo.maxSets * 3; // baseColor + dir shadow + point shadow
+        poolInfo.maxSets *
+        (7 + (MAX_POINT_SHADOWS > 0 ? MAX_POINT_SHADOWS - 1 : 0));
+    // baseColor + dir shadow + MAX_POINT_SHADOWS cube shadows + probes + skybox + emissive
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[2].descriptorCount = poolInfo.maxSets; // probe data SSBO (binding 9)
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
     if (vkCreateDescriptorPool(device->getDevice(), &poolInfo, nullptr,
@@ -2629,26 +2901,83 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
       shadowWrite.descriptorCount = 1;
       shadowWrite.pImageInfo = &shadowImageInfo;
       descriptorWrites.push_back(shadowWrite);
-      VkDescriptorImageInfo cubeShadowImageInfo{};
-      cubeShadowImageInfo.imageLayout =
-          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-      if (shadowCubeMap) {
-        cubeShadowImageInfo.imageView = shadowCubeMap->getCubeMapImageView();
-        cubeShadowImageInfo.sampler = shadowCubeMap->getCubeMapSampler();
-      } else {
-        cubeShadowImageInfo.imageView = textureImageView;
-        cubeShadowImageInfo.sampler = textureSampler;
+
+      // Binding 4: one cube shadow map per point-light shadow slot.
+      // Unused slots fall back to the first cube map so the descriptors stay
+      // valid (the shader never samples slots beyond numPointLights).
+      std::array<VkDescriptorImageInfo, MAX_POINT_SHADOWS> cubeShadowImageInfos{};
+      VkImageView cubeFallbackView = textureImageView;
+      VkSampler cubeFallbackSampler = textureSampler;
+      if (!shadowCubeMaps.empty()) {
+        cubeFallbackView = shadowCubeMaps[0]->getCubeMapImageView();
+        cubeFallbackSampler = shadowCubeMaps[0]->getCubeMapSampler();
+      }
+      for (uint32_t slot = 0; slot < MAX_POINT_SHADOWS; ++slot) {
+        VkImageView view = cubeFallbackView;
+        VkSampler sampler = cubeFallbackSampler;
+        if (slot < shadowCubeMaps.size() && shadowCubeMaps[slot]) {
+          view = shadowCubeMaps[slot]->getCubeMapImageView();
+          sampler = shadowCubeMaps[slot]->getCubeMapSampler();
+        }
+        cubeShadowImageInfos[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        cubeShadowImageInfos[slot].imageView = view;
+        cubeShadowImageInfos[slot].sampler = sampler;
       }
 
       VkWriteDescriptorSet cubeShadowWrite{};
       cubeShadowWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       cubeShadowWrite.dstSet = obj.descriptorSets[matIndex][frame];
       cubeShadowWrite.dstBinding = 4;
+      cubeShadowWrite.dstArrayElement = 0;
       cubeShadowWrite.descriptorType =
           VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-      cubeShadowWrite.descriptorCount = 1;
-      cubeShadowWrite.pImageInfo = &cubeShadowImageInfo;
+      cubeShadowWrite.descriptorCount = MAX_POINT_SHADOWS;
+      cubeShadowWrite.pImageInfo = cubeShadowImageInfos.data();
       descriptorWrites.push_back(cubeShadowWrite);
+
+      if (skybox) {
+        VkDescriptorImageInfo skyImageInfo{};
+        skyImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        skyImageInfo.imageView = skybox->getCubemapImageView();
+        skyImageInfo.sampler = skybox->getCubemapSampler();
+
+        VkWriteDescriptorSet skyWrite{};
+        skyWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        skyWrite.dstSet = obj.descriptorSets[matIndex][frame];
+        skyWrite.dstBinding = 8;
+        skyWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        skyWrite.descriptorCount = 1;
+        skyWrite.pImageInfo = &skyImageInfo;
+        descriptorWrites.push_back(skyWrite);
+      }
+
+      // Binding 10: emissive texture (KHR_materials_emissive, rt.rgen
+      // parity). Falls back to an opaque texture; the material UBO zeroes
+      // the emissive factor in that case so nothing shows.
+      {
+        VkDescriptorImageInfo emissiveInfo{};
+        emissiveInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        if (material.emissiveTextureIndex >= 0 &&
+            material.emissiveTextureIndex <
+                static_cast<int32_t>(obj.model.textures.size())) {
+          const LoadedTexture &etex =
+              obj.model.textures[material.emissiveTextureIndex];
+          emissiveInfo.imageView = etex.imageView;
+          emissiveInfo.sampler = etex.sampler;
+        } else {
+          emissiveInfo.imageView = textureImageView;
+          emissiveInfo.sampler = textureSampler;
+        }
+
+        VkWriteDescriptorSet emissiveWrite{};
+        emissiveWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        emissiveWrite.dstSet = obj.descriptorSets[matIndex][frame];
+        emissiveWrite.dstBinding = 10;
+        emissiveWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        emissiveWrite.descriptorCount = 1;
+        emissiveWrite.pImageInfo = &emissiveInfo;
+        descriptorWrites.push_back(emissiveWrite);
+      }
       vkUpdateDescriptorSets(device->getDevice(),
                              static_cast<uint32_t>(descriptorWrites.size()),
                              descriptorWrites.data(), 0, nullptr);
@@ -4115,16 +4444,54 @@ void VulkanApplication::createDescriptorSetLayout() {
       VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   shadowLayoutBinding.descriptorCount = 1;
   shadowLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-  // Point-Light Shadows (binding = 4)
+  // Point-Light Shadows (binding = 4): one cube map per shadow slot.
   VkDescriptorSetLayoutBinding cubeShadowBinding{};
   cubeShadowBinding.binding = 4;
   cubeShadowBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  cubeShadowBinding.descriptorCount = 1;
+  cubeShadowBinding.descriptorCount = MAX_POINT_SHADOWS;
   cubeShadowBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  // Probe GI irradiance atlas (binding = 5)
+  VkDescriptorSetLayoutBinding probeIrrBinding{};
+  probeIrrBinding.binding = 5;
+  probeIrrBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  probeIrrBinding.descriptorCount = 1;
+  probeIrrBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  // Probe GI depth atlas (binding = 6)
+  VkDescriptorSetLayoutBinding probeDepthBinding{};
+  probeDepthBinding.binding = 6;
+  probeDepthBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  probeDepthBinding.descriptorCount = 1;
+  probeDepthBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  // Probe volume params UBO (binding = 7)
+  VkDescriptorSetLayoutBinding probeParamsBinding{};
+  probeParamsBinding.binding = 7;
+  probeParamsBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  probeParamsBinding.descriptorCount = 1;
+  probeParamsBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  // Skybox cubemap (binding = 8) - glass environment reflections
+  VkDescriptorSetLayoutBinding skyboxBinding{};
+  skyboxBinding.binding = 8;
+  skyboxBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  skyboxBinding.descriptorCount = 1;
+  skyboxBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  // Probe data SSBO (binding = 9) - relocated probe positions
+  VkDescriptorSetLayoutBinding probeDataBinding{};
+  probeDataBinding.binding = 9;
+  probeDataBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  probeDataBinding.descriptorCount = 1;
+  probeDataBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  // Emissive texture (binding = 10) - KHR_materials_emissive (rt.rgen parity)
+  VkDescriptorSetLayoutBinding emissiveBinding{};
+  emissiveBinding.binding = 10;
+  emissiveBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  emissiveBinding.descriptorCount = 1;
+  emissiveBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-  std::array<VkDescriptorSetLayoutBinding, 5> bindings = {
-      uboLayoutBinding, samplerLayoutBinding, materialLayoutBinding,
-      shadowLayoutBinding, cubeShadowBinding};
+  std::array<VkDescriptorSetLayoutBinding, 11> bindings = {
+      uboLayoutBinding,       samplerLayoutBinding,  materialLayoutBinding,
+      shadowLayoutBinding,    cubeShadowBinding,     probeIrrBinding,
+      probeDepthBinding,      probeParamsBinding,    skyboxBinding,
+      probeDataBinding,       emissiveBinding};
 
   VkDescriptorSetLayoutCreateInfo layoutInfo{};
   layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -4138,17 +4505,25 @@ void VulkanApplication::createDescriptorSetLayout() {
   }
   m_deletionQueue.pushDescriptorSetLayout(vkDev, descriptorSetLayout);
 }
-void VulkanApplication::recordPointShadowPass(VkCommandBuffer cmd) {
+void VulkanApplication::recordPointShadowPass(VkCommandBuffer cmd, uint32_t slot) {
   ZoneScopedN("Point Shadow Pass");
+  if (slot >= shadowCubeMaps.size())
+    return;
+  auto &shadowCubeMap = shadowCubeMaps[slot];
   if (!shadowCubeMap)
     return;
 
-  // Find first enabled point light
+  // Find the (slot+1)-th enabled point light: shadow slots are assigned in
+  // the same order the UBO packs point lights.
   const Light *pointLight = nullptr;
+  uint32_t pointIdx = 0;
   for (const auto &light : lights) {
     if (light.enabled && light.type == LightType::Point) {
-      pointLight = &light;
-      break;
+      if (pointIdx == slot) {
+        pointLight = &light;
+        break;
+      }
+      ++pointIdx;
     }
   }
   if (!pointLight) {
@@ -4274,6 +4649,160 @@ void VulkanApplication::createGraphicsPipeline() {
                                        "Shaders/brdf.frag.spv", additiveConfig);
 }
 
+void VulkanApplication::initLineRenderer() {
+  // Push constant: view-projection matrix for the vertex stage.
+  VkPushConstantRange pushRange{};
+  pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  pushRange.offset = 0;
+  pushRange.size = sizeof(glm::mat4);
+
+  VkPipelineLayoutCreateInfo layoutInfo{};
+  layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  layoutInfo.setLayoutCount = 0;
+  layoutInfo.pSetLayouts = nullptr;
+  layoutInfo.pushConstantRangeCount = 1;
+  layoutInfo.pPushConstantRanges = &pushRange;
+
+  VkDevice vkDev = device->getDevice();
+  if (vkCreatePipelineLayout(vkDev, &layoutInfo, nullptr,
+                             &linePipelineLayout) != VK_SUCCESS) {
+    throw std::runtime_error("failed to create line pipeline layout!");
+  }
+  m_deletionQueue.pushPipelineLayout(vkDev, linePipelineLayout);
+
+  // Depth-tested but depth-write disabled: lines overlay the scene.
+  PipelineConfigInfo config{};
+  VulkanPipeline::defaultPipelineConfigInfo(config);
+  config.inputAssemblyInfo.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+  config.renderPass = renderPass;
+  config.pipelineLayout = linePipelineLayout;
+  config.depthStencilInfo.depthTestEnable = VK_TRUE;
+  config.depthStencilInfo.depthWriteEnable = VK_FALSE;
+  config.depthStencilInfo.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+  config.bindingDescriptions = {
+      {0, sizeof(DebugLineVertex), VK_VERTEX_INPUT_RATE_VERTEX}};
+  config.attributeDescriptions = {
+      {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(DebugLineVertex, pos)},
+      {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(DebugLineVertex, color)}};
+
+  linePipeline = std::make_unique<VulkanPipeline>(
+      device.get(), "Shaders/debugLine.vert.spv", "Shaders/debugLine.frag.spv",
+      config);
+
+  // Host-visible vertex buffer sized for the worst case: every probe (up to
+  // 16384, the cap in buildProbeVolumeFromScene) drawn as a 6-line cross
+  // plus the volume bounds box.
+  constexpr VkDeviceSize kMaxVertices = 16384 * 12 + 48;
+  lineVertexBufferCapacity = kMaxVertices * sizeof(DebugLineVertex);
+  device->createBuffer(lineVertexBufferCapacity,
+                       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       lineVertexBuffer, lineVertexBufferMemory);
+}
+
+void VulkanApplication::drawDebugLines(VkCommandBuffer commandBuffer,
+                                       uint32_t currentImage) {
+  (void)currentImage;
+  if (!showProbeDebugVisualization || !probeVolume || !linePipeline)
+    return;
+  if (lineVertexBuffer == VK_NULL_HANDLE)
+    return;
+
+  // Read the (possibly relocated) probe positions from the host-visible
+  // probe data buffer. Torn reads are fine for a debug overlay.
+  std::vector<glm::vec4> positions;
+  if (!probeVolume->getProbePositionsCPU(positions))
+    return;
+
+  const float spacing = probeVolume->getParams().params.x;
+  const float crossSize = spacing * 0.15f;
+  const glm::vec3 gridColor(0.35f, 0.9f, 0.35f);   // probes on their grid slot
+  const glm::vec3 movedColor(1.0f, 0.25f, 0.1f);   // relocated (was inside geometry)
+
+  std::vector<DebugLineVertex> verts;
+  verts.reserve(positions.size() * 12 + 48);
+
+  auto addLine = [&verts](const glm::vec3 &a, const glm::vec3 &b,
+                          const glm::vec3 &c) {
+    verts.push_back({a, c});
+    verts.push_back({b, c});
+  };
+
+  for (uint32_t i = 0; i < positions.size(); ++i) {
+    const glm::vec3 p = glm::vec3(positions[i]);
+    const float disp =
+        glm::distance(p, probeVolume->gridPositionForIndex(i));
+    // Blend green -> red with displacement as the probe moves off-grid.
+    const glm::vec3 color = glm::mix(
+        gridColor, movedColor,
+        glm::clamp(disp / glm::max(spacing, 1e-4f), 0.0f, 1.0f));
+
+    addLine(p - glm::vec3(crossSize, 0.0f, 0.0f),
+            p + glm::vec3(crossSize, 0.0f, 0.0f), color);
+    addLine(p - glm::vec3(0.0f, crossSize, 0.0f),
+            p + glm::vec3(0.0f, crossSize, 0.0f), color);
+    addLine(p - glm::vec3(0.0f, 0.0f, crossSize),
+            p + glm::vec3(0.0f, 0.0f, crossSize), color);
+  }
+
+  // Volume bounds box so the grid extent is visible.
+  const VolumeProbe &params = probeVolume->getParams();
+  const glm::vec3 min = glm::vec3(params.origin);
+  const glm::vec3 max =
+      min + glm::vec3(glm::ivec3(params.probeCounts) - glm::ivec3(1)) * spacing;
+  const glm::vec3 boxColor(0.4f, 0.5f, 1.0f);
+  for (int i = 0; i < 4; i++) {
+    const glm::vec3 a(min.x + (i & 1 ? max.x - min.x : 0.0f), min.y,
+                      min.z + (i & 2 ? max.z - min.z : 0.0f));
+    const glm::vec3 b(a.x, max.y, a.z);
+    addLine(a, b, boxColor);
+  }
+
+  if (verts.empty())
+    return;
+
+  const VkDeviceSize size = sizeof(DebugLineVertex) * verts.size();
+  if (size > lineVertexBufferCapacity)
+    return; // shouldn't happen; capacity matches the probe cap
+
+  void *data = nullptr;
+  if (vkMapMemory(device->getDevice(), lineVertexBufferMemory, 0, size, 0,
+                  &data) != VK_SUCCESS)
+    return;
+  memcpy(data, verts.data(), static_cast<size_t>(size));
+  vkUnmapMemory(device->getDevice(), lineVertexBufferMemory);
+
+  // Draw inside the currently-bound render pass (dynamic viewport/scissor).
+  VkExtent2D extent = swapChain->getSwapChainExtent();
+  VkViewport viewport{};
+  viewport.x = 0.0f;
+  viewport.y = 0.0f;
+  viewport.width = static_cast<float>(extent.width);
+  viewport.height = static_cast<float>(extent.height);
+  viewport.minDepth = 0.0f;
+  viewport.maxDepth = 1.0f;
+  VkRect2D scissor{};
+  scissor.extent = extent;
+  vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+  vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+  VkBuffer vertexBuffers[] = {lineVertexBuffer};
+  VkDeviceSize offsets[] = {0};
+  vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+  linePipeline->bind(commandBuffer);
+
+  const float aspect =
+      static_cast<float>(extent.width) / static_cast<float>(extent.height);
+  const glm::mat4 viewProj =
+      camera->getProjectionMatrix(aspect) * camera->getViewMatrix();
+  vkCmdPushConstants(commandBuffer, linePipelineLayout,
+                     VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4),
+                     &viewProj);
+
+  vkCmdDraw(commandBuffer, static_cast<uint32_t>(verts.size()), 1, 0, 0);
+}
+
 void *VulkanApplication::getNativeWindow() const {
   return window ? (void *)window->getGLFWwindow() : nullptr;
 }
@@ -4335,4 +4864,725 @@ void VulkanApplication::setRenderMode(int mode) {
     currentRenderMode = RenderMode::RAYTRACING;
     accumulationFrameCount = 0;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Probe-based ray-traced global illumination (DDGI-style)
+// ---------------------------------------------------------------------------
+
+void VulkanApplication::buildProbeVolumeFromScene() {
+  const float kMax = std::numeric_limits<float>::max();
+  const float kLowest = std::numeric_limits<float>::lowest();
+  glm::vec3 sceneMin(kMax), sceneMax(kLowest);
+  bool any = false;
+
+  for (auto &obj : loadedObjects) {
+    if (!obj.loaded || obj.model.vertices.empty())
+      continue;
+
+    // Local-space AABB of the model
+    glm::vec3 lo(kMax), hi(kLowest);
+    for (const auto &v : obj.model.vertices) {
+      lo = glm::min(lo, v.pos);
+      hi = glm::max(hi, v.pos);
+    }
+
+    // Transform the 8 AABB corners (close enough for a GI volume even under
+    // non-uniform scale; avoids transforming every vertex).
+    const glm::mat4 t = obj.transform.getModelMatrix();
+    for (int i = 0; i < 8; i++) {
+      glm::vec3 corner((i & 1) ? hi.x : lo.x, (i & 2) ? hi.y : lo.y,
+                       (i & 4) ? hi.z : lo.z);
+      glm::vec3 w = glm::vec3(t * glm::vec4(corner, 1.0f));
+      sceneMin = glm::min(sceneMin, w);
+      sceneMax = glm::max(sceneMax, w);
+      any = true;
+    }
+  }
+
+  if (!any) {
+    sceneMin = glm::vec3(-5.0f, -2.0f, -5.0f);
+    sceneMax = glm::vec3(5.0f, 5.0f, 5.0f);
+  }
+
+  // Spacing heuristic: ~1/20 of the scene's largest extent, clamped, and
+  // capped at ~16k probes to bound atlas memory.
+  const glm::vec3 extent = sceneMax - sceneMin;
+  const float maxExtent =
+      std::max(extent.x, std::max(extent.y, extent.z));
+  float spacing = glm::clamp(maxExtent / 20.0f, 0.5f, 4.0f);
+  glm::ivec3 counts;
+  glm::vec3 origin;
+  ProbeVolume::volumeFromAABB(sceneMin, sceneMax, spacing, counts, origin);
+  while (counts.x * counts.y * counts.z > 16384) {
+    spacing *= 1.25f;
+    ProbeVolume::volumeFromAABB(sceneMin, sceneMax, spacing, counts, origin);
+  }
+
+  if (probeVolume) {
+    probeVolume->cleanup();
+    probeVolume.reset();
+  }
+  probeVolume = std::make_unique<ProbeVolume>();
+  probeVolume->init(device.get(), counts, spacing, origin);
+  std::cout << "Probe volume: " << counts.x << "x" << counts.y << "x"
+            << counts.z << " probes (spacing " << spacing << ")\n";
+}
+
+void VulkanApplication::createProbeUniformBuffer() {
+  const VkDeviceSize size = sizeof(ProbeSceneData);
+  bufferManager->createBuffer(
+      size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      probeSceneUniformBuffer, probeSceneUniformBufferMemory);
+  vkMapMemory(device->getDevice(), probeSceneUniformBufferMemory, 0, size, 0,
+              &probeSceneUniformBufferMapped);
+}
+
+void VulkanApplication::updateProbeUniformBuffer() {
+  if (!probeSceneUniformBufferMapped)
+    return;
+
+  // A moved light changes the ray-traced lighting; boost the probe field
+  // blend so it adopts the new measurement immediately for a few frames
+  // instead of lagging behind the hysteresis.
+  constexpr int kRefreshFrames = 3;
+  if (lightsChangedForProbes()) {
+    m_probeRefreshFrames = kRefreshFrames;
+  }
+  const float refreshBoost = m_probeRefreshFrames > 0 ? 1.0f : 0.0f;
+  if (m_probeRefreshFrames > 0)
+    --m_probeRefreshFrames;
+
+  ProbeSceneData scene{};
+  int lightCount = 0;
+  for (size_t i = 0; i < lights.size() && lightCount < MAX_LIGHTS; ++i) {
+    if (lights[i].enabled) {
+      scene.lights[lightCount] = lights[i].toGPU();
+      ++lightCount;
+    }
+  }
+  scene.lightParams =
+      glm::vec4(static_cast<float>(lightCount), ambientStrength, 0.0f, 0.0f);
+  scene.timeParams =
+      glm::vec4(glm::max(deltaTime, 1.0f / 60.0f), refreshBoost, 0.0f, 0.0f);
+  memcpy(probeSceneUniformBufferMapped, &scene, sizeof(ProbeSceneData));
+}
+
+bool VulkanApplication::lightsChangedForProbes() {
+  std::vector<GPULight> current;
+  current.reserve(lights.size());
+  for (const auto &l : lights) {
+    if (l.enabled)
+      current.push_back(l.toGPU());
+  }
+
+  bool changed = current.size() != m_prevProbeLights.size();
+  if (!changed && !current.empty()) {
+    // GPULight is POD; bitwise compare is safe (identical values write
+    // identical bits).
+    changed = std::memcmp(current.data(), m_prevProbeLights.data(),
+                          sizeof(GPULight) * current.size()) != 0;
+  }
+
+  m_prevProbeLights = std::move(current);
+  return changed;
+}
+
+void VulkanApplication::updateProbeDebugTextures() {
+  if (!probeVolume) {
+    if (probeIrradianceTexID) {
+      ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)probeIrradianceTexID);
+      probeIrradianceTexID = nullptr;
+    }
+    if (probeDepthTexID) {
+      ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)probeDepthTexID);
+      probeDepthTexID = nullptr;
+    }
+    m_probeTexSourceView = VK_NULL_HANDLE;
+    return;
+  }
+
+  // The atlas views are recreated whenever the volume is rebuilt; refresh
+  // the ImGui texture handles when that happens.
+  if (probeVolume->getIrradianceView(0) == m_probeTexSourceView)
+    return;
+
+  if (probeIrradianceTexID) {
+    ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)probeIrradianceTexID);
+    probeIrradianceTexID = nullptr;
+  }
+  if (probeDepthTexID) {
+    ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)probeDepthTexID);
+    probeDepthTexID = nullptr;
+  }
+
+  // The atlases live permanently in VK_IMAGE_LAYOUT_GENERAL.
+  probeIrradianceTexID = ImGui_ImplVulkan_AddTexture(
+      probeVolume->getSampler(), probeVolume->getIrradianceView(0),
+      VK_IMAGE_LAYOUT_GENERAL);
+  probeDepthTexID = ImGui_ImplVulkan_AddTexture(
+      probeVolume->getSampler(), probeVolume->getDepthView(0),
+      VK_IMAGE_LAYOUT_GENERAL);
+  m_probeTexSourceView = probeVolume->getIrradianceView(0);
+}
+
+void VulkanApplication::createProbeDescriptorSetLayout() {
+  std::array<VkDescriptorSetLayoutBinding, 11> bindings{};
+
+  bindings[0].binding = 0; // TLAS
+  bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+  bindings[0].descriptorCount = 1;
+  bindings[0].stageFlags =
+      VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+  bindings[1].binding = 1; // VolumeProbe params
+  bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  bindings[1].descriptorCount = 1;
+  bindings[1].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  bindings[2].binding = 2; // ProbeData SSBO
+  bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  bindings[2].descriptorCount = 1;
+  bindings[2].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  bindings[3].binding = 3; // prev irradiance (history copy)
+  bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  bindings[3].descriptorCount = 1;
+  bindings[3].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  bindings[4].binding = 4; // prev depth (history copy)
+  bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  bindings[4].descriptorCount = 1;
+  bindings[4].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  bindings[5].binding = 5; // current irradiance (raster reads this)
+  bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  bindings[5].descriptorCount = 1;
+  bindings[5].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  bindings[6].binding = 6; // current depth
+  bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  bindings[6].descriptorCount = 1;
+  bindings[6].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  bindings[7].binding = 7; // ProbeSceneData UBO
+  bindings[7].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  bindings[7].descriptorCount = 1;
+  bindings[7].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  bindings[8].binding = 8; // skybox cubemap
+  bindings[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  bindings[8].descriptorCount = 1;
+  bindings[8].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  bindings[9].binding = 9; // irradiance history copy (duplicate store)
+  bindings[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  bindings[9].descriptorCount = 1;
+  bindings[9].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  bindings[10].binding = 10; // depth history copy (duplicate store)
+  bindings[10].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  bindings[10].descriptorCount = 1;
+  bindings[10].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  VkDescriptorSetLayoutCreateInfo layoutInfo{};
+  layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+  layoutInfo.pBindings = bindings.data();
+
+  VkDevice vkDev = device->getDevice();
+  if (vkCreateDescriptorSetLayout(vkDev, &layoutInfo, nullptr,
+                                  &probeDescriptorSetLayout) != VK_SUCCESS) {
+    throw std::runtime_error("failed to create probe descriptor set layout!");
+  }
+  m_deletionQueue.pushDescriptorSetLayout(vkDev, probeDescriptorSetLayout);
+}
+
+void VulkanApplication::createProbeDescriptorPool() {
+  // Free the old pool first: scene reloads recreate this and the pool has no
+  // FREE_DESCRIPTOR_SET_BIT, so stale sets would leak.
+  if (probeDescriptorPool != VK_NULL_HANDLE) {
+    vkDestroyDescriptorPool(device->getDevice(), probeDescriptorPool, nullptr);
+    probeDescriptorPool = VK_NULL_HANDLE;
+  }
+
+  std::array<VkDescriptorPoolSize, 5> poolSizes{};
+  poolSizes[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+  poolSizes[0].descriptorCount = 1;
+  poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  poolSizes[1].descriptorCount = 4;
+  poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  poolSizes[2].descriptorCount = 2;
+  poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  poolSizes[3].descriptorCount = 1;
+  poolSizes[4].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  poolSizes[4].descriptorCount = 3;
+
+  VkDescriptorPoolCreateInfo poolInfo{};
+  poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  poolInfo.maxSets = 1;
+  poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+  poolInfo.pPoolSizes = poolSizes.data();
+
+  if (vkCreateDescriptorPool(device->getDevice(), &poolInfo, nullptr,
+                             &probeDescriptorPool) != VK_SUCCESS) {
+    throw std::runtime_error("failed to create probe descriptor pool!");
+  }
+}
+
+void VulkanApplication::createProbeDescriptorSet() {
+  if (!probeVolume || probeDescriptorSetLayout == VK_NULL_HANDLE)
+    return;
+
+  // Recreate the pool on every call: scene reloads get fresh atlas views and
+  // the pool has no FREE_DESCRIPTOR_SET_BIT, so stale sets must be reclaimed
+  // by destroying the pool itself.
+  createProbeDescriptorPool();
+
+  VkDescriptorSetAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  allocInfo.descriptorPool = probeDescriptorPool;
+  allocInfo.descriptorSetCount = 1;
+  allocInfo.pSetLayouts = &probeDescriptorSetLayout;
+  if (vkAllocateDescriptorSets(device->getDevice(), &allocInfo,
+                               &probeDescriptorSet) != VK_SUCCESS) {
+    throw std::runtime_error("failed to allocate probe descriptor set!");
+  }
+
+  std::vector<VkWriteDescriptorSet> writes;
+
+  VkWriteDescriptorSetAccelerationStructureKHR asInfo{};
+  asInfo.sType =
+      VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+  asInfo.accelerationStructureCount = 1;
+  VkAccelerationStructureKHR tlasHandle = VK_NULL_HANDLE;
+  if (rayTracingAS)
+    tlasHandle = rayTracingAS->getTLAS().handle;
+  asInfo.pAccelerationStructures = &tlasHandle;
+
+  // Writing a descriptor with a null AS handle is invalid; skip the write
+  // and the probe pass itself guards on the TLAS existing.
+  if (tlasHandle != VK_NULL_HANDLE) {
+    VkWriteDescriptorSet asWrite{};
+    asWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    asWrite.dstSet = probeDescriptorSet;
+    asWrite.dstBinding = 0;
+    asWrite.descriptorCount = 1;
+    asWrite.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    asWrite.pNext = &asInfo;
+    writes.push_back(asWrite);
+  }
+
+  VkDescriptorBufferInfo paramsInfo{};
+  paramsInfo.buffer = probeVolume->getParamsBuffer();
+  paramsInfo.offset = 0;
+  paramsInfo.range = sizeof(VolumeProbe);
+  VkWriteDescriptorSet paramsWrite{};
+  paramsWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  paramsWrite.dstSet = probeDescriptorSet;
+  paramsWrite.dstBinding = 1;
+  paramsWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  paramsWrite.descriptorCount = 1;
+  paramsWrite.pBufferInfo = &paramsInfo;
+  writes.push_back(paramsWrite);
+
+  VkDescriptorBufferInfo probeDataInfo{};
+  probeDataInfo.buffer = probeVolume->getProbeDataBuffer();
+  probeDataInfo.offset = 0;
+  probeDataInfo.range = VK_WHOLE_SIZE;
+  VkWriteDescriptorSet probeDataWrite{};
+  probeDataWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  probeDataWrite.dstSet = probeDescriptorSet;
+  probeDataWrite.dstBinding = 2;
+  probeDataWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  probeDataWrite.descriptorCount = 1;
+  probeDataWrite.pBufferInfo = &probeDataInfo;
+  writes.push_back(probeDataWrite);
+
+  // The probe atlases live permanently in VK_IMAGE_LAYOUT_GENERAL (storage
+  // writes require it, sampled reads allow it), so no layout transitions.
+  VkDescriptorImageInfo prevIrrInfo{};
+  prevIrrInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+  prevIrrInfo.imageView = probeVolume->getIrradianceView(1);
+  prevIrrInfo.sampler = probeVolume->getSampler();
+  VkWriteDescriptorSet prevIrrWrite{};
+  prevIrrWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  prevIrrWrite.dstSet = probeDescriptorSet;
+  prevIrrWrite.dstBinding = 3;
+  prevIrrWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  prevIrrWrite.descriptorCount = 1;
+  prevIrrWrite.pImageInfo = &prevIrrInfo;
+  writes.push_back(prevIrrWrite);
+
+  VkDescriptorImageInfo prevDepthInfo{};
+  prevDepthInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+  prevDepthInfo.imageView = probeVolume->getDepthView(1);
+  prevDepthInfo.sampler = probeVolume->getSampler();
+  VkWriteDescriptorSet prevDepthWrite{};
+  prevDepthWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  prevDepthWrite.dstSet = probeDescriptorSet;
+  prevDepthWrite.dstBinding = 4;
+  prevDepthWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  prevDepthWrite.descriptorCount = 1;
+  prevDepthWrite.pImageInfo = &prevDepthInfo;
+  writes.push_back(prevDepthWrite);
+
+  VkDescriptorImageInfo outIrrInfo{};
+  outIrrInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+  outIrrInfo.imageView = probeVolume->getIrradianceView(0);
+  outIrrInfo.sampler = VK_NULL_HANDLE;
+  VkWriteDescriptorSet outIrrWrite{};
+  outIrrWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  outIrrWrite.dstSet = probeDescriptorSet;
+  outIrrWrite.dstBinding = 5;
+  outIrrWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  outIrrWrite.descriptorCount = 1;
+  outIrrWrite.pImageInfo = &outIrrInfo;
+  writes.push_back(outIrrWrite);
+
+  VkDescriptorImageInfo outDepthInfo{};
+  outDepthInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+  outDepthInfo.imageView = probeVolume->getDepthView(0);
+  outDepthInfo.sampler = VK_NULL_HANDLE;
+  VkWriteDescriptorSet outDepthWrite{};
+  outDepthWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  outDepthWrite.dstSet = probeDescriptorSet;
+  outDepthWrite.dstBinding = 6;
+  outDepthWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  outDepthWrite.descriptorCount = 1;
+  outDepthWrite.pImageInfo = &outDepthInfo;
+  writes.push_back(outDepthWrite);
+
+  VkDescriptorBufferInfo sceneInfo{};
+  sceneInfo.buffer = probeSceneUniformBuffer;
+  sceneInfo.offset = 0;
+  sceneInfo.range = sizeof(ProbeSceneData);
+  VkWriteDescriptorSet sceneWrite{};
+  sceneWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  sceneWrite.dstSet = probeDescriptorSet;
+  sceneWrite.dstBinding = 7;
+  sceneWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  sceneWrite.descriptorCount = 1;
+  sceneWrite.pBufferInfo = &sceneInfo;
+  writes.push_back(sceneWrite);
+
+  VkDescriptorImageInfo skyInfo{};
+  skyInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  skyInfo.imageView = textureImageView;
+  skyInfo.sampler = textureSampler;
+  if (skybox && skybox->getCubemapImageView() != VK_NULL_HANDLE) {
+    skyInfo.imageView = skybox->getCubemapImageView();
+    skyInfo.sampler = skybox->getCubemapSampler();
+  }
+  VkWriteDescriptorSet skyWrite{};
+  skyWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  skyWrite.dstSet = probeDescriptorSet;
+  skyWrite.dstBinding = 8;
+  skyWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  skyWrite.descriptorCount = 1;
+  skyWrite.pImageInfo = &skyInfo;
+  writes.push_back(skyWrite);
+
+  VkDescriptorImageInfo outIrrHistInfo{};
+  outIrrHistInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+  outIrrHistInfo.imageView = probeVolume->getIrradianceView(1);
+  outIrrHistInfo.sampler = VK_NULL_HANDLE;
+  VkWriteDescriptorSet outIrrHistWrite{};
+  outIrrHistWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  outIrrHistWrite.dstSet = probeDescriptorSet;
+  outIrrHistWrite.dstBinding = 9;
+  outIrrHistWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  outIrrHistWrite.descriptorCount = 1;
+  outIrrHistWrite.pImageInfo = &outIrrHistInfo;
+  writes.push_back(outIrrHistWrite);
+
+  VkDescriptorImageInfo outDepthHistInfo{};
+  outDepthHistInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+  outDepthHistInfo.imageView = probeVolume->getDepthView(1);
+  outDepthHistInfo.sampler = VK_NULL_HANDLE;
+  VkWriteDescriptorSet outDepthHistWrite{};
+  outDepthHistWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  outDepthHistWrite.dstSet = probeDescriptorSet;
+  outDepthHistWrite.dstBinding = 10;
+  outDepthHistWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  outDepthHistWrite.descriptorCount = 1;
+  outDepthHistWrite.pImageInfo = &outDepthHistInfo;
+  writes.push_back(outDepthHistWrite);
+
+  vkUpdateDescriptorSets(device->getDevice(),
+                         static_cast<uint32_t>(writes.size()), writes.data(), 0,
+                         nullptr);
+}
+
+void VulkanApplication::resetProbeHistory() {
+  if (!probeVolume)
+    return;
+  VkCommandBuffer cmd = commandBufferManager->beginSingleTimeCommands();
+  // Freshly created atlases start UNDEFINED; move them to GENERAL (their
+  // permanent layout) and clear both ping-pong copies.
+  std::array<VkImageMemoryBarrier, 4> barriers{};
+  std::array<VkImage, 4> images = {
+      probeVolume->getIrradianceImage(0), probeVolume->getIrradianceImage(1),
+      probeVolume->getDepthImage(0), probeVolume->getDepthImage(1)};
+  for (size_t i = 0; i < 4; i++) {
+    barriers[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barriers[i].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barriers[i].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barriers[i].srcAccessMask = 0;
+    barriers[i].dstAccessMask =
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    barriers[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barriers[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barriers[i].image = images[i];
+    barriers[i].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  }
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0,
+                       nullptr, 0, nullptr, 4, barriers.data());
+  probeVolume->clear(cmd);
+  commandBufferManager->endSingleTimeCommands(cmd);
+}
+
+void VulkanApplication::initProbeTracing() {
+  if (!probeGIEnabled)
+    return;
+
+  // Volume + UBO + descriptors are always created so the raster bindings
+  // stay valid; only the ray tracing pipeline is optional (--no-probes).
+  buildProbeVolumeFromScene();
+  createProbeUniformBuffer();
+  createProbeDescriptorSetLayout();
+  createProbeDescriptorSet();
+  resetProbeHistory();
+
+  if (!probeTracingEnabled) {
+    std::cout << "Probe GI: shading bindings created, ray tracing disabled\n";
+    return;
+  }
+
+  probeTracingPipeline = std::make_unique<ProbeTracingPipeline>();
+  probeTracingPipeline->init(device.get());
+  probeTracingPipeline->createPipeline(probeDescriptorSetLayout);
+  probeTracingPipeline->createShaderBindingTable();
+}
+
+void VulkanApplication::recordProbeUpdatePass(VkCommandBuffer cmd) {
+  ZoneScopedN("Probe Update Pass");
+  if (!probeGIEnabled || !probeTracingEnabled || !probeTracingPipeline ||
+      !probeVolume)
+    return;
+  if (!rayTracingAS || rayTracingAS->getTLAS().handle == VK_NULL_HANDLE)
+    return;
+  if (probeDescriptorSet == VK_NULL_HANDLE)
+    return;
+
+  const VkImage irr0 = probeVolume->getIrradianceImage(0);
+  const VkImage irr1 = probeVolume->getIrradianceImage(1);
+  const VkImage dep0 = probeVolume->getDepthImage(0);
+  const VkImage dep1 = probeVolume->getDepthImage(1);
+  const VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0,
+                                         1};
+
+  // 1. History copy (view 1): last frame's probe shader writes -> this
+  //    frame's feedback reads. (GENERAL -> GENERAL, access-only barrier.)
+  std::array<VkImageMemoryBarrier, 2> prevReadBarriers{};
+  prevReadBarriers[0] = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                         nullptr,
+                         VK_ACCESS_SHADER_WRITE_BIT,
+                         VK_ACCESS_SHADER_READ_BIT,
+                         VK_IMAGE_LAYOUT_GENERAL,
+                         VK_IMAGE_LAYOUT_GENERAL,
+                         VK_QUEUE_FAMILY_IGNORED,
+                         VK_QUEUE_FAMILY_IGNORED,
+                         irr1,
+                         range};
+  prevReadBarriers[1] = prevReadBarriers[0];
+  prevReadBarriers[1].image = dep1;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                       VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0,
+                       nullptr, 0, nullptr,
+                       static_cast<uint32_t>(prevReadBarriers.size()),
+                       prevReadBarriers.data());
+
+  // 2. Current copy (view 0): last frame's raster fragment reads -> this
+  //    frame's probe shader writes.
+  std::array<VkImageMemoryBarrier, 2> curWriteBarriers{};
+  curWriteBarriers[0] = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                         nullptr,
+                         VK_ACCESS_SHADER_READ_BIT,
+                         VK_ACCESS_SHADER_WRITE_BIT,
+                         VK_IMAGE_LAYOUT_GENERAL,
+                         VK_IMAGE_LAYOUT_GENERAL,
+                         VK_QUEUE_FAMILY_IGNORED,
+                         VK_QUEUE_FAMILY_IGNORED,
+                         irr0,
+                         range};
+  curWriteBarriers[1] = curWriteBarriers[0];
+  curWriteBarriers[1].image = dep0;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                       VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0,
+                       nullptr, 0, nullptr,
+                       static_cast<uint32_t>(curWriteBarriers.size()),
+                       curWriteBarriers.data());
+
+  // Trace one thread per probe
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
+                    probeTracingPipeline->getPipeline());
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
+                          probeTracingPipeline->getPipelineLayout(), 0, 1,
+                          &probeDescriptorSet, 0, nullptr);
+
+  const ShaderBindingTable &sbt = probeTracingPipeline->getSbt();
+  VkStridedDeviceAddressRegionKHR rgenRegion{};
+  rgenRegion.deviceAddress = sbt.deviceAddress + sbt.rgenOffset;
+  rgenRegion.stride = sbt.rgenStride;
+  rgenRegion.size = sbt.rgenStride;
+
+  VkStridedDeviceAddressRegionKHR missRegion{};
+  missRegion.deviceAddress = sbt.deviceAddress + sbt.missOffset;
+  missRegion.stride = sbt.missStride;
+  missRegion.size = sbt.missStride;
+
+  VkStridedDeviceAddressRegionKHR hitRegion{};
+  hitRegion.deviceAddress = sbt.deviceAddress + sbt.hitOffset;
+  hitRegion.stride = sbt.hitStride;
+  hitRegion.size = sbt.hitStride;
+
+  VkStridedDeviceAddressRegionKHR callableRegion{};
+
+  probeTracingPipeline->vkCmdTraceRaysKHRFunc(
+      cmd, &rgenRegion, &missRegion, &hitRegion, &callableRegion,
+      probeVolume->getProbeCount(), 1, 1);
+
+  // Probe positions may be updated by the relocation logic in the rgen;
+  // make those writes visible to the next frame's dispatch AND to this
+  // frame's raster fragment shaders (the raster now reads relocated probe
+  // positions from this buffer for the octahedral/Chebyshev lookup).
+  VkBufferMemoryBarrier probeDataBarrier{};
+  probeDataBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+  probeDataBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+  probeDataBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  probeDataBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  probeDataBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  probeDataBarrier.buffer = probeVolume->getProbeDataBuffer();
+  probeDataBarrier.offset = 0;
+  probeDataBarrier.size = VK_WHOLE_SIZE;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                       VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR |
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                       0, 0, nullptr, 1, &probeDataBarrier, 0, nullptr);
+
+  // 3. Current copy (view 0): probe shader writes -> this frame's raster
+  //    fragment reads.
+  std::array<VkImageMemoryBarrier, 2> curReadBarriers{};
+  curReadBarriers[0] = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                        nullptr,
+                        VK_ACCESS_SHADER_WRITE_BIT,
+                        VK_ACCESS_SHADER_READ_BIT,
+                        VK_IMAGE_LAYOUT_GENERAL,
+                        VK_IMAGE_LAYOUT_GENERAL,
+                        VK_QUEUE_FAMILY_IGNORED,
+                        VK_QUEUE_FAMILY_IGNORED,
+                        irr0,
+                        range};
+  curReadBarriers[1] = curReadBarriers[0];
+  curReadBarriers[1].image = dep0;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                       nullptr, static_cast<uint32_t>(curReadBarriers.size()),
+                       curReadBarriers.data());
+}
+
+void VulkanApplication::bindProbeDescriptorsToLoadedObjects() {
+  // Per-object descriptor sets are created during loadSceneObjects(), before
+  // the probe volume exists. Once the volume is built (or rebuilt on scene
+  // switch), write the probe bindings (5-7) into every object's sets.
+  if (!probeVolume)
+    return;
+
+  const VkDescriptorImageInfo irrInfo{probeVolume->getSampler(),
+                                      probeVolume->getIrradianceView(0),
+                                      VK_IMAGE_LAYOUT_GENERAL};
+  const VkDescriptorImageInfo depthInfo{probeVolume->getSampler(),
+                                        probeVolume->getDepthView(0),
+                                        VK_IMAGE_LAYOUT_GENERAL};
+  const VkDescriptorBufferInfo paramsInfo{probeVolume->getParamsBuffer(), 0,
+                                          sizeof(VolumeProbe)};
+  const VkDescriptorBufferInfo probeDataInfo{
+      probeVolume->getProbeDataBuffer(), 0, VK_WHOLE_SIZE};
+
+  for (auto &obj : loadedObjects) {
+    if (!obj.loaded)
+      continue;
+    for (auto &perMaterial : obj.descriptorSets) {
+      for (auto &set : perMaterial) {
+        if (set == VK_NULL_HANDLE)
+          continue;
+        std::array<VkWriteDescriptorSet, 4> writes{};
+
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = set;
+        writes[0].dstBinding = 5;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].descriptorCount = 1;
+        writes[0].pImageInfo = &irrInfo;
+
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = set;
+        writes[1].dstBinding = 6;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].descriptorCount = 1;
+        writes[1].pImageInfo = &depthInfo;
+
+        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet = set;
+        writes[2].dstBinding = 7;
+        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[2].descriptorCount = 1;
+        writes[2].pBufferInfo = &paramsInfo;
+
+        writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet = set;
+        writes[3].dstBinding = 9;
+        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[3].descriptorCount = 1;
+        writes[3].pBufferInfo = &probeDataInfo;
+
+        vkUpdateDescriptorSets(device->getDevice(),
+                               static_cast<uint32_t>(writes.size()),
+                               writes.data(), 0, nullptr);
+      }
+    }
+  }
+}
+
+void VulkanApplication::cleanupProbeResources() {
+  if (probeTracingPipeline) {
+    probeTracingPipeline->cleanup();
+    probeTracingPipeline.reset();
+  }
+  if (probeVolume) {
+    probeVolume->cleanup();
+    probeVolume.reset();
+  }
+  const VkDevice vkDev = device->getDevice();
+  if (probeDescriptorSetLayout != VK_NULL_HANDLE) {
+    vkDestroyDescriptorSetLayout(vkDev, probeDescriptorSetLayout, nullptr);
+    probeDescriptorSetLayout = VK_NULL_HANDLE;
+  }
+  if (probeDescriptorPool != VK_NULL_HANDLE) {
+    vkDestroyDescriptorPool(vkDev, probeDescriptorPool, nullptr);
+    probeDescriptorPool = VK_NULL_HANDLE;
+  }
+  if (probeSceneUniformBuffer != VK_NULL_HANDLE) {
+    vkDestroyBuffer(vkDev, probeSceneUniformBuffer, nullptr);
+    probeSceneUniformBuffer = VK_NULL_HANDLE;
+  }
+  if (probeSceneUniformBufferMemory != VK_NULL_HANDLE) {
+    vkFreeMemory(vkDev, probeSceneUniformBufferMemory, nullptr);
+    probeSceneUniformBufferMemory = VK_NULL_HANDLE;
+  }
+  probeSceneUniformBufferMapped = nullptr;
+  probeDescriptorSet = VK_NULL_HANDLE;
 }

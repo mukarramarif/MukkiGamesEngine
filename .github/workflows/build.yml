@@ -1,0 +1,145 @@
+name: Build & Release
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    name: Build (Windows x64)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: Main
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # CMakeLists requires CMake >= 3.31.4 and the Ninja generator.
+      - name: Install CMake + Ninja
+        uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "3.31.6"
+          ninjaVersion: "1.12.1"
+
+      - name: Setup MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Provides glslc and slangc (Slang ships inside the Vulkan SDK).
+      - name: Install Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          cache: true
+
+      - name: Resolve Vulkan SDK paths
+        run: |
+          if (-not $env:VULKAN_SDK) {
+            throw "VULKAN_SDK is not set after Vulkan SDK installation."
+          }
+
+          $vulkanHeader = Get-ChildItem -Path $env:VULKAN_SDK -Recurse -File -Filter vulkan.h |
+            Where-Object { $_.FullName -match '[\\/]Include[\\/]vulkan[\\/]vulkan\.h$' } |
+            Select-Object -First 1
+          $vulkanLibrary = Get-ChildItem -Path $env:VULKAN_SDK -Recurse -File -Filter vulkan-1.lib |
+            Select-Object -First 1
+
+          if (-not $vulkanHeader -or -not $vulkanLibrary) {
+            throw "Could not locate Vulkan SDK include/library files under '$env:VULKAN_SDK'."
+          }
+
+          $resolvedVulkanSdk = Split-Path (Split-Path (Split-Path $vulkanHeader.FullName -Parent) -Parent) -Parent
+          "VULKAN_SDK=$resolvedVulkanSdk" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "Vulkan_INCLUDE_DIR=$(Join-Path $resolvedVulkanSdk Include)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "Vulkan_LIBRARY=$($vulkanLibrary.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          (Join-Path $resolvedVulkanSdk Bin) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          (Join-Path $resolvedVulkanSdk bin) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Conan
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "conan>=2,<3"
+
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('Main/conanfile.py') }}
+          restore-keys: |
+            conan-${{ runner.os }}-
+
+      - name: Install dependencies (Conan)
+        run: |
+          conan profile detect --force
+          conan install . -of build --build=missing -s build_type=${{ env.BUILD_TYPE }} -s compiler.cppstd=20 -c tools.cmake.cmaketoolchain:generator=Ninja
+
+      # Not using --preset: CMakeUserPresets.json references Conan output dirs
+      # (build-debug/, build/) that may not exist on a clean CI checkout.
+      # ASSETS_PATH=Assets/ makes the packaged exe resolve assets next to itself.
+      - name: Configure (CMake)
+        run: >
+          cmake -S . -B build -G Ninja
+          "-DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake"
+          "-DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}"
+          "-DVulkan_INCLUDE_DIR=$env:Vulkan_INCLUDE_DIR"
+          "-DVulkan_LIBRARY=$env:Vulkan_LIBRARY"
+          "-DASSETS_PATH=Assets/"
+
+      - name: Build (CMake)
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: |
+          $dist = "dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item -Force "build/MukkiGamesEngine.exe" $dist
+          Copy-Item -Recurse -Force "build/Shaders" "$dist/Shaders"
+          Copy-Item -Recurse -Force "MukkiGamesEngine/Assets" "$dist/Assets"
+          Compress-Archive -Path "$dist/*" -DestinationPath "MukkiGamesEngine-windows-x64.zip" -Force
+
+      - name: Upload build artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MukkiGamesEngine-windows-x64
+          path: Main/MukkiGamesEngine-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4.1.3
+        with:
+          name: MukkiGamesEngine-windows-x64
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: MukkiGamesEngine-windows-x64.zip
+          generate_release_notes: true

@@ -1,5 +1,6 @@
 #include "VkDescriptor.h"
 #include "../objects/UBO.h"
+#include "../Resources/ProbeVolume.h"
 #include <stdexcept>
 #include <array>
 
@@ -14,9 +15,9 @@ void VkDescriptorBoss::createDescriptorPool(uint32_t maxSets)
 	uint32_t totalSets = maxSets * 500;
 	std::array<VkDescriptorPoolSize, 3> poolSizes{};
 	poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-	poolSizes[0].descriptorCount = totalSets;
+	poolSizes[0].descriptorCount = totalSets * 3;  // UBO + MaterialUBO + probe params
 	poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	poolSizes[1].descriptorCount = totalSets * 2;  // doubled for shadow map
+	poolSizes[1].descriptorCount = totalSets * (7 + (MAX_POINT_SHADOWS > 0 ? MAX_POINT_SHADOWS - 1 : 0));  // base + dir shadow + N cube shadows + probes + skybox + emissive
 	poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	poolSizes[2].descriptorCount = totalSets;
 
@@ -54,8 +55,18 @@ void VkDescriptorBoss::updateDescriptorSets(
 	VkSampler textureSampler,
 	VkImageView shadowMapImageView,
 	VkSampler shadowMapSampler,
-    VkImageView cubeShadowMapImageView,
-    VkSampler cubeShadowMapSampler)
+    const std::vector<VkImageView>& cubeShadowMapImageViews,
+    const std::vector<VkSampler>& cubeShadowMapSamplers,
+    VkImageView probeIrradianceView,
+    VkSampler probeIrradianceSampler,
+    VkImageView probeDepthView,
+    VkSampler probeDepthSampler,
+    VkBuffer probeParamsBuffer,
+    VkImageView skyboxView,
+    VkSampler skyboxSampler,
+    VkImageView emissiveView,
+    VkSampler emissiveSampler,
+    VkBuffer probeDataBuffer)
 {
 	for (size_t i = 0; i < descriptorSets.size(); i++) {
 		std::vector<VkWriteDescriptorSet> descriptorWrites;
@@ -125,20 +136,144 @@ void VkDescriptorBoss::updateDescriptorSets(
 			shadowWrite.pImageInfo = &shadowImageInfo;
 			descriptorWrites.push_back(shadowWrite);
 		}
-		if (cubeShadowMapImageView != VK_NULL_HANDLE && cubeShadowMapSampler != VK_NULL_HANDLE) {
-            VkDescriptorImageInfo cubeShadowInfo{};
-            cubeShadowInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            cubeShadowInfo.imageView = cubeShadowMapImageView;
-            cubeShadowInfo.sampler = cubeShadowMapSampler;
+		// Cube shadow map samplers (binding = 4): one per point-light shadow
+		// slot. Unused slots fall back to the first available cube map (or the
+		// default texture) so the descriptors stay valid.
+		{
+			std::array<VkDescriptorImageInfo, MAX_POINT_SHADOWS> cubeShadowInfos{};
+			VkImageView fallbackView = textureImageView;
+			VkSampler fallbackSampler = textureSampler;
+			if (!cubeShadowMapImageViews.empty() && !cubeShadowMapSamplers.empty()) {
+				fallbackView = cubeShadowMapImageViews[0];
+				fallbackSampler = cubeShadowMapSamplers[0];
+			}
+			for (size_t slot = 0; slot < MAX_POINT_SHADOWS; ++slot) {
+				VkImageView view = fallbackView;
+				VkSampler sampler = fallbackSampler;
+				if (slot < cubeShadowMapImageViews.size() && slot < cubeShadowMapSamplers.size() &&
+				    cubeShadowMapImageViews[slot] != VK_NULL_HANDLE &&
+				    cubeShadowMapSamplers[slot] != VK_NULL_HANDLE) {
+					view = cubeShadowMapImageViews[slot];
+					sampler = cubeShadowMapSamplers[slot];
+				}
+				cubeShadowInfos[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				cubeShadowInfos[slot].imageView = view;
+				cubeShadowInfos[slot].sampler = sampler;
+			}
 
-            VkWriteDescriptorSet cubeShadowWrite{};
-            cubeShadowWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            cubeShadowWrite.dstSet = descriptorSets[i];
-            cubeShadowWrite.dstBinding = 4;
-            cubeShadowWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            cubeShadowWrite.descriptorCount = 1;
-            cubeShadowWrite.pImageInfo = &cubeShadowInfo;
-            descriptorWrites.push_back(cubeShadowWrite);
+			VkWriteDescriptorSet cubeShadowWrite{};
+			cubeShadowWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			cubeShadowWrite.dstSet = descriptorSets[i];
+			cubeShadowWrite.dstBinding = 4;
+			cubeShadowWrite.dstArrayElement = 0;
+			cubeShadowWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			cubeShadowWrite.descriptorCount = MAX_POINT_SHADOWS;
+			cubeShadowWrite.pImageInfo = cubeShadowInfos.data();
+			descriptorWrites.push_back(cubeShadowWrite);
+		}
+
+        // Probe GI irradiance atlas (binding = 5) - lives in GENERAL layout
+        if (probeIrradianceView != VK_NULL_HANDLE && probeIrradianceSampler != VK_NULL_HANDLE) {
+            VkDescriptorImageInfo probeIrrInfo{};
+            probeIrrInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            probeIrrInfo.imageView = probeIrradianceView;
+            probeIrrInfo.sampler = probeIrradianceSampler;
+
+            VkWriteDescriptorSet probeIrrWrite{};
+            probeIrrWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            probeIrrWrite.dstSet = descriptorSets[i];
+            probeIrrWrite.dstBinding = 5;
+            probeIrrWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            probeIrrWrite.descriptorCount = 1;
+            probeIrrWrite.pImageInfo = &probeIrrInfo;
+            descriptorWrites.push_back(probeIrrWrite);
+        }
+
+        // Probe GI depth atlas (binding = 6)
+        if (probeDepthView != VK_NULL_HANDLE && probeDepthSampler != VK_NULL_HANDLE) {
+            VkDescriptorImageInfo probeDepthInfo{};
+            probeDepthInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            probeDepthInfo.imageView = probeDepthView;
+            probeDepthInfo.sampler = probeDepthSampler;
+
+            VkWriteDescriptorSet probeDepthWrite{};
+            probeDepthWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            probeDepthWrite.dstSet = descriptorSets[i];
+            probeDepthWrite.dstBinding = 6;
+            probeDepthWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            probeDepthWrite.descriptorCount = 1;
+            probeDepthWrite.pImageInfo = &probeDepthInfo;
+            descriptorWrites.push_back(probeDepthWrite);
+        }
+
+        // Probe volume params UBO (binding = 7)
+        if (probeParamsBuffer != VK_NULL_HANDLE) {
+            VkDescriptorBufferInfo probeParamsInfo{};
+            probeParamsInfo.buffer = probeParamsBuffer;
+            probeParamsInfo.offset = 0;
+            probeParamsInfo.range = sizeof(VolumeProbe);
+
+            VkWriteDescriptorSet probeParamsWrite{};
+            probeParamsWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            probeParamsWrite.dstSet = descriptorSets[i];
+            probeParamsWrite.dstBinding = 7;
+            probeParamsWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            probeParamsWrite.descriptorCount = 1;
+            probeParamsWrite.pBufferInfo = &probeParamsInfo;
+            descriptorWrites.push_back(probeParamsWrite);
+        }
+
+        // Skybox cubemap (binding = 8) - glass environment reflections
+        if (skyboxView != VK_NULL_HANDLE && skyboxSampler != VK_NULL_HANDLE) {
+            VkDescriptorImageInfo skyboxInfo{};
+            skyboxInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            skyboxInfo.imageView = skyboxView;
+            skyboxInfo.sampler = skyboxSampler;
+
+            VkWriteDescriptorSet skyboxWrite{};
+            skyboxWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            skyboxWrite.dstSet = descriptorSets[i];
+            skyboxWrite.dstBinding = 8;
+            skyboxWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            skyboxWrite.descriptorCount = 1;
+            skyboxWrite.pImageInfo = &skyboxInfo;
+            descriptorWrites.push_back(skyboxWrite);
+        }
+
+        // Emissive texture (binding = 10). Global sets have no per-material
+        // emissive; bind the default texture and rely on the (zeroed)
+        // material factor.
+        if (emissiveView != VK_NULL_HANDLE && emissiveSampler != VK_NULL_HANDLE) {
+            VkDescriptorImageInfo emissiveInfo{};
+            emissiveInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            emissiveInfo.imageView = emissiveView;
+            emissiveInfo.sampler = emissiveSampler;
+
+            VkWriteDescriptorSet emissiveWrite{};
+            emissiveWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            emissiveWrite.dstSet = descriptorSets[i];
+            emissiveWrite.dstBinding = 10;
+            emissiveWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            emissiveWrite.descriptorCount = 1;
+            emissiveWrite.pImageInfo = &emissiveInfo;
+            descriptorWrites.push_back(emissiveWrite);
+        }
+
+        // Probe data SSBO (binding = 9) - relocated probe positions
+        if (probeDataBuffer != VK_NULL_HANDLE) {
+            VkDescriptorBufferInfo probeDataInfo{};
+            probeDataInfo.buffer = probeDataBuffer;
+            probeDataInfo.offset = 0;
+            probeDataInfo.range = VK_WHOLE_SIZE;
+
+            VkWriteDescriptorSet probeDataWrite{};
+            probeDataWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            probeDataWrite.dstSet = descriptorSets[i];
+            probeDataWrite.dstBinding = 9;
+            probeDataWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            probeDataWrite.descriptorCount = 1;
+            probeDataWrite.pBufferInfo = &probeDataInfo;
+            descriptorWrites.push_back(probeDataWrite);
         }
 		// Update all descriptors
 		vkUpdateDescriptorSets(device->getDevice(), static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);

@@ -26,9 +26,19 @@
   ],
   "Objects": [
     {
-      "name":"Teapot",
-      "modelPath": "TeaPot/teapots_galore_id.gltf",
+      "name":"TransformTest",
+      "modelPath": "GLTF/glTF-Sample-Assets-main/Models/TextureTransformTest/glTF/TextureTransformTest.gltf",
       "position": [4.0,0.0,0.0],
+      "rotation":[0.0,0.0,0.0],
+      "scale": [1.0,1.0, 1.0],
+      "physics": {
+        "enabled": false,
+        "isDynamic": false,
+        "useMeshShape": false}
+    },{
+      "name":"DiffuseTest",
+      "modelPath": "GLTF/glTF-Sample-Assets-main/Models/DiffuseTransmissionTest/glTF/DiffuseTransmissionTest.gltf",
+      "position": [9.0,0.0,0.0],
       "rotation":[0.0,0.0,0.0],
       "scale": [1.0,1.0, 1.0],
       "physics": {

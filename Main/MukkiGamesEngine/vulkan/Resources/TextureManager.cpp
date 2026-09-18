@@ -22,7 +22,7 @@ void TextureManager::cleanup()
 }
 void TextureManager::createImage(uint32_t width, uint32_t height, VkFormat format,
 	VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
-	VkImage& image, VkDeviceMemory& imageMemory, bool isCubemap)
+	VkImage& image, VkDeviceMemory& imageMemory, bool isCubemap, uint32_t mipLevels)
 {
 	VkImageCreateInfo imageInfo{};
 	imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -30,7 +30,7 @@ void TextureManager::createImage(uint32_t width, uint32_t height, VkFormat forma
 	imageInfo.extent.width = width;
 	imageInfo.extent.height = height;
 	imageInfo.extent.depth = 1;
-	imageInfo.mipLevels = 1;
+	imageInfo.mipLevels = mipLevels;
 	imageInfo.arrayLayers = isCubemap ? 6 : 1;
 	imageInfo.format = format;
 	imageInfo.tiling = tiling;
@@ -59,7 +59,7 @@ void TextureManager::createImage(uint32_t width, uint32_t height, VkFormat forma
 	vkBindImageMemory(device->getDevice(), image, imageMemory, 0);
 
 }
-VkImageView TextureManager::createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, bool isCubemap)
+VkImageView TextureManager::createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, bool isCubemap, uint32_t mipLevels)
 {
 	VkImageViewCreateInfo viewInfo{};
 	viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -68,7 +68,7 @@ VkImageView TextureManager::createImageView(VkImage image, VkFormat format, VkIm
 	viewInfo.format = format;
 	viewInfo.subresourceRange.aspectMask = aspectFlags;
 	viewInfo.subresourceRange.baseMipLevel = 0;
-	viewInfo.subresourceRange.levelCount = 1;
+	viewInfo.subresourceRange.levelCount = mipLevels;
 	viewInfo.subresourceRange.baseArrayLayer = 0;
 	viewInfo.subresourceRange.layerCount = isCubemap ? 6 : 1;
 	VkImageView imageView;
@@ -79,7 +79,7 @@ VkImageView TextureManager::createImageView(VkImage image, VkFormat format, VkIm
 }
 
 void TextureManager::transitionImageLayout(VkImage image, VkFormat format,
-	VkImageLayout oldLayout, VkImageLayout newLayout, bool isCubemap)
+	VkImageLayout oldLayout, VkImageLayout newLayout, bool isCubemap, uint32_t mipLevels)
 {
 	VkCommandBuffer commandBuffer = commandBufferManager->beginSingleTimeCommands();
 
@@ -92,7 +92,7 @@ void TextureManager::transitionImageLayout(VkImage image, VkFormat format,
 	barrier.image = image;
 	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 	barrier.subresourceRange.baseMipLevel = 0;
-	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.levelCount = mipLevels;
 	barrier.subresourceRange.baseArrayLayer = 0;
 	barrier.subresourceRange.layerCount = isCubemap ? 6 : 1;
 
@@ -128,6 +128,15 @@ void TextureManager::transitionImageLayout(VkImage image, VkFormat format,
 	vkCmdPipelineBarrier(commandBuffer, sourceStage, destinationStage, 0,
 		0, nullptr, 0, nullptr, 1, &barrier);
 
+	commandBufferManager->endSingleTimeCommands(commandBuffer);
+}
+
+void TextureManager::copyBufferToImageRegions(VkBuffer buffer, VkImage image,
+	const std::vector<VkBufferImageCopy>& regions)
+{
+	VkCommandBuffer commandBuffer = commandBufferManager->beginSingleTimeCommands();
+	vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		static_cast<uint32_t>(regions.size()), regions.data());
 	commandBufferManager->endSingleTimeCommands(commandBuffer);
 }
 

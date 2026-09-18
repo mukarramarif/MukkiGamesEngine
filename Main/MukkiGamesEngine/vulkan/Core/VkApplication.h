@@ -18,6 +18,7 @@
 #include "../Resources/DeletionQueue.h"
 #include "../Resources/ShadowMap.h"
 #include "../Resources/CloudNoiseGenerator.h"
+#include "../Resources/ProbeVolume.h"
 #include "../uiManager/uiManager.h"
 #include "../pipeline/computePipeline.h"
 #include "../pipeline/CloudPipeline.h"
@@ -28,12 +29,14 @@
 #include "ShaderCompiler.h"
 #include "../raytracing/RayTracingAS.h"
 #include "../raytracing/RayTracingPipeline.h"
+#include "../raytracing/ProbeTracingPipeline.h"
 #include "../Physics/PhysicsEngine.h"
 #include "../../Renderer/Renderer.h"
 #include "../Resources/ShadowCubeMap.h"
 #include "../RenderGraph.h"
 const int MAX_FRAMES_IN_FLIGHT = 2;
-const int MAX_RT_TEXTURES = 100;
+// Bistro alone references ~290 textures; keep headroom for larger scenes.
+const int MAX_RT_TEXTURES = 512;
 
 class VulkanApplication {
 public:
@@ -93,7 +96,7 @@ private:
 	std::vector<VkSemaphore> renderFinishedSemaphores;
 	std::vector<VkFence> inFlightFences;
 	std::vector<VkFence> imagesInFlight;
-  std::vector<VkImageLayout> swapChainImageLayouts;
+    std::vector<VkImageLayout> swapChainImageLayouts;
 	uint32_t currentFrame = 0;
 
 	// Vertex/Index buffers
@@ -166,6 +169,15 @@ private:
 		uint32_t pad0;
 		uint32_t pad1;
 	};
+	struct ProbeSceneData{
+	    GPULight lights[MAX_LIGHTS];
+		glm::vec4 lightParams;
+		// x = deltaTime (seconds), y = light-change refresh boost:
+		// 1 forces the probe field to adopt the new measurement immediately
+		// (a light moved - don't wait for the hysteresis to catch up).
+		glm::vec4 timeParams;
+	};
+
 	VkBuffer rayTracingPrimitiveBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory rayTracingPrimitiveBufferMemory = VK_NULL_HANDLE;
 	VkBuffer rayTracingMeshBuffer = VK_NULL_HANDLE;
@@ -227,6 +239,17 @@ private:
 	void SetupUIManager();
 	void initComputePipeline();
     void initRayTracingPipeline();
+	void initProbeTracing();
+	void buildProbeVolumeFromScene();
+	void createProbeUniformBuffer();
+	void updateProbeUniformBuffer();
+	void createProbeDescriptorSetLayout();
+	void createProbeDescriptorPool();
+	void createProbeDescriptorSet();
+	void bindProbeDescriptorsToLoadedObjects();
+	void recordProbeUpdatePass(VkCommandBuffer cmd);
+	void resetProbeHistory();
+	void cleanupProbeResources();
 	void createComputeOutputImage();
 	void createRayTracingGeometryBuffers();
 	void cleanupRayTracingGeometryBuffers();
@@ -246,7 +269,7 @@ private:
 	void cleanupTAAPipeline();
 	void updateTAADescriptorSets();
 	void recordShadowPass(VkCommandBuffer commandBuffer);
-	void recordPointShadowPass(VkCommandBuffer commandBuffer);
+	void recordPointShadowPass(VkCommandBuffer commandBuffer, uint32_t slot);
 	void buildFrameGraph();
 	void initCloudPipeline();
 	void createCloudOutputImage();
@@ -302,6 +325,34 @@ private:
 
 	std::unique_ptr<RayTracingPipeline> rayTracingPipeline;
 
+	// Probe-based ray-traced global illumination (DDGI-style)
+	std::unique_ptr<ProbeVolume> probeVolume;
+	std::unique_ptr<ProbeTracingPipeline> probeTracingPipeline;
+	VkDescriptorSetLayout probeDescriptorSetLayout = VK_NULL_HANDLE;
+	VkDescriptorPool probeDescriptorPool = VK_NULL_HANDLE;
+	VkDescriptorSet probeDescriptorSet = VK_NULL_HANDLE;
+	VkBuffer probeSceneUniformBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory probeSceneUniformBufferMemory = VK_NULL_HANDLE;
+	void* probeSceneUniformBufferMapped = nullptr;
+	bool probeGIEnabled = true;
+	// Gates the probe RT pipeline + trace pass + probe TLAS build. Shading
+	// bindings stay valid either way (--no-probes keeps the atlases zeroed).
+	bool probeTracingEnabled = true;
+
+	// Light-change detection: snapshots the probe-relevant light state so a
+	// moved light triggers a fast probe-field refresh instead of waiting for
+	// the temporal hysteresis to catch up.
+	std::vector<GPULight> m_prevProbeLights;
+	int m_probeRefreshFrames = 0;
+	bool lightsChangedForProbes();
+
+	// Debug: ImGui texture handles for the live probe atlases (recreated
+	// whenever the volume is rebuilt - the views change).
+	ImTextureID probeIrradianceTexID = nullptr;
+	ImTextureID probeDepthTexID = nullptr;
+	VkImageView m_probeTexSourceView = VK_NULL_HANDLE;
+	void updateProbeDebugTextures();
+
 	// Accumulation
 	VkImage accumOutputImage = VK_NULL_HANDLE;
 	VkDeviceMemory accumOutputImageMemory = VK_NULL_HANDLE;
@@ -328,18 +379,19 @@ private:
 
 	//ShadowMap
 	std::unique_ptr<ShadowMap> shadowMap;
-	std::unique_ptr<ShadowCubeMap> shadowCubeMap;
+	// One cube shadow map per point-light shadow slot.
+	std::vector<std::unique_ptr<ShadowCubeMap>> shadowCubeMaps;
 
 	// Frame graph (owns shadow-map transitions + pass ordering)
 	RenderGraph renderGraph;
 	FrameGraphResourceHandle m_dirShadowHandle{};
-	FrameGraphResourceHandle m_cubeShadowHandle{};
+	std::array<FrameGraphResourceHandle, MAX_POINT_SHADOWS> m_cubeShadowHandles{};
 	VkImageLayout m_dirShadowLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	VkImageLayout m_cubeShadowLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	std::array<VkImageLayout, MAX_POINT_SHADOWS> m_cubeShadowLayouts{};
 
 
 	//TODO: find a way to automatically update scenes like hot shader reloading
-	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json","WaterExample.json", "showRoom.json", "GlassDragon.json"};
+	std::vector<std::string> availableScenes{ "sceneTrack.json", "scene.json", "showRoom.json", "GlassDragon.json", "GLTFTest.json", "SponzaExample.json", "bistro.json"};
 	int currentSceneIndex = 0;
 
 	//Cloud Pipeline
@@ -376,14 +428,18 @@ private:
 
 	// Physics
 	std::unique_ptr<PhysicsEngine> physicsEngine;
+
+	// Debug line rendering (probe visualization)
 	void initLineRenderer();
 	void drawDebugLines(VkCommandBuffer commandBuffer, uint32_t currentImage);
-	VkPipeline linePipeline = VK_NULL_HANDLE;
+	std::unique_ptr<VulkanPipeline> linePipeline;
 	VkPipelineLayout linePipelineLayout = VK_NULL_HANDLE;
 	VkDescriptorSetLayout lineDescriptorSetLayout = VK_NULL_HANDLE;
 	VkDescriptorSet lineDescriptorSet = VK_NULL_HANDLE;
 	VkBuffer lineVertexBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory lineVertexBufferMemory = VK_NULL_HANDLE;
+	VkDeviceSize lineVertexBufferCapacity = 0;
+	bool showProbeDebugVisualization = false;
 	uint32_t lineVertexCount = 0;
 	float vehicleThrottle = 0.0f;
 	float vehicleBrake = 0.0f;

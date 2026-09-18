@@ -9,12 +9,18 @@ struct UniformBufferObject {
     glm::mat4 normalMatrix{};         // inverse transpose of model matrix
     glm::mat4 lightSpaceMatrix{};     // directional light view-projection for shadow mapping
     glm::vec4 viewPos{};              // camera position
-    GPULight lights[MAX_LIGHTS];
-    int numLights{};
-    float ambientStrength{};
-    float padding[2]{};
-    glm::vec4 pointShadowParams;
-};
+    	GPULight lights[MAX_LIGHTS];
+    	int numLights{};
+    	float ambientStrength{};
+    	float padding[2]{};
+    	// Cube shadow map data, packed in the order the shadow pass assigns
+    	// slots (first N enabled point lights). xyz = light position, w = 1/far.
+    	glm::vec4 pointShadowParams[MAX_POINT_SHADOWS];
+    	// The same point lights, duplicated for static (unrolled) indexing.
+    	GPULight pointLights[MAX_POINT_SHADOWS];
+    	int numPointLights{};
+    	float padPointLights[3]{};
+    };
 
 
 struct MaterialUBO {
@@ -26,4 +32,26 @@ struct MaterialUBO {
 	alignas(4) float baseColorG;
 	alignas(4) float baseColorB;
 	alignas(4) float alpha;
+	// KHR_texture_transform per slot: offsetX, offsetY, rotation, scaleX, scaleY
+	alignas(4) float baseColorUvOx, baseColorUvOy, baseColorUvRot, baseColorUvSx, baseColorUvSy;
+	alignas(4) float metallicRoughnessUvOx, metallicRoughnessUvOy, metallicRoughnessUvRot, metallicRoughnessUvSx, metallicRoughnessUvSy;
+	alignas(4) float emissiveUvOx, emissiveUvOy, emissiveUvRot, emissiveUvSx, emissiveUvSy;
+	// KHR_materials_iridescence
+	alignas(4) float iridescenceFactor;
+	alignas(4) float iridescenceIor;
+	alignas(4) float iridescenceThicknessMin;
+	alignas(4) float iridescenceThicknessMax;
+	// KHR_materials_diffuse_transmission
+	alignas(4) float diffuseTransmissionFactor;
+	alignas(4) float diffuseTransmissionR, diffuseTransmissionG, diffuseTransmissionB;
+	// KHR_materials_volume
+	alignas(4) float attenuationR, attenuationG, attenuationB;
+	alignas(4) float attenuationDistance;
+	alignas(4) float thicknessFactor;
+	// KHR_materials_transmission (glass)
+	alignas(4) float transmissionFactor;
+	alignas(4) float idxReflect;
+	// KHR_materials_emissive (rt.rgen parity). The CPU zeroes these when no
+	// emissive texture is bound, so the factor doubles as the enable flag.
+	alignas(4) float emissiveR, emissiveG, emissiveB;
 };

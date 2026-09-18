@@ -1,0 +1,447 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+#include "probeCommon.glsl"
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
+layout(set = 0, binding = 3) uniform sampler2D prevIrradiance;   // history copy (view 1)
+layout(set = 0, binding = 4) uniform sampler2D prevDepth;        // history copy (view 1)
+layout(set = 0, binding = 5, rgba16f) uniform image2D outIrradiance;   // current copy (view 0)
+layout(set = 0, binding = 6, rg16f)    uniform image2D outDepth;       // current copy (view 0)
+layout(set = 0, binding = 8) uniform samplerCube probeSkybox;
+layout(set = 0, binding = 9, rgba16f) uniform image2D outIrradianceHistory; // view 1 (duplicate store)
+layout(set = 0, binding = 10, rg16f)   uniform image2D outDepthHistory;      // view 1 (duplicate store)
+
+// std140 mirror of VolumeProbe (vulkan/Resources/ProbeVolume.h)
+layout(std140, set = 0, binding = 1) uniform ProbeVolumeParamsBlock {
+    vec4  origin;      // xyz = grid min corner
+    ivec4 probeCounts; // xyz = probes per axis, w = total probe count
+    vec4  params;      // x = spacing, y = maxRayDistance, z = hysteresis, w = normalBias
+    vec4  atlas;       // x = tilesPerSide, y = irradianceTexelsPerProbe, z = depthTexelsPerProbe, w = raysPerProbe
+    vec4  debug;       // x = raster debug mode, y = GI strength, z = relocation enabled, w = feedback gain
+    vec4  shadow;      // x = raster probe-shadow strength, y = penumbra softening, z = BRDF tap count
+} probeVolume;
+
+// ProbeData now lives in probeCommon.glsl (shared with the sampler).
+layout(std430, set = 0, binding = 2) buffer ProbeDataBuffer {
+    ProbeData probes[];
+};
+
+// Trilinear + octahedral + Chebyshev probe lookup. Lives here (not in
+// probeCommon.glsl) because it reads the probe-data SSBO: relocated probes
+// must be sampled at their ACTUAL positions - the stored octahedral texel
+// directions and depth moments are measured from the relocated origin, so
+// grid-based lookup produces blotchy, mis-indexed shading.
+vec3 sampleProbeIrradiance(sampler2D irrTex, sampler2D depthTex,
+                           vec3 pos, vec3 normal,
+                           vec3 volumeOrigin, float probeSpacing, ivec3 probeCounts,
+                           float tilesPerSide, float normalBias)
+{
+    // Bias the lookup point off the surface so the shading point's own
+    // probe doesn't self-shadow the sample.
+    vec3 biasedPos = pos + normal * normalBias;
+
+    vec3 q  = (biasedPos - volumeOrigin) / probeSpacing;
+    // Clamp into the grid interior so edge probes still have 8 neighbors.
+    vec3 qc = clamp(q, vec3(0.5), vec3(probeCounts) - vec3(0.5001));
+    vec3 basef = qc - vec3(0.5);
+    ivec3 base = ivec3(floor(basef));
+    vec3 frac  = basef - vec3(base);
+
+    vec3  result      = vec3(0.0);
+    float totalWeight = 0.0;
+
+    // Fallback: prefer the nearest probe that is IN FRONT of the surface
+    // (backface > 0.5); only use any probe if none is in front. Prevents
+    // the fallback from returning an occluded probe's garbage.
+    float bestFrontTriW  = -1.0;
+    vec3  bestFrontIrradiance = vec3(0.0);
+    float bestAnyTriW  = -1.0;
+    vec3  bestAnyIrradiance = vec3(0.0);
+
+    for (int dz = 0; dz <= 1; dz++)
+    for (int dy = 0; dy <= 1; dy++)
+    for (int dx = 0; dx <= 1; dx++) {
+        ivec3 idx = base + ivec3(dx, dy, dz);
+        uint probeIndex = uint((idx.z * probeCounts.y + idx.y) * probeCounts.x + idx.x);
+
+        vec3 w = vec3(1.0) - abs(vec3(dx, dy, dz) - frac);
+        float triW = w.x * w.y * w.z;
+        if (triW <= 0.0) continue;
+
+        // Relocated probes live in the SSBO; the grid formula would index
+        // the wrong octahedral texel and break the Chebyshev depth test.
+        vec3  probePos    = probes[probeIndex].pos.xyz;
+        vec3  toProbe     = probePos - biasedPos;
+        float distToProbe = length(toProbe);
+        vec3  dirToProbe  = toProbe / max(distToProbe, 1e-5);
+
+        vec2 oct = octEncode(dirToProbe);
+        ivec2 irrTexel   = ivec2(clamp(oct * float(PROBE_IRRADIANCE_TEXELS), vec2(0.0), vec2(PROBE_IRRADIANCE_TEXELS - 1.0)));
+        ivec2 depthTexel = ivec2(clamp(oct * float(PROBE_DEPTH_TEXELS),      vec2(0.0), vec2(PROBE_DEPTH_TEXELS - 1.0)));
+
+        uvec2 tile = uvec2(probeIndex % uint(tilesPerSide), probeIndex / uint(tilesPerSide));
+        ivec2 irrCoord   = ivec2(tile) * PROBE_IRRADIANCE_TEXELS + irrTexel;
+        ivec2 depthCoord = ivec2(tile) * PROBE_DEPTH_TEXELS      + depthTexel;
+
+        vec3  irr        = texelFetch(irrTex,   irrCoord,   0).rgb;
+        vec2  moments    = texelFetch(depthTex, depthCoord, 0).rg;
+        float visibility = chebyshevWeight(moments, distToProbe);
+
+        // Backface rejection: probes BEHIND the surface (normal points away
+        // from them) leak light through walls - weight them down smoothly so
+        // adjacent triangles don't pop between 0 and full weight.
+        float backface = smoothstep(0.0, 0.2, dot(normal, dirToProbe));
+
+        // Per-probe quality (rotationSeed.z): probes stuck inside geometry
+        // store garbage radiance; downweight them so it can't leak into
+        // neighboring cells.
+        float quality = probes[probeIndex].rotationSeed.z;
+
+        // Proximity downweight: a probe hugging the surface stores that
+        // surface's OWN radiance in its toward-surface texels (traced from
+        // ~0 distance, so sharp and spatially un-averaged). Sampling it
+        // back at the surface self-illuminates it - a localized bright/dark
+        // blotch right where relocated probes sit. Fade close probes out
+        // smoothly; the other 7 probes carry the cell.
+        float proxWeight = smoothstep(0.0, probeSpacing * 0.35, distToProbe);
+
+        float weight = triW * visibility * backface * (quality * quality) * proxWeight;
+        result      += irr * weight;
+        totalWeight += weight;
+
+        if (backface > 0.5) {
+            if (triW > bestFrontTriW) {
+                bestFrontTriW = triW;
+                bestFrontIrradiance = irr;
+            }
+        } else if (triW > bestAnyTriW) {
+            bestAnyTriW = triW;
+            bestAnyIrradiance = irr;
+        }
+    }
+    if (totalWeight > 1e-5) return result / totalWeight;
+    if (bestFrontTriW >= 0.0) return bestFrontIrradiance;
+    return bestAnyTriW >= 0.0 ? bestAnyIrradiance : vec3(0.0);
+}
+
+// std140 mirror of GPULight (vulkan/objects/lights.h)
+struct Light {
+    vec4 position;      // w unused
+    vec4 color;         // a = intensity
+    vec4 direction;     // w = spotlight cutoff
+    vec4 attenuation;   // w = light type
+};
+layout(std140, set = 0, binding = 7) uniform ProbeSceneBlock {
+    Light lights[MAX_LIGHTS];
+    vec4 lightParams;   // x = light count, y = ambient strength
+    vec4 timeParams;    // x = deltaTime (seconds)
+} probeScene;
+
+// Must match probe.rmiss / probe.rchit exactly.
+struct ProbePayload {
+    float hitT;
+    vec3 hitNormal;
+};
+
+layout(location = 0) rayPayloadEXT ProbePayload payload;
+
+// Direct diffuse light at the bounce point. Also reports the visibility of
+// the first directional light from the bounce point (sunVis, 1 = lit, 0 =
+// shadowed). The probe stores this per direction as shadow information in
+// the irradiance atlas alpha channel.
+vec3 directLighting(vec3 hitPos, vec3 normal, out float sunVis)
+{
+    int lightCount = int(probeScene.lightParams.x + 0.5);
+    vec3 lighting = vec3(0.0);
+    sunVis = 1.0;          // no directional light -> nothing blocks the sun
+    bool sunTested = false;
+
+    for (int i = 0; i < lightCount && i < MAX_LIGHTS; ++i) {
+        Light light = probeScene.lights[i];
+        int lightType = int(light.attenuation.w + 0.5);
+        vec3  lightDir    = vec3(0.0);
+        float attenuation = 1.0;
+        float maxDistance = 10000.0;
+        float intensity   = 1.0;
+
+        if (lightType == LIGHT_TYPE_DIRECTIONAL) {
+            lightDir = normalize(-light.direction.xyz);
+        } else {
+            vec3 toLight = light.position.xyz - hitPos;
+            float distance = length(toLight);
+            if (distance > 0.0) { lightDir = toLight / distance; maxDistance = distance; }
+            attenuation = 1.0 / (light.attenuation.x +
+                                 light.attenuation.y * distance +
+                                 light.attenuation.z * distance * distance);
+            if (lightType == LIGHT_TYPE_SPOT) {
+                float theta = dot(lightDir, normalize(-light.direction.xyz));
+                float cutoff = light.direction.w;
+                float outerCutoff = cutoff - 0.1;
+                intensity = clamp((theta - outerCutoff) / max(cutoff - outerCutoff, 1e-4), 0.0, 1.0);
+            }
+        }
+        if (intensity <= 0.0) continue;
+
+        // Shadow ray (opaque occlusion only for v1; same payload location 0)
+        payload.hitT = -1.0;
+        traceRayEXT(topLevelAS, gl_RayFlagsNoneEXT, 0xFF, 0, 0, 0,
+                    hitPos + normal * 0.01, 0.001, lightDir, maxDistance, 0);
+
+        if (lightType == LIGHT_TYPE_DIRECTIONAL && !sunTested) {
+            sunVis = payload.hitT > 0.0 ? 0.0 : 1.0;
+            sunTested = true;
+        }
+        if (payload.hitT > 0.0) continue;
+
+        float nDotL = max(dot(normal, lightDir), 0.0);
+        if (nDotL <= 0.0) continue;
+
+        lighting += light.color.rgb * light.color.a * nDotL * attenuation * intensity;
+    }
+    return lighting;
+}
+
+void main()
+{
+    uint probeIndex = gl_LaunchIDEXT.x;
+    if (probeIndex >= uint(probeVolume.probeCounts.w)) return;
+
+    vec3 probePos = probes[probeIndex].pos.xyz;
+    vec2 seed     = probes[probeIndex].rotationSeed.xy;
+
+    uint raysPerProbe = uint(probeVolume.atlas.w + 0.5);
+    if (raysPerProbe > PROBE_RAYS_PER_PROBE) raysPerProbe = PROBE_RAYS_PER_PROBE;
+
+    // Probe relocation bookkeeping. A probe tracing from INSIDE geometry
+    // hits the BACK faces of nearby surfaces: the geometric normal (stored
+    // un-flipped by probe.rchit) points away from the probe, so
+    // s = dot(normal, incoming) < 0 and backfaceWeight < 0.5. A large
+    // backface fraction therefore identifies probes stuck in geometry.
+    // (Not const: GLSL rejects uniform-dependent const initializers.)
+    float relocDistance = probeVolume.params.x * 0.75;
+    float insideMargin  = probeVolume.params.x * 0.1;
+    uint  nearHitCount    = 0u;
+    uint  nearBackfaceCount = 0u;
+    float nearBackfaceSum = 0.0;
+    float minT   = 1.0e30;
+    vec3  minDir = vec3(0.0);
+
+    // Local accumulation (one thread owns the whole probe, no atomics needed)
+    vec3  irrAccum[PROBE_IRRADIANCE_TEXELS * PROBE_IRRADIANCE_TEXELS];
+    float irrWeight[PROBE_IRRADIANCE_TEXELS * PROBE_IRRADIANCE_TEXELS];
+    // Per-direction sun visibility (shadow information, stored in the
+    // irradiance atlas alpha channel).
+    float shadowAccum[PROBE_IRRADIANCE_TEXELS * PROBE_IRRADIANCE_TEXELS];
+    float shadowWeight[PROBE_IRRADIANCE_TEXELS * PROBE_IRRADIANCE_TEXELS];
+    float depthAccum[PROBE_DEPTH_TEXELS * PROBE_DEPTH_TEXELS];
+    float depthSqAccum[PROBE_DEPTH_TEXELS * PROBE_DEPTH_TEXELS];
+    uint  depthCount[PROBE_DEPTH_TEXELS * PROBE_DEPTH_TEXELS];
+
+    for (int i = 0; i < PROBE_IRRADIANCE_TEXELS * PROBE_IRRADIANCE_TEXELS; i++) {
+        irrAccum[i] = vec3(0.0); irrWeight[i] = 0.0;
+        shadowAccum[i] = 0.0; shadowWeight[i] = 0.0;
+    }
+    for (int i = 0; i < PROBE_DEPTH_TEXELS * PROBE_DEPTH_TEXELS; i++) {
+        depthAccum[i] = 0.0; depthSqAccum[i] = 0.0; depthCount[i] = 0u;
+    }
+
+    for (uint i = 0; i < raysPerProbe; i++) {
+        vec3 dir = rotateDir(sphericalFibonacci(i, raysPerProbe), seed);
+        vec2 oct = octEncode(dir);
+
+        payload.hitT = -1.0;
+        payload.hitNormal = vec3(0.0);
+        traceRayEXT(topLevelAS, gl_RayFlagsNoneEXT, 0xFF, 0, 0, 0,
+                    probePos + dir * 0.01, 0.001, dir, probeVolume.params.y, 0);
+
+        ivec2 irrTexel = ivec2(clamp(oct * float(PROBE_IRRADIANCE_TEXELS),
+                                     vec2(0.0), vec2(PROBE_IRRADIANCE_TEXELS - 1.0)));
+        int irrIdx = irrTexel.y * PROBE_IRRADIANCE_TEXELS + irrTexel.x;
+
+        if (payload.hitT > 0.0) {
+            // Snapshot before any shadow trace clobbers the payload
+            float hitT      = payload.hitT;
+            vec3  hitNormal = payload.hitNormal;
+            vec3  hitPos    = probePos + dir * hitT;
+            vec3  incoming  = -dir;
+
+            // Backface weight: rays hitting the far side of a surface are
+            // unreliable (light leaking through walls) so they count less.
+            float s = dot(hitNormal, incoming);
+            float backfaceWeight = (1.0 + s) * 0.5;
+            vec3  sampleNormal   = s >= 0.0 ? hitNormal : -hitNormal;
+
+            // Relocation bookkeeping: track near hits and their orientation.
+            if (hitT < relocDistance) {
+                nearHitCount += 1u;
+                nearBackfaceSum += backfaceWeight;
+                if (backfaceWeight < 0.5) nearBackfaceCount += 1u;
+                if (hitT < minT) {
+                    minT   = hitT;
+                    minDir = dir;
+                }
+            }
+
+            // Radiance arriving at the bounce point = direct light at the
+            // bounce + indirect read back from the PREVIOUS frame's probes.
+            // The feedback is scaled by debug.w (feedback gain, default
+            // 0.5): without damping the loop L = direct + L_prev has no
+            // fixed point and the field ramps up until it saturates, which
+            // shows up as blown-out triangles. (Full albedo modulation
+            // would be the physically correct version.)
+            float sunVis = 1.0;
+            vec3 radiance = directLighting(hitPos, sampleNormal, sunVis);
+            radiance += probeVolume.debug.w *
+                        sampleProbeIrradiance(prevIrradiance, prevDepth,
+                                              hitPos, sampleNormal,
+                                              probeVolume.origin.xyz,
+                                              probeVolume.params.x,
+                                              probeVolume.probeCounts.xyz,
+                                              probeVolume.atlas.x,
+                                              probeVolume.params.w);
+
+            irrAccum[irrIdx]  += radiance * backfaceWeight;
+            irrWeight[irrIdx] += backfaceWeight;
+
+            // Shadow information for this direction: is the surface seen
+            // along the ray lit by the sun?
+            shadowAccum[irrIdx]  += sunVis;
+            shadowWeight[irrIdx] += 1.0;
+
+            ivec2 depthTexel = ivec2(clamp(oct * float(PROBE_DEPTH_TEXELS),
+                                           vec2(0.0), vec2(PROBE_DEPTH_TEXELS - 1.0)));
+            int dIdx = depthTexel.y * PROBE_DEPTH_TEXELS + depthTexel.x;
+            depthAccum[dIdx]  += hitT;
+            depthSqAccum[dIdx] += hitT * hitT;
+            depthCount[dIdx]  += 1u;
+        } else {
+            // Miss: sky contributes with full weight. Also update the depth
+            // moments with a large distance: a texel with any sky rays
+            // otherwise averages depth only over its hit rays, and the
+            // Chebyshev test then treats partially-open directions as
+            // occluded, wrongly rejecting probes (dark patches). The huge
+            // depth makes d < 0 for any scene-scale distance -> weight 1.
+            irrAccum[irrIdx]  += texture(probeSkybox, dir).rgb;
+            irrWeight[irrIdx] += 1.0;
+            // Sky rays can't be shadowed by anything.
+            shadowAccum[irrIdx]  += 1.0;
+            shadowWeight[irrIdx] += 1.0;
+
+            ivec2 depthTexel = ivec2(clamp(oct * float(PROBE_DEPTH_TEXELS),
+                                           vec2(0.0), vec2(PROBE_DEPTH_TEXELS - 1.0)));
+            int dIdx = depthTexel.y * PROBE_DEPTH_TEXELS + depthTexel.x;
+            // "Far away" in scene terms. It must NOT exceed the rg16f range:
+            // 1e7 and 1e14 store as +Inf, and Inf - Inf later yields a NaN
+            // variance. The atlas write clamps the moments anyway, this just
+            // keeps the accumulation meaningful.
+            const float missDepth = 1e4;
+            depthAccum[dIdx]  += missDepth;
+            depthSqAccum[dIdx] += missDepth * missDepth;
+            depthCount[dIdx]  += 1u;
+        }
+    }
+
+    // Relocate probes that are inside geometry: push them just past the
+    // nearest surface so their irradiance stops being a dark/bright blob
+    // inside the volume. Blended half-way per frame so the position
+    // converges smoothly; once outside, backface hits disappear and the
+    // probe stops moving. debug.z toggles this (runtime debug knob).
+    // The move is CLAMPED to a fraction of the spacing: a probe that wanders
+    // a full cell away breaks the trilinear topology (an empty grid slot +
+    // a probe serving the wrong cell = the blotches around relocated
+    // probes). Probes deeper inside geometry than the clamp are left in
+    // place and suppressed via the quality factor instead.
+    bool relocatedThisFrame = false;
+    float maxRelocDist = probeVolume.params.x * 0.4;
+    if (probeVolume.debug.z > 0.5 &&
+        nearHitCount > 0u &&
+        nearBackfaceSum < 0.4 * float(nearHitCount) &&
+        minT < maxRelocDist) {
+        float moveDist = min(minT + insideMargin, maxRelocDist);
+        vec3 candidate = probePos + minDir * moveDist;
+        probes[probeIndex].pos = vec4(mix(probePos, candidate, 0.5), 0.0);
+        relocatedThisFrame = true;
+    }
+
+    // Per-probe quality = 1 - fraction of NEAR hits that were backfaces.
+    // Probes in open space hit front faces (quality ~1); probes stuck in
+    // thick geometry (relocation can't fix every case) see mostly backfaces
+    // and get downweighted by the samplers so their garbage radiance can't
+    // leak into neighboring cells. Stored in rotationSeed.z (xy is the ray
+    // rotation seed), smoothed so it reacts to relocation over a few frames.
+    float backfaceFraction = nearHitCount > 0u
+        ? float(nearBackfaceCount) / float(nearHitCount) : 0.0;
+    probes[probeIndex].rotationSeed.z =
+        mix(probes[probeIndex].rotationSeed.z, 1.0 - backfaceFraction, 0.1);
+
+    // Hysteresis blend into the output atlases. timeParams.y is a
+    // light-change refresh boost: when a light moved, the CPU sets it to 1
+    // for a few frames so the field adopts the new measurement immediately
+    // instead of lagging behind the hysteresis.
+    float deltaTime  = max(probeScene.timeParams.x, 1.0 / 60.0);
+    float hysteresis = probeVolume.params.z;
+    float blend      = 1.0 - exp(-deltaTime * mix(4.0, 30.0, hysteresis));
+    blend            = max(blend, probeScene.timeParams.y);
+
+    // Relocation history reset: a relocated probe's atlas texels hold data
+    // traced from its OLD (inside-geometry) position - the hysteresis blend
+    // would keep that garbage alive for many frames, and the trace that
+    // decided the move THIS frame is still from the old position. So:
+    //  - discard this frame's trace entirely, and
+    //  - force a full snap (blend = 1) for the next few frames so the
+    //    texels converge on data traced from the settled position.
+    //    rotationSeed.w = snap counter, re-armed while the probe keeps
+    //    moving, so hysteresis only resumes once the probe stabilizes.
+    bool discardFrame = relocatedThisFrame;
+    if (relocatedThisFrame) {
+        probes[probeIndex].rotationSeed.w = 3.0;
+    }
+    if (probes[probeIndex].rotationSeed.w > 0.0) {
+        blend = 1.0;
+        probes[probeIndex].rotationSeed.w -= 1.0;
+    }
+
+    float tilesPerSide = probeVolume.atlas.x;
+    uvec2 tile = uvec2(probeIndex % uint(tilesPerSide), probeIndex / uint(tilesPerSide));
+
+    if (!discardFrame) {
+    for (int i = 0; i < PROBE_IRRADIANCE_TEXELS * PROBE_IRRADIANCE_TEXELS; i++) {
+        ivec2 t = ivec2(i % PROBE_IRRADIANCE_TEXELS, i / PROBE_IRRADIANCE_TEXELS);
+        ivec2 atlasCoord = ivec2(tile) * PROBE_IRRADIANCE_TEXELS + t;
+        vec4 prev = texelFetch(prevIrradiance, atlasCoord, 0);
+        vec3 newVal = irrWeight[i] > 0.0 ? irrAccum[i] / irrWeight[i] : prev.rgb;
+        // Shadow visibility in the alpha channel. First frame after a clear
+        // has alpha == 0: adopt the measurement directly so the shadow field
+        // doesn't start fully occluded.
+        float newShadow = shadowWeight[i] > 0.0 ? shadowAccum[i] / shadowWeight[i] : 1.0;
+        float outShadow = prev.a <= 1e-6 ? newShadow : mix(prev.a, newShadow, blend);
+        vec4 outVal = vec4(mix(prev.rgb, newVal, blend), outShadow);
+        // Store to BOTH copies: view 0 is what the raster pass reads, view 1
+        // is what the feedback path reads next frame. Avoids a copy pass.
+        imageStore(outIrradiance, atlasCoord, outVal);
+        imageStore(outIrradianceHistory, atlasCoord, outVal);
+    }
+
+    for (int i = 0; i < PROBE_DEPTH_TEXELS * PROBE_DEPTH_TEXELS; i++) {
+        ivec2 t = ivec2(i % PROBE_DEPTH_TEXELS, i / PROBE_DEPTH_TEXELS);
+        ivec2 atlasCoord = ivec2(tile) * PROBE_DEPTH_TEXELS + t;
+        vec2 prev = texelFetch(prevDepth, atlasCoord, 0).rg;
+        // A texel no ray landed in is unmeasured. Keeping the cleared (0,0)
+        // moments makes the Chebyshev test read it as an occluder at
+        // distance 0, permanently rejecting every lookup that maps there
+        // (dark, straight-edged blotches). Store a far depth instead so the
+        // direction reads as open.
+        vec2 newVal = vec2(60000.0);
+        if (depthCount[i] > 0u) {
+            newVal = vec2(depthAccum[i]  / float(depthCount[i]),
+                          depthSqAccum[i] / float(depthCount[i]));
+        }
+        // rg16f tops out at 65504: larger values store as +Inf, and Inf - Inf
+        // later makes the variance NaN. Clamp the moments before storing.
+        vec4 outVal = vec4(min(mix(prev, newVal, blend), vec2(60000.0)), 0.0, 0.0);
+        imageStore(outDepth, atlasCoord, outVal);
+        imageStore(outDepthHistory, atlasCoord, outVal);
+    }
+    }
+}
