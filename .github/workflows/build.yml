@@ -109,7 +109,7 @@ jobs:
       contents: write
     steps:
       - name: Download build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.3
         with:
           name: MukkiGamesEngine-windows-x64
 
