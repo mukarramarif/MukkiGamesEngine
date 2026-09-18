@@ -52,20 +52,38 @@ jobs:
             throw "VULKAN_SDK is not set after Vulkan SDK installation."
           }
 
-          $vulkanHeader = Get-ChildItem -Path $env:VULKAN_SDK -Recurse -File -Filter vulkan.h |
-            Where-Object { $_.FullName -match '[\\/]Include[\\/]vulkan[\\/]vulkan\.h$' } |
-            Select-Object -First 1
-          $vulkanLibrary = Get-ChildItem -Path $env:VULKAN_SDK -Recurse -File -Filter vulkan-1.lib |
-            Select-Object -First 1
+          $resolvedVulkanSdk = $env:VULKAN_SDK
+          $headerCandidates = @(
+            (Join-Path $resolvedVulkanSdk "Include/vulkan/vulkan.h"),
+            (Join-Path $resolvedVulkanSdk "include/vulkan/vulkan.h")
+          )
+          $libraryCandidates = @(
+            (Join-Path $resolvedVulkanSdk "Lib/vulkan-1.lib"),
+            (Join-Path $resolvedVulkanSdk "lib/vulkan-1.lib")
+          )
+          $vulkanHeader = $headerCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          $vulkanLibrary = $libraryCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
-          if (-not $vulkanHeader -or -not $vulkanLibrary) {
-            throw "Could not locate Vulkan SDK include/library files under '$env:VULKAN_SDK'."
+          if (-not $vulkanHeader) {
+            $vulkanHeader = Get-ChildItem -Path $resolvedVulkanSdk -Recurse -File -Filter vulkan.h -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match '[\\/]include[\\/]vulkan[\\/]vulkan\.h$' } |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $vulkanLibrary) {
+            $vulkanLibrary = Get-ChildItem -Path $resolvedVulkanSdk -Recurse -File -Filter vulkan-1.lib -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
           }
 
-          $resolvedVulkanSdk = Split-Path (Split-Path (Split-Path $vulkanHeader.FullName -Parent) -Parent) -Parent
           "VULKAN_SDK=$resolvedVulkanSdk" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "Vulkan_INCLUDE_DIR=$(Join-Path $resolvedVulkanSdk Include)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "Vulkan_LIBRARY=$($vulkanLibrary.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if ($vulkanHeader) {
+            "Vulkan_INCLUDE_DIR=$(Split-Path (Split-Path $vulkanHeader -Parent) -Parent)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+          if ($vulkanLibrary) {
+            "Vulkan_LIBRARY=$vulkanLibrary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+          if (-not $vulkanHeader -or -not $vulkanLibrary) {
+            Write-Warning "Could not resolve Vulkan include/library overrides under '$resolvedVulkanSdk'. CMake will use find_package(Vulkan) defaults."
+          }
           (Join-Path $resolvedVulkanSdk Bin) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           (Join-Path $resolvedVulkanSdk bin) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
@@ -96,13 +114,20 @@ jobs:
       # (build-debug/, build/) that may not exist on a clean CI checkout.
       # ASSETS_PATH=Assets/ makes the packaged exe resolve assets next to itself.
       - name: Configure (CMake)
-        run: >
-          cmake -S . -B build -G Ninja
-          "-DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake"
-          "-DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}"
-          "-DVulkan_INCLUDE_DIR=$env:Vulkan_INCLUDE_DIR"
-          "-DVulkan_LIBRARY=$env:Vulkan_LIBRARY"
-          "-DASSETS_PATH=Assets/"
+        run: |
+          $cmakeArgs = @(
+            "-S", ".", "-B", "build", "-G", "Ninja",
+            "-DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake",
+            "-DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}",
+            "-DASSETS_PATH=Assets/"
+          )
+          if ($env:Vulkan_INCLUDE_DIR) {
+            $cmakeArgs += "-DVulkan_INCLUDE_DIR=$env:Vulkan_INCLUDE_DIR"
+          }
+          if ($env:Vulkan_LIBRARY) {
+            $cmakeArgs += "-DVulkan_LIBRARY=$env:Vulkan_LIBRARY"
+          }
+          cmake @cmakeArgs
 
       - name: Build (CMake)
         run: cmake --build build --parallel
