@@ -46,6 +46,29 @@ jobs:
         with:
           cache: true
 
+      - name: Resolve Vulkan SDK paths
+        run: |
+          if (-not $env:VULKAN_SDK) {
+            throw "VULKAN_SDK is not set after Vulkan SDK installation."
+          }
+
+          $vulkanHeader = Get-ChildItem -Path $env:VULKAN_SDK -Recurse -File -Filter vulkan.h |
+            Where-Object { $_.FullName -match '[\\/]Include[\\/]vulkan[\\/]vulkan\.h$' } |
+            Select-Object -First 1
+          $vulkanLibrary = Get-ChildItem -Path $env:VULKAN_SDK -Recurse -File -Filter vulkan-1.lib |
+            Select-Object -First 1
+
+          if (-not $vulkanHeader -or -not $vulkanLibrary) {
+            throw "Could not locate Vulkan SDK include/library files under '$env:VULKAN_SDK'."
+          }
+
+          $resolvedVulkanSdk = Split-Path (Split-Path (Split-Path $vulkanHeader.FullName -Parent) -Parent) -Parent
+          "VULKAN_SDK=$resolvedVulkanSdk" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "Vulkan_INCLUDE_DIR=$(Join-Path $resolvedVulkanSdk Include)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "Vulkan_LIBRARY=$($vulkanLibrary.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          (Join-Path $resolvedVulkanSdk Bin) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          (Join-Path $resolvedVulkanSdk bin) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -77,6 +100,8 @@ jobs:
           cmake -S . -B build -G Ninja
           "-DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake"
           "-DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}"
+          "-DVulkan_INCLUDE_DIR=$env:Vulkan_INCLUDE_DIR"
+          "-DVulkan_LIBRARY=$env:Vulkan_LIBRARY"
           "-DASSETS_PATH=Assets/"
 
       - name: Build (CMake)
