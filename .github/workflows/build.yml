@@ -46,6 +46,28 @@ jobs:
         with:
           cache: true
 
+      - name: Resolve Vulkan SDK root for CMake
+        run: |
+          $header = Get-ChildItem -Path "$env:VULKAN_SDK" -Recurse -Filter vulkan.h -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '[\\/]Include[\\/]vulkan[\\/]vulkan\.h$' } |
+            Select-Object -First 1
+          $library = Get-ChildItem -Path "$env:VULKAN_SDK" -Recurse -Filter vulkan-1.lib -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '[\\/]Lib[\\/]' } |
+            Select-Object -First 1
+
+          if (-not $header -or -not $library) {
+            throw "Could not locate Vulkan headers/libs under VULKAN_SDK=$env:VULKAN_SDK"
+          }
+
+          $resolvedRoot = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "VULKAN_SDK=$resolvedRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          if (Test-Path "$resolvedRoot/Bin") {
+            "$resolvedRoot/Bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          } elseif (Test-Path "$resolvedRoot/bin") {
+            "$resolvedRoot/bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
