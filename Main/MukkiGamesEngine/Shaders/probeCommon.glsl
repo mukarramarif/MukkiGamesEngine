@@ -9,7 +9,11 @@ const int LIGHT_TYPE_SPOT = 2;
 
 // Must match ProbeVolume's defaults (vulkan/Resources/ProbeVolume.h).
 const int PROBE_IRRADIANCE_TEXELS = 8;
-const int PROBE_DEPTH_TEXELS      = 16;
+// Depth texels are intentionally coarser than the ray count would allow:
+// 256 rays into an 8x8 map gives ~4 samples per texel, so the depth moments
+// carry an actual variance. At 16x16 it was 1 sample/texel, the variance
+// collapsed to zero, and the Chebyshev test became a knife edge.
+const int PROBE_DEPTH_TEXELS      = 8;
 const int PROBE_RAYS_PER_PROBE    = 256;
 
 // Octahedral encode: unit vector -> [0,1]^2
@@ -52,12 +56,19 @@ vec3 rotateDir(vec3 dir, vec2 seed) {
 
 // One-tailed Chebyshev visibility: 0 = fully occluded, 1 = visible.
 // moments = (mean depth, mean depth^2) from the probe depth atlas.
+// The variance is floored RELATIVE to the mean. The depth moments come from
+// a handful of rays per texel, so a texel can have (near) zero sample
+// variance; the raw test then rejects any query point more than a few cm
+// off the stored hit distance, which turns whole surface patches into the
+// nearest-probe fallback (flat, straight-edged blotches). A 5% relative
+// floor keeps the falloff smooth without re-introducing the old constant
+// 0.05 visibility floor that let fully occluded probes leak.
 float chebyshevWeight(vec2 moments, float depth) {
     float mean     = moments.x;
-    float variance = max(moments.y - mean * mean, 0.0001);
+    float variance = max(moments.y - mean * mean, 0.05 * mean * mean + 0.0001);
     float d = depth - mean;
     float p = (d > 0.0) ? variance / (variance + d * d) : 1.0;
-    return max(p * p * p, 0.05);
+    return p * p * p;
 }
 
 // std430 mirror of ProbeData (vulkan/Resources/ProbeVolume.h). Holds the
@@ -67,5 +78,6 @@ float chebyshevWeight(vec2 moments, float depth) {
 // produces blotchy, mis-indexed shading.
 struct ProbeData {
     vec4 pos;          // xyz = probe world position
-    vec4 rotationSeed; // xy = per-probe random rotation values
+    vec4 rotationSeed; // xy = ray rotation seed, z = probe quality
+                       // (1 = healthy, 0 = stuck inside geometry)
 };

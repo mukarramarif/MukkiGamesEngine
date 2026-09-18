@@ -35,6 +35,8 @@ public:
 		            VkBuffer probeParamsBuffer = VK_NULL_HANDLE,
 		            VkImageView skyboxView = VK_NULL_HANDLE,
 		            VkSampler skyboxSampler = VK_NULL_HANDLE,
+		            VkImageView emissiveView = VK_NULL_HANDLE,
+		            VkSampler emissiveSampler = VK_NULL_HANDLE,
 		            VkBuffer probeDataBuffer = VK_NULL_HANDLE);
 		void destroyDescriptorPool();
 		~VkDescriptorBoss();

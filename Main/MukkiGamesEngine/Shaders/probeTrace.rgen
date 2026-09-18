@@ -51,10 +51,13 @@ vec3 sampleProbeIrradiance(sampler2D irrTex, sampler2D depthTex,
     vec3  result      = vec3(0.0);
     float totalWeight = 0.0;
 
-    // Fallback: the nearest probe (highest trilinear weight) regardless of
-    // visibility/backface rejection, so surfaces never sample nothing.
-    float bestTriW  = -1.0;
-    vec3  bestIrradiance = vec3(0.0);
+    // Fallback: prefer the nearest probe that is IN FRONT of the surface
+    // (backface > 0.5); only use any probe if none is in front. Prevents
+    // the fallback from returning an occluded probe's garbage.
+    float bestFrontTriW  = -1.0;
+    vec3  bestFrontIrradiance = vec3(0.0);
+    float bestAnyTriW  = -1.0;
+    vec3  bestAnyIrradiance = vec3(0.0);
 
     for (int dz = 0; dz <= 1; dz++)
     for (int dy = 0; dy <= 1; dy++)
@@ -85,21 +88,41 @@ vec3 sampleProbeIrradiance(sampler2D irrTex, sampler2D depthTex,
         vec2  moments    = texelFetch(depthTex, depthCoord, 0).rg;
         float visibility = chebyshevWeight(moments, distToProbe);
 
-        if (triW > bestTriW) {
-            bestTriW = triW;
-            bestIrradiance = irr;
-        }
-
         // Backface rejection: probes BEHIND the surface (normal points away
         // from them) leak light through walls - weight them down smoothly so
         // adjacent triangles don't pop between 0 and full weight.
         float backface = smoothstep(0.0, 0.2, dot(normal, dirToProbe));
 
-        float weight = triW * visibility * backface;
+        // Per-probe quality (rotationSeed.z): probes stuck inside geometry
+        // store garbage radiance; downweight them so it can't leak into
+        // neighboring cells.
+        float quality = probes[probeIndex].rotationSeed.z;
+
+        // Proximity downweight: a probe hugging the surface stores that
+        // surface's OWN radiance in its toward-surface texels (traced from
+        // ~0 distance, so sharp and spatially un-averaged). Sampling it
+        // back at the surface self-illuminates it - a localized bright/dark
+        // blotch right where relocated probes sit. Fade close probes out
+        // smoothly; the other 7 probes carry the cell.
+        float proxWeight = smoothstep(0.0, probeSpacing * 0.35, distToProbe);
+
+        float weight = triW * visibility * backface * (quality * quality) * proxWeight;
         result      += irr * weight;
         totalWeight += weight;
+
+        if (backface > 0.5) {
+            if (triW > bestFrontTriW) {
+                bestFrontTriW = triW;
+                bestFrontIrradiance = irr;
+            }
+        } else if (triW > bestAnyTriW) {
+            bestAnyTriW = triW;
+            bestAnyIrradiance = irr;
+        }
     }
-    return totalWeight > 1e-5 ? result / totalWeight : bestIrradiance;
+    if (totalWeight > 1e-5) return result / totalWeight;
+    if (bestFrontTriW >= 0.0) return bestFrontIrradiance;
+    return bestAnyTriW >= 0.0 ? bestAnyIrradiance : vec3(0.0);
 }
 
 // std140 mirror of GPULight (vulkan/objects/lights.h)
@@ -199,6 +222,7 @@ void main()
     float relocDistance = probeVolume.params.x * 0.75;
     float insideMargin  = probeVolume.params.x * 0.1;
     uint  nearHitCount    = 0u;
+    uint  nearBackfaceCount = 0u;
     float nearBackfaceSum = 0.0;
     float minT   = 1.0e30;
     vec3  minDir = vec3(0.0);
@@ -252,6 +276,7 @@ void main()
             if (hitT < relocDistance) {
                 nearHitCount += 1u;
                 nearBackfaceSum += backfaceWeight;
+                if (backfaceWeight < 0.5) nearBackfaceCount += 1u;
                 if (hitT < minT) {
                     minT   = hitT;
                     minDir = dir;
@@ -291,12 +316,29 @@ void main()
             depthSqAccum[dIdx] += hitT * hitT;
             depthCount[dIdx]  += 1u;
         } else {
-            // Miss: sky contributes with full weight, no depth update.
-            // Sky rays can't be shadowed by anything.
+            // Miss: sky contributes with full weight. Also update the depth
+            // moments with a large distance: a texel with any sky rays
+            // otherwise averages depth only over its hit rays, and the
+            // Chebyshev test then treats partially-open directions as
+            // occluded, wrongly rejecting probes (dark patches). The huge
+            // depth makes d < 0 for any scene-scale distance -> weight 1.
             irrAccum[irrIdx]  += texture(probeSkybox, dir).rgb;
             irrWeight[irrIdx] += 1.0;
+            // Sky rays can't be shadowed by anything.
             shadowAccum[irrIdx]  += 1.0;
             shadowWeight[irrIdx] += 1.0;
+
+            ivec2 depthTexel = ivec2(clamp(oct * float(PROBE_DEPTH_TEXELS),
+                                           vec2(0.0), vec2(PROBE_DEPTH_TEXELS - 1.0)));
+            int dIdx = depthTexel.y * PROBE_DEPTH_TEXELS + depthTexel.x;
+            // "Far away" in scene terms. It must NOT exceed the rg16f range:
+            // 1e7 and 1e14 store as +Inf, and Inf - Inf later yields a NaN
+            // variance. The atlas write clamps the moments anyway, this just
+            // keeps the accumulation meaningful.
+            const float missDepth = 1e4;
+            depthAccum[dIdx]  += missDepth;
+            depthSqAccum[dIdx] += missDepth * missDepth;
+            depthCount[dIdx]  += 1u;
         }
     }
 
@@ -305,13 +347,33 @@ void main()
     // inside the volume. Blended half-way per frame so the position
     // converges smoothly; once outside, backface hits disappear and the
     // probe stops moving. debug.z toggles this (runtime debug knob).
+    // The move is CLAMPED to a fraction of the spacing: a probe that wanders
+    // a full cell away breaks the trilinear topology (an empty grid slot +
+    // a probe serving the wrong cell = the blotches around relocated
+    // probes). Probes deeper inside geometry than the clamp are left in
+    // place and suppressed via the quality factor instead.
+    bool relocatedThisFrame = false;
+    float maxRelocDist = probeVolume.params.x * 0.4;
     if (probeVolume.debug.z > 0.5 &&
         nearHitCount > 0u &&
         nearBackfaceSum < 0.4 * float(nearHitCount) &&
-        minT < probeVolume.params.x) {
-        vec3 candidate = probePos + minDir * (minT + insideMargin);
+        minT < maxRelocDist) {
+        float moveDist = min(minT + insideMargin, maxRelocDist);
+        vec3 candidate = probePos + minDir * moveDist;
         probes[probeIndex].pos = vec4(mix(probePos, candidate, 0.5), 0.0);
+        relocatedThisFrame = true;
     }
+
+    // Per-probe quality = 1 - fraction of NEAR hits that were backfaces.
+    // Probes in open space hit front faces (quality ~1); probes stuck in
+    // thick geometry (relocation can't fix every case) see mostly backfaces
+    // and get downweighted by the samplers so their garbage radiance can't
+    // leak into neighboring cells. Stored in rotationSeed.z (xy is the ray
+    // rotation seed), smoothed so it reacts to relocation over a few frames.
+    float backfaceFraction = nearHitCount > 0u
+        ? float(nearBackfaceCount) / float(nearHitCount) : 0.0;
+    probes[probeIndex].rotationSeed.z =
+        mix(probes[probeIndex].rotationSeed.z, 1.0 - backfaceFraction, 0.1);
 
     // Hysteresis blend into the output atlases. timeParams.y is a
     // light-change refresh boost: when a light moved, the CPU sets it to 1
@@ -322,9 +384,28 @@ void main()
     float blend      = 1.0 - exp(-deltaTime * mix(4.0, 30.0, hysteresis));
     blend            = max(blend, probeScene.timeParams.y);
 
+    // Relocation history reset: a relocated probe's atlas texels hold data
+    // traced from its OLD (inside-geometry) position - the hysteresis blend
+    // would keep that garbage alive for many frames, and the trace that
+    // decided the move THIS frame is still from the old position. So:
+    //  - discard this frame's trace entirely, and
+    //  - force a full snap (blend = 1) for the next few frames so the
+    //    texels converge on data traced from the settled position.
+    //    rotationSeed.w = snap counter, re-armed while the probe keeps
+    //    moving, so hysteresis only resumes once the probe stabilizes.
+    bool discardFrame = relocatedThisFrame;
+    if (relocatedThisFrame) {
+        probes[probeIndex].rotationSeed.w = 3.0;
+    }
+    if (probes[probeIndex].rotationSeed.w > 0.0) {
+        blend = 1.0;
+        probes[probeIndex].rotationSeed.w -= 1.0;
+    }
+
     float tilesPerSide = probeVolume.atlas.x;
     uvec2 tile = uvec2(probeIndex % uint(tilesPerSide), probeIndex / uint(tilesPerSide));
 
+    if (!discardFrame) {
     for (int i = 0; i < PROBE_IRRADIANCE_TEXELS * PROBE_IRRADIANCE_TEXELS; i++) {
         ivec2 t = ivec2(i % PROBE_IRRADIANCE_TEXELS, i / PROBE_IRRADIANCE_TEXELS);
         ivec2 atlasCoord = ivec2(tile) * PROBE_IRRADIANCE_TEXELS + t;
@@ -346,13 +427,21 @@ void main()
         ivec2 t = ivec2(i % PROBE_DEPTH_TEXELS, i / PROBE_DEPTH_TEXELS);
         ivec2 atlasCoord = ivec2(tile) * PROBE_DEPTH_TEXELS + t;
         vec2 prev = texelFetch(prevDepth, atlasCoord, 0).rg;
-        vec2 newVal = prev;
+        // A texel no ray landed in is unmeasured. Keeping the cleared (0,0)
+        // moments makes the Chebyshev test read it as an occluder at
+        // distance 0, permanently rejecting every lookup that maps there
+        // (dark, straight-edged blotches). Store a far depth instead so the
+        // direction reads as open.
+        vec2 newVal = vec2(60000.0);
         if (depthCount[i] > 0u) {
             newVal = vec2(depthAccum[i]  / float(depthCount[i]),
                           depthSqAccum[i] / float(depthCount[i]));
         }
-        vec4 outVal = vec4(mix(prev, newVal, blend), 0.0, 0.0);
+        // rg16f tops out at 65504: larger values store as +Inf, and Inf - Inf
+        // later makes the variance NaN. Clamp the moments before storing.
+        vec4 outVal = vec4(min(mix(prev, newVal, blend), vec2(60000.0)), 0.0, 0.0);
         imageStore(outDepth, atlasCoord, outVal);
         imageStore(outDepthHistory, atlasCoord, outVal);
+    }
     }
 }

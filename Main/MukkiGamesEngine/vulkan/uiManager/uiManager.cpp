@@ -851,7 +851,7 @@ void UIManager::renderProbeDebugWindow(ProbeDebugState& state)
 
 	ImGui::Separator();
 	ImGui::Text("Raster Debug View");
-	const char* modes[] = { "Off", "GI only", "GI heatmap", "Probe cells" };
+	const char* modes[] = { "Off", "GI only", "GI heatmap", "Probe cells", "Probe quality" };
 	ImGui::Combo("Mode", &state.debugMode, modes, IM_ARRAYSIZE(modes));
 
 	ImGui::Separator();

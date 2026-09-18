@@ -205,7 +205,9 @@ void ProbeVolume::createProbeDataBuffer()
                 const auto index = static_cast<uint32_t>((z * counts.y + y) * counts.x + x);
                 ProbeData& p = probes[index];
                 p.pos = glm::vec4(origin + (glm::vec3(x, y, z) + 0.5f) * spacing, 0.0f);
-                p.rotationSeed = glm::vec4(dist(rng), dist(rng), 0.0f, 0.0f);
+                // z = per-probe quality (1 = healthy, 0 = inside geometry);
+                // written by the rgen each frame, starts healthy.
+                p.rotationSeed = glm::vec4(dist(rng), dist(rng), 1.0f, 0.0f);
             }
         }
     }

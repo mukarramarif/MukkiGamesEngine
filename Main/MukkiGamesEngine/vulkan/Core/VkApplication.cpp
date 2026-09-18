@@ -577,6 +577,7 @@ void VulkanApplication::initVulkan(const RenderConfig &config) {
       probeVolume ? probeVolume->getParamsBuffer() : VK_NULL_HANDLE,
       skybox ? skybox->getCubemapImageView() : VK_NULL_HANDLE,
       skybox ? skybox->getCubemapSampler() : VK_NULL_HANDLE,
+      textureImageView, textureSampler,
       probeVolume ? probeVolume->getProbeDataBuffer() : VK_NULL_HANDLE);
 
   createRayTracingDescriptorPool();
@@ -1505,6 +1506,7 @@ void VulkanApplication::mainLoop() {
                   probeVolume ? probeVolume->getParamsBuffer() : VK_NULL_HANDLE,
                   skybox ? skybox->getCubemapImageView() : VK_NULL_HANDLE,
                   skybox ? skybox->getCubemapSampler() : VK_NULL_HANDLE,
+                  textureImageView, textureSampler,
                   probeVolume ? probeVolume->getProbeDataBuffer() : VK_NULL_HANDLE);
             }
           }
@@ -2744,6 +2746,16 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
       // KHR_materials_transmission (glass)
       materialData.transmissionFactor = mat.transmissionFactor;
       materialData.idxReflect = mat.idxReflect;
+      // KHR_materials_emissive. Zero the factor when no emissive texture is
+      // bound: the descriptor falls back to an opaque texture and the
+      // factor doubles as the shader-side enable flag.
+      if (mat.emissiveTextureIndex >= 0 &&
+          mat.emissiveTextureIndex <
+              static_cast<int32_t>(obj.model.textures.size())) {
+        materialData.emissiveR = mat.emissiveFactor.r;
+        materialData.emissiveG = mat.emissiveFactor.g;
+        materialData.emissiveB = mat.emissiveFactor.b;
+      }
       for (size_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
         device->createBuffer(matBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -2779,8 +2791,8 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount =
         poolInfo.maxSets *
-        (6 + (MAX_POINT_SHADOWS > 0 ? MAX_POINT_SHADOWS - 1 : 0));
-    // baseColor + dir shadow + MAX_POINT_SHADOWS cube shadows + probes + skybox
+        (7 + (MAX_POINT_SHADOWS > 0 ? MAX_POINT_SHADOWS - 1 : 0));
+    // baseColor + dir shadow + MAX_POINT_SHADOWS cube shadows + probes + skybox + emissive
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     poolSizes[2].descriptorCount = poolInfo.maxSets; // probe data SSBO (binding 9)
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
@@ -2937,6 +2949,34 @@ void VulkanApplication::createLoadedObjectBuffers(LoadedObject &obj) {
         skyWrite.descriptorCount = 1;
         skyWrite.pImageInfo = &skyImageInfo;
         descriptorWrites.push_back(skyWrite);
+      }
+
+      // Binding 10: emissive texture (KHR_materials_emissive, rt.rgen
+      // parity). Falls back to an opaque texture; the material UBO zeroes
+      // the emissive factor in that case so nothing shows.
+      {
+        VkDescriptorImageInfo emissiveInfo{};
+        emissiveInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        if (material.emissiveTextureIndex >= 0 &&
+            material.emissiveTextureIndex <
+                static_cast<int32_t>(obj.model.textures.size())) {
+          const LoadedTexture &etex =
+              obj.model.textures[material.emissiveTextureIndex];
+          emissiveInfo.imageView = etex.imageView;
+          emissiveInfo.sampler = etex.sampler;
+        } else {
+          emissiveInfo.imageView = textureImageView;
+          emissiveInfo.sampler = textureSampler;
+        }
+
+        VkWriteDescriptorSet emissiveWrite{};
+        emissiveWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        emissiveWrite.dstSet = obj.descriptorSets[matIndex][frame];
+        emissiveWrite.dstBinding = 10;
+        emissiveWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        emissiveWrite.descriptorCount = 1;
+        emissiveWrite.pImageInfo = &emissiveInfo;
+        descriptorWrites.push_back(emissiveWrite);
       }
       vkUpdateDescriptorSets(device->getDevice(),
                              static_cast<uint32_t>(descriptorWrites.size()),
@@ -4440,12 +4480,18 @@ void VulkanApplication::createDescriptorSetLayout() {
   probeDataBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   probeDataBinding.descriptorCount = 1;
   probeDataBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  // Emissive texture (binding = 10) - KHR_materials_emissive (rt.rgen parity)
+  VkDescriptorSetLayoutBinding emissiveBinding{};
+  emissiveBinding.binding = 10;
+  emissiveBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  emissiveBinding.descriptorCount = 1;
+  emissiveBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-  std::array<VkDescriptorSetLayoutBinding, 10> bindings = {
+  std::array<VkDescriptorSetLayoutBinding, 11> bindings = {
       uboLayoutBinding,       samplerLayoutBinding,  materialLayoutBinding,
       shadowLayoutBinding,    cubeShadowBinding,     probeIrrBinding,
       probeDepthBinding,      probeParamsBinding,    skyboxBinding,
-      probeDataBinding};
+      probeDataBinding,       emissiveBinding};
 
   VkDescriptorSetLayoutCreateInfo layoutInfo{};
   layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;

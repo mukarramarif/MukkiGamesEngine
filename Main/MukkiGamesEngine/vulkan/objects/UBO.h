@@ -51,4 +51,7 @@ struct MaterialUBO {
 	// KHR_materials_transmission (glass)
 	alignas(4) float transmissionFactor;
 	alignas(4) float idxReflect;
+	// KHR_materials_emissive (rt.rgen parity). The CPU zeroes these when no
+	// emissive texture is bound, so the factor doubles as the enable flag.
+	alignas(4) float emissiveR, emissiveG, emissiveB;
 };

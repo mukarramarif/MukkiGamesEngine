@@ -78,6 +78,11 @@ struct MaterialUBO {
     // KHR_materials_transmission (glass)
     float transmissionFactor;
     float idxReflect;
+    // KHR_materials_emissive (rt.rgen parity). The CPU zeroes these when no
+    // emissive texture is bound, so the factor doubles as the enable flag.
+    float emissiveR;
+    float emissiveG;
+    float emissiveB;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<UniformBufferObject> ubo;
@@ -88,7 +93,9 @@ struct MaterialUBO {
 
 // ---- Ray-traced probe GI (mirrors Shaders/probeCommon.glsl) ----
 static const int PROBE_IRRADIANCE_TEXELS = 8;
-static const int PROBE_DEPTH_TEXELS = 16;
+// Must match PROBE_DEPTH_TEXELS in probeCommon.glsl: 256 rays / 8x8 = ~4
+// samples per depth texel, so the moments have real variance.
+static const int PROBE_DEPTH_TEXELS = 8;
 // GI strength is a live knob now: probeVolume.debug.y (default 1.0).
 // Glass tuning: how much to soften the Beer-Lambert absorption
 // (1.0 = physically correct, lower = brighter).
@@ -108,7 +115,8 @@ struct ProbeVolumeParams {
 // texel directions and depth moments are measured from the relocated origin.
 struct ProbeData {
     float4 pos;          // xyz = probe world position
-    float4 rotationSeed; // unused by the raster
+    float4 rotationSeed; // xy = ray rotation seed, z = probe quality
+                         // (1 = healthy, 0 = stuck inside geometry)
 };
 
 [[vk::binding(5, 0)]] Sampler2D<float4> probeIrradiance;  // atlas, GENERAL layout
@@ -116,6 +124,7 @@ struct ProbeData {
 [[vk::binding(7, 0)]] ConstantBuffer<ProbeVolumeParams> probeVolume;
 [[vk::binding(8, 0)]] SamplerCube<float4> skyboxCube;     // unused by shading (probes capture the skybox); kept for the binding
 [[vk::binding(9, 0)]] StructuredBuffer<ProbeData> probePositions;
+[[vk::binding(10, 0)]] Sampler2D<float4> emissiveSampler; // KHR_materials_emissive (rt.rgen parity)
 
 float2 probeOctEncode(float3 n) {
     n /= (abs(n.x) + abs(n.y) + abs(n.z));
@@ -129,10 +138,15 @@ float2 probeOctEncode(float3 n) {
 
 float probeChebyshevWeight(float2 moments, float depth) {
     float mean = moments.x;
-    float variance = max(moments.y - mean * mean, 0.0001);
+    // Relative variance floor: with only a few samples per depth texel the
+    // raw variance can be ~0, which makes the test reject every query point
+    // that is not exactly at the stored hit distance (flat nearest-probe
+    // blotches). Flooring relative to the mean keeps the falloff smooth
+    // without the old constant 0.05 visibility floor that leaked light.
+    float variance = max(moments.y - mean * mean, 0.05 * mean * mean + 0.0001);
     float d = depth - mean;
     float p = (d > 0.0) ? variance / (variance + d * d) : 1.0;
-    return max(p * p * p, 0.05);
+    return p * p * p;
 }
 
 // Trilinear + octahedral + Chebyshev lookup of the probe volume.
@@ -161,10 +175,13 @@ float3 sampleProbeGI(float3 pos, float3 normal) {
     float3 result = float3(0.0, 0.0, 0.0);
     float totalWeight = 0.0;
 
-    // Fallback: the nearest probe (highest trilinear weight) regardless of
-    // visibility/backface rejection, so surfaces never sample nothing.
-    float bestTriW = -1.0;
-    float3 bestIrradiance = float3(0.0, 0.0, 0.0);
+    // Fallback: prefer the nearest probe that is IN FRONT of the surface
+    // (backface > 0.5); only use any probe if none is in front. Prevents
+    // the fallback from returning an occluded probe's garbage.
+    float bestFrontTriW = -1.0;
+    float3 bestFrontIrradiance = float3(0.0, 0.0, 0.0);
+    float bestAnyTriW = -1.0;
+    float3 bestAnyIrradiance = float3(0.0, 0.0, 0.0);
 
     for (int dz = 0; dz <= 1; dz++)
     for (int dy = 0; dy <= 1; dy++)
@@ -206,21 +223,42 @@ float3 sampleProbeGI(float3 pos, float3 normal) {
         float2 moments = probeDepth.Sample(depthUV).rg;
         float visibility = probeChebyshevWeight(moments, distToProbe);
 
-        if (triW > bestTriW) {
-            bestTriW = triW;
-            bestIrradiance = irr;
-        }
-
         // Backface rejection: probes BEHIND the surface (normal points away
         // from them) leak light through walls - weight them down smoothly so
         // adjacent triangles don't pop between 0 and full weight.
         float backface = smoothstep(0.0, 0.2, dot(normal, dirToProbe));
 
-        float weight = triW * visibility * backface;
+        // Per-probe quality (rotationSeed.z): probes stuck inside geometry
+        // store garbage radiance; downweight them so it can't leak into
+        // neighboring cells.
+        float quality = probePositions[uint(probeIndex)].rotationSeed.z;
+
+        // Proximity downweight: probes hugging the surface store the
+        // surface's OWN radiance in their toward-surface texels - sampling
+        // them back self-illuminates the surface (localized blotch at
+        // relocated probes). Fade close probes out; the other probes in
+        // the cell carry the shading.
+        float proxWeight = smoothstep(0.0, spacing * 0.35, distToProbe);
+
+        float weight = triW * visibility * backface * (quality * quality) * proxWeight;
         result += irr * weight;
         totalWeight += weight;
+
+        if (backface > 0.5) {
+            if (triW > bestFrontTriW) {
+                bestFrontTriW = triW;
+                bestFrontIrradiance = irr;
+            }
+        } else if (triW > bestAnyTriW) {
+            bestAnyTriW = triW;
+            bestAnyIrradiance = irr;
+        }
     }
-    return totalWeight > 1e-5 ? result / totalWeight : bestIrradiance;
+    if (totalWeight > 1e-5)
+        return result / totalWeight;
+    if (bestFrontTriW >= 0.0)
+        return bestFrontIrradiance;
+    return bestAnyTriW >= 0.0 ? bestAnyIrradiance : float3(0.0, 0.0, 0.0);
 }
 
 // Deterministic per-pixel rotation seed so tap patterns decorrelate across
@@ -327,7 +365,14 @@ float4 sampleProbeDirectional(float3 pos, float3 normal, float3 dir) {
         float visibility = probeChebyshevWeight(moments, distToProbe);
 
         float backface = smoothstep(0.0, 0.2, dot(normal, dirToProbe));
-        float weight = triW * visibility * backface;
+
+        // Per-probe quality: garbage probes (stuck in geometry) must not
+        // leak into the BRDF taps either. Also fade probes hugging the
+        // surface (proximity) so a relocated probe can't feed the surface
+        // its own radiance back.
+        float quality = probePositions[uint(probeIndex)].rotationSeed.z;
+        float proxWeight = smoothstep(0.0, spacing * 0.35, distToProbe);
+        float weight = triW * visibility * backface * (quality * quality) * proxWeight;
         result += irr * weight;
         totalWeight += weight;
     }
@@ -380,7 +425,7 @@ float3 sampleProbeSpecular(float3 pos, float3 normal, float3 viewDir,
 // visibility stored in the irradiance atlas alpha channel, sampled along the
 // direction toward the light. Occluders soften through the blend, giving
 // contact-soft shadows without a shadow ray.
-float sampleProbeShadow(float3 pos, float3 dirToLight) {
+float sampleProbeShadow(float3 pos, float3 dirToLight, float3 normal) {
     int3 counts = probeVolume.probeCounts.xyz;
     if (counts.x < 2 || counts.y < 2 || counts.z < 2)
         return 1.0;
@@ -411,6 +456,17 @@ float sampleProbeShadow(float3 pos, float3 dirToLight) {
         if (triW <= 0.0)
             continue;
 
+        // A probe on the far side of a wall is (correctly) shadowed at ITS
+        // location, but a lit shading point in front of the wall must not
+        // sample it: weight by the same backface/quality terms as the GI
+        // path so shadowed probes can't paint dark bands on lit surfaces.
+        float3 probePos = probePositions[uint(probeIndex)].pos.xyz;
+        float3 toProbe = probePos - pos;
+        float distToProbe = length(toProbe);
+        float3 dirToProbe = toProbe / max(distToProbe, 1e-5);
+        float backface = smoothstep(0.0, 0.2, dot(normal, dirToProbe));
+        float quality = probePositions[uint(probeIndex)].rotationSeed.z;
+
         float2 oct = probeOctEncode(dirToLight);
         int2 tile = int2(probeIndex % int(tilesPerSide),
                          probeIndex / int(tilesPerSide));
@@ -423,10 +479,11 @@ float sampleProbeShadow(float3 pos, float3 dirToLight) {
                     float2(irrAtlasSize, irrAtlasSize);
 
         float vis = probeIrradiance.Sample(uv).a;
-        result += vis * triW;
-        totalWeight += triW;
+        float sw = triW * backface * (quality * quality);
+        result += vis * sw;
+        totalWeight += sw;
     }
-    return totalWeight > 0.0 ? result / totalWeight : 1.0;
+    return totalWeight > 1e-4 ? result / totalWeight : 1.0;
 }
 
 // Probe-based radiance lookup along an arbitrary direction: trilinearly
@@ -580,7 +637,10 @@ float3 fresnelWithIridescence(float cosTheta, float3 F0) {
     return fresnelSchlick(cosTheta, F0);
 }
 
-// Percentage-Closer Filtering shadow calculation for a single directional light
+// Percentage-Closer Filtering shadow calculation for a single directional light.
+// Returns OCCLUSION (1 = shadowed, 0 = lit); the BRDF multiplies direct light
+// by (1 - shadow). The depth test yields 1 for fragments closer to the light
+// than the stored occluder, i.e. LIT, so that case must map to 0.
 float calculateShadow(float4 lightSpacePos) {
     float3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
     projCoords = projCoords * 0.5 + 0.5;
@@ -599,14 +659,15 @@ float calculateShadow(float4 lightSpacePos) {
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {
             float pcfDepth = shadowMap.Sample(projCoords.xy + float2(x, y) * texelSize);
-            shadow += (currentDepth - bias) < pcfDepth ? 1.0 : 0.0;
+            shadow += (currentDepth - bias) < pcfDepth ? 0.0 : 1.0;
         }
     }
     shadow /= 9.0;
     return shadow;
 }
 // Cube map shadows for a point light (linear depth). slot indexes the cube
-// shadow map array statically (callers unroll their loops).
+// shadow map array statically (callers unroll their loops). Returns OCCLUSION
+// (1 = shadowed, 0 = lit), matching calculateShadow.
 float calculatePointLightShadow(float3 lightPos, float3 fragPos, int slot) {
     if (ubo.pointShadowParams[slot].w <= 0.0) return 0.0;   // no shadowed point light
 
@@ -614,7 +675,7 @@ float calculatePointLightShadow(float3 lightPos, float3 fragPos, int slot) {
     float currentDepth = length(fragToLight) * ubo.pointShadowParams[slot].w;  // linear, [0,1]
     float bias = 0.02;                                                    // tune for acne
     float closestDepth = shadowCubeMaps[slot].Sample(fragToLight);        // linear depth
-    return (currentDepth - bias) < closestDepth ? 1.0 : 0.0;
+    return (currentDepth - bias) < closestDepth ? 0.0 : 1.0;
 }
 
 // Clear coat helpers
@@ -728,6 +789,16 @@ PSOutput main(PSInput input) {
     float3 normal = normalize(input.fragNormal);
     float3 viewDir = normalize(ubo.viewPos.xyz - input.fragWorldPos);
 
+    // Emissive (rt.rgen parity): unshadowed, added on top of everything
+    // including glass. The CPU zeroes the factor when no emissive texture is
+    // bound (the descriptor falls back to an opaque texture), so the factor
+    // doubles as the enable flag.
+    float2 emissiveUv = applyKhrTextureTransform(input.fragTexCoord,
+        material.emissiveUvOx, material.emissiveUvOy, material.emissiveUvRot,
+        material.emissiveUvSx, material.emissiveUvSy);
+    float3 emissive = emissiveSampler.Sample(emissiveUv).rgb *
+        float3(material.emissiveR, material.emissiveG, material.emissiveB);
+
     // Glass (KHR_materials_transmission): fresnel-weighted alpha - grazing
     // angles reflect (opaque-ish edges), head-on transmits (transparent).
     float transmission = material.transmissionFactor;
@@ -767,8 +838,8 @@ PSOutput main(PSInput input) {
     float metallic = material.metallicFactor;
     // Floor the roughness: roughness 0 collapses the GGX distribution to a
     // zero-width spike, killing specular highlights entirely (glass depends
-    // on them for its look).
-    float roughness = max(material.roughnessFactor, 0.02);
+    // on them for its look). Matches rt.rgen's floor (0.001).
+    float roughness = max(material.roughnessFactor, 0.001);
 
     // BRDF probe sampling: diffuse = cosine-weighted hemisphere taps,
     // specular = roughness-cone taps around the reflection direction. Tap
@@ -816,11 +887,13 @@ PSOutput main(PSInput input) {
             float dirShadow = (transmission > 0.0) ? 0.0 : shadow;
             // Probe-stored shadow information: blend the soft probe shadow
             // into the shadow-map term (probeVolume.shadow.x = strength).
+            // sampleProbeShadow returns VISIBILITY (1 = lit), dirShadow is
+            // occlusion, so invert before blending.
             if (transmission <= 0.0 && probeVolume.shadow.x > 0.001) {
                 float probeShadow = sampleProbeShadow(
                     input.fragWorldPos,
-                    -normalize(ubo.lights[i].direction.xyz));
-                dirShadow = lerp(dirShadow, probeShadow,
+                    -normalize(ubo.lights[i].direction.xyz), normal);
+                dirShadow = lerp(dirShadow, 1.0 - probeShadow,
                                  clamp(probeVolume.shadow.x, 0.0, 1.0));
             }
             lighting += calculateDirectionalLight(ubo.lights[i], normal, viewDir, albedo, metallic, roughness, dirShadow);
@@ -854,8 +927,8 @@ PSOutput main(PSInput input) {
     float3 F0gi = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
     float3 Fgi = fresnelWithIridescence(max(dot(normal, viewDir), 0.0), F0gi);
     float3 result = (transmission > 0.0)
-        ? glassColor
-        : (ambient + lighting + giSpecular * Fgi * (1.0 - dt));
+        ? (glassColor + emissive)
+        : (ambient + lighting + giSpecular * Fgi * (1.0 - dt) + emissive);
 
     // Clear coat layering (on top of base BRDF). Skipped for glass: the
     // coat fresnel zeroes the result at grazing angles, which combined with
@@ -896,19 +969,55 @@ PSOutput main(PSInput input) {
             dbg = float3(clamp(1.5 - abs(t * 4.0 - 3.0), 0.0, 1.0),
                          clamp(1.5 - abs(t * 4.0 - 2.0), 0.0, 1.0),
                          clamp(1.5 - abs(t * 4.0 - 1.0), 0.0, 1.0));
-        } else {
+        } else if (probeVolume.debug.x < 3.5) {
             // Color by the fractional position inside the probe cell: shows
             // the grid density and where cell boundaries fall on surfaces.
             float3 q = (input.fragWorldPos - probeVolume.origin.xyz) /
                        max(probeVolume.params.x, 1e-4);
             dbg = frac(q);
+        } else {
+            // 4 = probe quality field: 1 (green) = healthy probe, 0 (red) =
+            // stuck inside geometry. Red regions are the probes whose
+            // garbage radiance used to leak into the shading.
+            float3 q4 = (input.fragWorldPos - probeVolume.origin.xyz) /
+                        max(probeVolume.params.x, 1e-4);
+            float3 qc4 = clamp(q4, float3(0.5, 0.5, 0.5),
+                               float3(probeVolume.probeCounts.xyz) -
+                                   float3(0.5001, 0.5001, 0.5001));
+            float3 basef4 = qc4 - float3(0.5, 0.5, 0.5);
+            int3 base4 = int3(floor(basef4));
+            float3 frac4 = basef4 - float3(base4);
+            float qsum = 0.0;
+            float qwsum = 0.0;
+            for (int dz = 0; dz <= 1; dz++)
+            for (int dy = 0; dy <= 1; dy++)
+            for (int dx = 0; dx <= 1; dx++) {
+                int3 idx4 = base4 + int3(dx, dy, dz);
+                int pi = (idx4.z * probeVolume.probeCounts.y + idx4.y) *
+                             probeVolume.probeCounts.x +
+                         idx4.x;
+                float3 w4 = float3(1.0, 1.0, 1.0) -
+                            abs(float3(dx, dy, dz) - frac4);
+                float tw = w4.x * w4.y * w4.z;
+                if (tw <= 0.0)
+                    continue;
+                qsum += probePositions[uint(pi)].rotationSeed.z * tw;
+                qwsum += tw;
+            }
+            float qv = qwsum > 0.0 ? qsum / qwsum : 1.0;
+            dbg = lerp(float3(1.0, 0.0, 0.0), float3(0.0, 1.0, 0.0),
+                       clamp(qv, 0.0, 1.0));
         }
         output.outColor = float4(dbg, 1.0);
         return output;
     }
 
-    // Reinhard tone mapping
+    // Reinhard tone mapping + sRGB encode (matches rt.rgen exactly)
     result = result / (result + float3(1.0, 1.0, 1.0));
+    float3 srgbT = step(0.0031308, result);
+    result = lerp(result * 12.92,
+                  pow(result, float3(1.0 / 2.4, 1.0 / 2.4, 1.0 / 2.4)) * 1.055 - 0.055,
+                  srgbT);
     output.outColor = float4(result, alpha);
     return output;
 }

@@ -31,7 +31,9 @@ class ProbeVolume {
 
 public:
     static constexpr uint32_t DEFAULT_IRRADIANCE_TEXELS = 8;
-    static constexpr uint32_t DEFAULT_DEPTH_TEXELS      = 16;
+    // Must match PROBE_DEPTH_TEXELS in probeCommon.glsl / brdf.slang: ~4
+    // rays per depth texel so the Chebyshev moments have real variance.
+    static constexpr uint32_t DEFAULT_DEPTH_TEXELS      = 8;
     static constexpr uint32_t PING_PONG_COUNT           = 2;
     static constexpr uint32_t DEFAULT_RAYS_PER_PROBE    = 256;
 

@@ -17,7 +17,7 @@ void VkDescriptorBoss::createDescriptorPool(uint32_t maxSets)
 	poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	poolSizes[0].descriptorCount = totalSets * 3;  // UBO + MaterialUBO + probe params
 	poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	poolSizes[1].descriptorCount = totalSets * (6 + (MAX_POINT_SHADOWS > 0 ? MAX_POINT_SHADOWS - 1 : 0));  // base + dir shadow + N cube shadows + probes + skybox
+	poolSizes[1].descriptorCount = totalSets * (7 + (MAX_POINT_SHADOWS > 0 ? MAX_POINT_SHADOWS - 1 : 0));  // base + dir shadow + N cube shadows + probes + skybox + emissive
 	poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	poolSizes[2].descriptorCount = totalSets;
 
@@ -64,6 +64,8 @@ void VkDescriptorBoss::updateDescriptorSets(
     VkBuffer probeParamsBuffer,
     VkImageView skyboxView,
     VkSampler skyboxSampler,
+    VkImageView emissiveView,
+    VkSampler emissiveSampler,
     VkBuffer probeDataBuffer)
 {
 	for (size_t i = 0; i < descriptorSets.size(); i++) {
@@ -236,6 +238,25 @@ void VkDescriptorBoss::updateDescriptorSets(
             skyboxWrite.descriptorCount = 1;
             skyboxWrite.pImageInfo = &skyboxInfo;
             descriptorWrites.push_back(skyboxWrite);
+        }
+
+        // Emissive texture (binding = 10). Global sets have no per-material
+        // emissive; bind the default texture and rely on the (zeroed)
+        // material factor.
+        if (emissiveView != VK_NULL_HANDLE && emissiveSampler != VK_NULL_HANDLE) {
+            VkDescriptorImageInfo emissiveInfo{};
+            emissiveInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            emissiveInfo.imageView = emissiveView;
+            emissiveInfo.sampler = emissiveSampler;
+
+            VkWriteDescriptorSet emissiveWrite{};
+            emissiveWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            emissiveWrite.dstSet = descriptorSets[i];
+            emissiveWrite.dstBinding = 10;
+            emissiveWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            emissiveWrite.descriptorCount = 1;
+            emissiveWrite.pImageInfo = &emissiveInfo;
+            descriptorWrites.push_back(emissiveWrite);
         }
 
         // Probe data SSBO (binding = 9) - relocated probe positions
