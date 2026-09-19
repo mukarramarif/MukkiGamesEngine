@@ -1,4 +1,4 @@
-# MukkiGamesEngine
+# MukkiVkRenderer
 Renderer Project following a rewrite of the original Vulkan tutorial. General-purpose renderer for learning and implementing new rendering techniques. This project is designed for rendering multiple glTF objects and multiple lights using principal BRDF techniques in real-time. 
 I will keep adding new rendering techniques here 😁
 ## Progress
