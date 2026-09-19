@@ -142,9 +142,16 @@ target_sources(MukkiGamesEngine PRIVATE
 target_include_directories(MukkiGamesEngine PRIVATE ${TINYGLTF_INCLUDE_DIRS})
 target_include_directories(MukkiGamesEngine PRIVATE "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/vulkan/uiManager/backends")
 
+# Asset root baked into the executable. Defaults to the source tree for dev
+# builds; override with -DASSETS_PATH=Assets/ to produce a portable package
+# whose assets resolve relative to the working directory.
+if(NOT DEFINED ASSETS_PATH)
+  set(ASSETS_PATH "${CMAKE_SOURCE_DIR}/MukkiGamesEngine/Assets/")
+endif()
+
 # Helper to compile GLSL to SPIR-V. Usage: add_shaders(<target> Shaders/foo.vert Shaders/bar.frag)
 target_compile_definitions(MukkiGamesEngine PRIVATE
-    ASSETS_PATH="${CMAKE_SOURCE_DIR}/MukkiGamesEngine/Assets/"
+    ASSETS_PATH="${ASSETS_PATH}"
     TINYGLTF_USE_STB_IMAGE
     $<$<CONFIG:Debug>:RENDERDOC_DEBUG>)
 
